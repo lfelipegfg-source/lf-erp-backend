@@ -8,11 +8,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const SECRET = "lf-erp-chave-super-secreta"; // depois podemos esconder isso
+const SECRET = "lf-erp-chave-super-secreta";
 
-const db = new sqlite3.Database("./loja.db");
+// ================= PORTA (IMPORTANTE PRO RENDER) =================
+const PORT = process.env.PORT || 3001;
 
 // ================= BANCO =================
+const db = new sqlite3.Database("./loja.db");
+
 db.serialize(() => {
 
   db.run(`
@@ -53,7 +56,7 @@ db.serialize(() => {
     )
   `);
 
-  // ADMIN SEGURO
+  // ADMIN padrão seguro
   bcrypt.hash("1234", 10, (err, hash) => {
     db.run(
       "INSERT OR IGNORE INTO usuarios (usuario, senha, tipo) VALUES (?, ?, ?)",
@@ -63,7 +66,12 @@ db.serialize(() => {
 
 });
 
-// ================= MIDDLEWARE DE SEGURANÇA =================
+// ================= ROTA TESTE =================
+app.get("/", (req, res) => {
+  res.send("LF ERP backend online 🚀");
+});
+
+// ================= MIDDLEWARE =================
 function auth(req, res, next) {
   const token = req.headers.authorization;
 
@@ -82,32 +90,26 @@ function auth(req, res, next) {
 app.post("/login", (req, res) => {
   const { usuario, senha } = req.body;
 
-  db.get(
-    "SELECT * FROM usuarios WHERE usuario=?",
-    [usuario],
-    async (err, user) => {
+  db.get("SELECT * FROM usuarios WHERE usuario=?", [usuario], async (err, user) => {
 
-      if (!user) return res.status(401).send("Usuário não encontrado");
+    if (!user) return res.status(401).send("Usuário não encontrado");
 
-      const ok = await bcrypt.compare(senha, user.senha);
-      if (!ok) return res.status(401).send("Senha incorreta");
+    const ok = await bcrypt.compare(senha, user.senha);
+    if (!ok) return res.status(401).send("Senha incorreta");
 
-      const token = jwt.sign(
-        { id: user.id, tipo: user.tipo },
-        SECRET,
-        { expiresIn: "8h" }
-      );
+    const token = jwt.sign(
+      { id: user.id, tipo: user.tipo },
+      SECRET,
+      { expiresIn: "8h" }
+    );
 
-      res.json({
-        token,
-        tipo: user.tipo
-      });
-    }
-  );
+    res.json({ token, tipo: user.tipo });
+  });
 });
 
-// ================= CRIAR USUÁRIO =================
+// ================= USUÁRIOS =================
 app.post("/usuarios", auth, (req, res) => {
+
   if (req.user.tipo !== "admin")
     return res.status(403).send("Apenas admin");
 
@@ -218,4 +220,4 @@ app.get("/dashboard/:empresa", auth, (req, res) => {
 });
 
 // ================= SERVIDOR =================
-app.listen(3001, () => console.log("🔥 Servidor BLINDADO rodando"));
+app.listen(PORT, () => console.log("🔥 Backend rodando na porta " + PORT));
