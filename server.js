@@ -265,6 +265,68 @@ app.get("/usuarios", auth, (req, res) => {
   });
 });
 
+app.put("/usuarios/:id", auth, (req, res) => {
+  if (!podeGerenciarUsuarios(req)) {
+    return res.status(403).send("Sem permissão");
+  }
+
+  const id = req.params.id;
+  const {
+    usuario,
+    tipo,
+    empresa,
+    nome_completo,
+    cpf,
+    nascimento,
+    senha
+  } = req.body;
+
+  db.get("SELECT * FROM usuarios WHERE id = ?", [id], async (err, alvo) => {
+    if (err) return res.status(500).send("Erro ao buscar usuário");
+    if (!alvo) return res.status(404).send("Usuário não encontrado");
+
+    if (req.user.tipo === "gerente") {
+      if (alvo.empresa !== req.user.empresa) {
+        return res.status(403).send("Gerente só pode editar usuários da própria loja");
+      }
+      if (tipo === "admin") {
+        return res.status(403).send("Gerente não pode transformar usuário em admin");
+      }
+      if (empresa !== req.user.empresa) {
+        return res.status(403).send("Gerente não pode mover usuário para outra loja");
+      }
+    }
+
+    if (tipo === "admin" && req.user.tipo !== "admin") {
+      return res.status(403).send("Apenas admin pode definir admin");
+    }
+
+    const senhaFinal = senha && senha.trim() !== ""
+      ? await bcrypt.hash(senha, 10)
+      : alvo.senha;
+
+    db.run(
+      `UPDATE usuarios
+       SET usuario = ?, senha = ?, tipo = ?, empresa = ?, nome_completo = ?, cpf = ?, nascimento = ?
+       WHERE id = ?`,
+      [
+        usuario,
+        senhaFinal,
+        tipo,
+        tipo === "admin" ? null : empresa,
+        nome_completo,
+        cpf || "",
+        nascimento || "",
+        id
+      ],
+      function (updateErr) {
+        if (updateErr) return res.status(400).send("Erro ao atualizar usuário");
+        res.json({ sucesso: true });
+      }
+    );
+  });
+});
+
 // ================= PRODUTOS =================
 app.post("/produtos", auth, (req, res) => {
   const { empresa, nome, preco, estoque } = req.body;
@@ -294,6 +356,27 @@ app.get("/produtos/:empresa", auth, (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).send("Erro ao buscar produtos");
       res.json(rows);
+    }
+  );
+});
+
+app.put("/produtos/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const { empresa, nome, preco, estoque } = req.body;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.run(
+    `UPDATE produtos
+     SET nome = ?, preco = ?, estoque = ?
+     WHERE id = ? AND empresa = ?`,
+    [nome, preco, estoque, id, empresa],
+    function (err) {
+      if (err) return res.status(500).send("Erro ao atualizar produto");
+      if (this.changes === 0) return res.status(404).send("Produto não encontrado");
+      res.json({ sucesso: true });
     }
   );
 });
@@ -328,6 +411,27 @@ app.get("/clientes/:empresa", auth, (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).send("Erro ao buscar clientes");
       res.json(rows);
+    }
+  );
+});
+
+app.put("/clientes/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.run(
+    `UPDATE clientes
+     SET nome = ?, endereco = ?, telefone = ?, nascimento = ?, cpf = ?
+     WHERE id = ? AND empresa = ?`,
+    [nome, endereco, telefone, nascimento, cpf || "", id, empresa],
+    function (err) {
+      if (err) return res.status(500).send("Erro ao atualizar cliente");
+      if (this.changes === 0) return res.status(404).send("Cliente não encontrado");
+      res.json({ sucesso: true });
     }
   );
 });
@@ -414,6 +518,48 @@ app.get("/vendas/:empresa", auth, (req, res) => {
   );
 });
 
+app.put("/vendas/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const { empresa, produto, quantidade, total, cliente_nome, pagamento, data } = req.body;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.get("SELECT * FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], (err, venda) => {
+    if (err) return res.status(500).send("Erro ao buscar venda");
+    if (!venda) return res.status(404).send("Venda não encontrada");
+
+    db.run(
+      `UPDATE vendas
+       SET produto = ?, quantidade = ?, total = ?, cliente_nome = ?, pagamento = ?, data = ?
+       WHERE id = ? AND empresa = ?`,
+      [produto, quantidade, total, cliente_nome, pagamento, data, id, empresa],
+      function (updateErr) {
+        if (updateErr) return res.status(500).send("Erro ao atualizar venda");
+
+        const diferenca = Number(total) - Number(venda.total || 0);
+
+        db.run(
+          `UPDATE financeiro
+           SET valor = valor + ?
+           WHERE empresa = ?
+           AND id = (
+             SELECT id FROM financeiro
+             WHERE empresa = ?
+             ORDER BY id DESC
+             LIMIT 1
+           )`,
+          [diferenca, empresa, empresa],
+          () => {
+            res.json({ sucesso: true });
+          }
+        );
+      }
+    );
+  });
+});
+
 // ================= FINANCEIRO =================
 app.get("/financeiro/:empresa", auth, (req, res) => {
   if (!validarEmpresa(req, req.params.empresa)) {
@@ -479,4 +625,4 @@ app.get("/dashboard/:empresa", auth, (req, res) => {
 });
 
 // ================= SERVIDOR =================
-app.listen(PORT, () => console.log("Servidor com usuários completos e controle por loja 🔐"));
+app.listen(PORT, () => console.log("Servidor com edição completa e controle por loja 🔐"));
