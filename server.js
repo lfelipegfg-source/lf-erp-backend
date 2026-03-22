@@ -91,14 +91,11 @@ db.serialize(() => {
     )
   `);
 
-  // Migrações
   ensureColumn("usuarios", "nome_completo", "TEXT");
   ensureColumn("usuarios", "cpf", "TEXT");
   ensureColumn("usuarios", "nascimento", "TEXT");
-
   ensureColumn("clientes", "cpf", "TEXT");
 
-  // Admin fixo
   bcrypt.hash("Lfgl.1308.", 10, (err, hash) => {
     if (err) return;
 
@@ -327,6 +324,27 @@ app.put("/usuarios/:id", auth, (req, res) => {
   });
 });
 
+app.delete("/usuarios/:id", auth, (req, res) => {
+  if (req.user.tipo !== "admin") {
+    return res.status(403).send("Apenas admin pode excluir usuário");
+  }
+
+  const id = req.params.id;
+
+  db.get("SELECT * FROM usuarios WHERE id = ?", [id], (err, user) => {
+    if (err) return res.status(500).send("Erro ao buscar usuário");
+    if (!user) return res.status(404).send("Usuário não encontrado");
+    if (user.usuario === "Lfelipeg") {
+      return res.status(400).send("Não é permitido excluir o admin principal");
+    }
+
+    db.run("DELETE FROM usuarios WHERE id = ?", [id], function (deleteErr) {
+      if (deleteErr) return res.status(500).send("Erro ao excluir usuário");
+      res.json({ sucesso: true });
+    });
+  });
+});
+
 // ================= PRODUTOS =================
 app.post("/produtos", auth, (req, res) => {
   const { empresa, nome, preco, estoque } = req.body;
@@ -375,6 +393,25 @@ app.put("/produtos/:id", auth, (req, res) => {
     [nome, preco, estoque, id, empresa],
     function (err) {
       if (err) return res.status(500).send("Erro ao atualizar produto");
+      if (this.changes === 0) return res.status(404).send("Produto não encontrado");
+      res.json({ sucesso: true });
+    }
+  );
+});
+
+app.delete("/produtos/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const empresa = req.query.empresa;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.run(
+    "DELETE FROM produtos WHERE id = ? AND empresa = ?",
+    [id, empresa],
+    function (err) {
+      if (err) return res.status(500).send("Erro ao excluir produto");
       if (this.changes === 0) return res.status(404).send("Produto não encontrado");
       res.json({ sucesso: true });
     }
@@ -430,6 +467,25 @@ app.put("/clientes/:id", auth, (req, res) => {
     [nome, endereco, telefone, nascimento, cpf || "", id, empresa],
     function (err) {
       if (err) return res.status(500).send("Erro ao atualizar cliente");
+      if (this.changes === 0) return res.status(404).send("Cliente não encontrado");
+      res.json({ sucesso: true });
+    }
+  );
+});
+
+app.delete("/clientes/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const empresa = req.query.empresa;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.run(
+    "DELETE FROM clientes WHERE id = ? AND empresa = ?",
+    [id, empresa],
+    function (err) {
+      if (err) return res.status(500).send("Erro ao excluir cliente");
       if (this.changes === 0) return res.status(404).send("Cliente não encontrado");
       res.json({ sucesso: true });
     }
@@ -560,6 +616,40 @@ app.put("/vendas/:id", auth, (req, res) => {
   });
 });
 
+app.delete("/vendas/:id", auth, (req, res) => {
+  const id = req.params.id;
+  const empresa = req.query.empresa;
+
+  if (!validarEmpresa(req, empresa)) {
+    return res.status(403).send("Sem acesso");
+  }
+
+  db.get("SELECT * FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], (err, venda) => {
+    if (err) return res.status(500).send("Erro ao buscar venda");
+    if (!venda) return res.status(404).send("Venda não encontrada");
+
+    db.run("DELETE FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], function (delErr) {
+      if (delErr) return res.status(500).send("Erro ao excluir venda");
+
+      db.run(
+        `UPDATE financeiro
+         SET valor = valor - ?
+         WHERE empresa = ?
+         AND id = (
+           SELECT id FROM financeiro
+           WHERE empresa = ?
+           ORDER BY id DESC
+           LIMIT 1
+         )`,
+        [Number(venda.total || 0), empresa, empresa],
+        () => {
+          res.json({ sucesso: true });
+        }
+      );
+    });
+  });
+});
+
 // ================= FINANCEIRO =================
 app.get("/financeiro/:empresa", auth, (req, res) => {
   if (!validarEmpresa(req, req.params.empresa)) {
@@ -625,4 +715,4 @@ app.get("/dashboard/:empresa", auth, (req, res) => {
 });
 
 // ================= SERVIDOR =================
-app.listen(PORT, () => console.log("Servidor com edição completa e controle por loja 🔐"));
+app.listen(PORT, () => console.log("Servidor com exclusão e edição completa 🔐"));
