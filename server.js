@@ -1,31 +1,29 @@
 const express = require("express");
 const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const SECRET = "lf-erp-chave-super-secreta";
+const SECRET = process.env.JWT_SECRET || "lf-erp-chave-super-secreta";
 const PORT = process.env.PORT || 3001;
 
-const db = new sqlite3.Database("./loja.db");
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL não definida.");
+  process.exit(1);
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 // ================= HELPERS =================
 function hoje() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function ensureColumn(table, column, definition) {
-  db.all(`PRAGMA table_info(${table})`, (err, columns) => {
-    if (err) return;
-    const exists = columns.some(col => col.name === column);
-    if (!exists) {
-      db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  });
 }
 
 function validarEmpresa(req, empresa) {
@@ -38,96 +36,89 @@ function podeGerenciarUsuarios(req) {
 }
 
 // ================= BANCO =================
-db.serialize(() => {
-  db.run(`
+async function initDb() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      usuario TEXT UNIQUE,
-      senha TEXT,
-      tipo TEXT,
-      empresa TEXT
-    )
+      id SERIAL PRIMARY KEY,
+      usuario TEXT UNIQUE NOT NULL,
+      senha TEXT NOT NULL,
+      tipo TEXT NOT NULL,
+      empresa TEXT,
+      nome_completo TEXT,
+      cpf TEXT,
+      nascimento TEXT
+    );
   `);
 
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS produtos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      empresa TEXT,
-      nome TEXT,
-      preco REAL,
-      estoque INTEGER
-    )
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      preco NUMERIC(12,2) NOT NULL DEFAULT 0,
+      estoque INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS clientes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      empresa TEXT,
-      nome TEXT,
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      nome TEXT NOT NULL,
       endereco TEXT,
       telefone TEXT,
-      nascimento TEXT
-    )
+      nascimento TEXT,
+      cpf TEXT
+    );
   `);
 
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS vendas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      empresa TEXT,
-      produto TEXT,
-      quantidade INTEGER,
-      total REAL,
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      produto TEXT NOT NULL,
+      quantidade INTEGER NOT NULL DEFAULT 0,
+      total NUMERIC(12,2) NOT NULL DEFAULT 0,
       cliente_nome TEXT,
       pagamento TEXT,
       data TEXT
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS financeiro (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      empresa TEXT,
-      valor REAL
-    )
-  `);
-
-  ensureColumn("usuarios", "nome_completo", "TEXT");
-  ensureColumn("usuarios", "cpf", "TEXT");
-  ensureColumn("usuarios", "nascimento", "TEXT");
-  ensureColumn("clientes", "cpf", "TEXT");
-
-  bcrypt.hash("Lfgl.1308.", 10, (err, hash) => {
-    if (err) return;
-
-    db.get(
-      "SELECT * FROM usuarios WHERE usuario = ?",
-      ["Lfelipeg"],
-      (selectErr, user) => {
-        if (selectErr) return;
-
-        if (!user) {
-          db.run(
-            `INSERT INTO usuarios
-            (usuario, senha, tipo, empresa, nome_completo, cpf, nascimento)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            ["Lfelipeg", hash, "admin", null, "Lfelipeg", "", ""]
-          );
-        } else {
-          db.run(
-            `UPDATE usuarios
-             SET senha = ?, tipo = ?, empresa = ?, nome_completo = COALESCE(nome_completo, ?)
-             WHERE usuario = ?`,
-            [hash, "admin", null, "Lfelipeg", "Lfelipeg"]
-          );
-        }
-      }
     );
-  });
-});
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS financeiro (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      valor NUMERIC(12,2) NOT NULL DEFAULT 0
+    );
+  `);
+
+  const hash = await bcrypt.hash("Lfgl.1308.", 10);
+  const existing = await pool.query(
+    `SELECT id FROM usuarios WHERE usuario = $1`,
+    ["Lfelipeg"]
+  );
+
+  if (existing.rowCount === 0) {
+    await pool.query(
+      `INSERT INTO usuarios
+      (usuario, senha, tipo, empresa, nome_completo, cpf, nascimento)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      ["Lfelipeg", hash, "admin", null, "Lfelipeg", "", ""]
+    );
+  } else {
+    await pool.query(
+      `UPDATE usuarios
+       SET senha = $1, tipo = $2, empresa = $3, nome_completo = COALESCE(nome_completo, $4)
+       WHERE usuario = $5`,
+      [hash, "admin", null, "Lfelipeg", "Lfelipeg"]
+    );
+  }
+}
 
 // ================= ROOT =================
-app.get("/", (req, res) => {
-  res.send("LF ERP online 🚀");
+app.get("/", async (req, res) => {
+  res.send("LF ERP online com PostgreSQL 🚀");
 });
 
 // ================= AUTH =================
@@ -145,15 +136,25 @@ function auth(req, res, next) {
 }
 
 // ================= LOGIN =================
-app.post("/login", (req, res) => {
-  const { usuario, senha } = req.body;
+app.post("/login", async (req, res) => {
+  try {
+    const { usuario, senha } = req.body;
 
-  db.get("SELECT * FROM usuarios WHERE usuario = ?", [usuario], async (err, user) => {
-    if (err) return res.status(500).send("Erro no servidor");
-    if (!user) return res.status(401).send("Usuário inválido");
+    const result = await pool.query(
+      `SELECT * FROM usuarios WHERE usuario = $1`,
+      [usuario]
+    );
 
+    if (result.rowCount === 0) {
+      return res.status(401).send("Usuário inválido");
+    }
+
+    const user = result.rows[0];
     const ok = await bcrypt.compare(senha, user.senha);
-    if (!ok) return res.status(401).send("Senha inválida");
+
+    if (!ok) {
+      return res.status(401).send("Senha inválida");
+    }
 
     const token = jwt.sign(
       {
@@ -174,53 +175,48 @@ app.post("/login", (req, res) => {
       usuario: user.usuario,
       nome_completo: user.nome_completo || ""
     });
-  });
+  } catch (error) {
+    res.status(500).send("Erro no servidor");
+  }
 });
 
 // ================= USUÁRIOS =================
-app.post("/usuarios", auth, (req, res) => {
-  if (!podeGerenciarUsuarios(req)) {
-    return res.status(403).send("Sem permissão");
-  }
-
-  const {
-    usuario,
-    senha,
-    tipo,
-    empresa,
-    nome_completo,
-    cpf,
-    nascimento
-  } = req.body;
-
-  if (!usuario || !senha || !tipo || !nome_completo) {
-    return res.status(400).send("Preencha os campos obrigatórios");
-  }
-
-  if (tipo === "admin" && req.user.tipo !== "admin") {
-    return res.status(403).send("Apenas admin pode criar admin");
-  }
-
-  if ((tipo === "gerente" || tipo === "funcionario") && !empresa) {
-    return res.status(400).send("Loja obrigatória");
-  }
-
-  if (req.user.tipo === "gerente") {
-    if (empresa !== req.user.empresa) {
-      return res.status(403).send("Gerente só pode cadastrar usuários da própria loja");
+app.post("/usuarios", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) {
+      return res.status(403).send("Sem permissão");
     }
-    if (tipo === "admin") {
-      return res.status(403).send("Gerente não pode criar admin");
+
+    const { usuario, senha, tipo, empresa, nome_completo, cpf, nascimento } = req.body;
+
+    if (!usuario || !senha || !tipo || !nome_completo) {
+      return res.status(400).send("Preencha os campos obrigatórios");
     }
-  }
 
-  bcrypt.hash(senha, 10, (err, hash) => {
-    if (err) return res.status(500).send("Erro ao criptografar senha");
+    if (tipo === "admin" && req.user.tipo !== "admin") {
+      return res.status(403).send("Apenas admin pode criar admin");
+    }
 
-    db.run(
+    if ((tipo === "gerente" || tipo === "funcionario") && !empresa) {
+      return res.status(400).send("Loja obrigatória");
+    }
+
+    if (req.user.tipo === "gerente") {
+      if (empresa !== req.user.empresa) {
+        return res.status(403).send("Gerente só pode cadastrar usuários da própria loja");
+      }
+      if (tipo === "admin") {
+        return res.status(403).send("Gerente não pode criar admin");
+      }
+    }
+
+    const hash = await bcrypt.hash(senha, 10);
+
+    const result = await pool.query(
       `INSERT INTO usuarios
       (usuario, senha, tipo, empresa, nome_completo, cpf, nascimento)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id`,
       [
         usuario,
         hash,
@@ -229,58 +225,56 @@ app.post("/usuarios", auth, (req, res) => {
         nome_completo,
         cpf || "",
         nascimento || ""
-      ],
-      function (insertErr) {
-        if (insertErr) return res.status(400).send("Erro ao criar usuário");
-        res.json({ sucesso: true, id: this.lastID });
-      }
+      ]
     );
-  });
+
+    res.json({ sucesso: true, id: result.rows[0].id });
+  } catch (error) {
+    res.status(400).send("Erro ao criar usuário");
+  }
 });
 
-app.get("/usuarios", auth, (req, res) => {
-  if (!podeGerenciarUsuarios(req)) {
-    return res.status(403).send("Sem permissão");
+app.get("/usuarios", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    let sql = `
+      SELECT id, usuario, tipo, empresa, nome_completo, cpf, nascimento
+      FROM usuarios
+    `;
+    const params = [];
+
+    if (req.user.tipo === "gerente") {
+      sql += ` WHERE empresa = $1 `;
+      params.push(req.user.empresa);
+    }
+
+    sql += ` ORDER BY nome_completo ASC NULLS LAST, usuario ASC`;
+
+    const result = await pool.query(sql, params);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao listar usuários");
   }
-
-  let sql = `
-    SELECT id, usuario, tipo, empresa, nome_completo, cpf, nascimento
-    FROM usuarios
-  `;
-  let params = [];
-
-  if (req.user.tipo === "gerente") {
-    sql += ` WHERE empresa = ? `;
-    params.push(req.user.empresa);
-  }
-
-  sql += ` ORDER BY nome_completo COLLATE NOCASE ASC, usuario COLLATE NOCASE ASC`;
-
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).send("Erro ao listar usuários");
-    res.json(rows);
-  });
 });
 
-app.put("/usuarios/:id", auth, (req, res) => {
-  if (!podeGerenciarUsuarios(req)) {
-    return res.status(403).send("Sem permissão");
-  }
+app.put("/usuarios/:id", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) {
+      return res.status(403).send("Sem permissão");
+    }
 
-  const id = req.params.id;
-  const {
-    usuario,
-    tipo,
-    empresa,
-    nome_completo,
-    cpf,
-    nascimento,
-    senha
-  } = req.body;
+    const id = req.params.id;
+    const { usuario, tipo, empresa, nome_completo, cpf, nascimento, senha } = req.body;
 
-  db.get("SELECT * FROM usuarios WHERE id = ?", [id], async (err, alvo) => {
-    if (err) return res.status(500).send("Erro ao buscar usuário");
-    if (!alvo) return res.status(404).send("Usuário não encontrado");
+    const alvoResult = await pool.query(`SELECT * FROM usuarios WHERE id = $1`, [id]);
+    if (alvoResult.rowCount === 0) {
+      return res.status(404).send("Usuário não encontrado");
+    }
+
+    const alvo = alvoResult.rows[0];
 
     if (req.user.tipo === "gerente") {
       if (alvo.empresa !== req.user.empresa) {
@@ -298,14 +292,13 @@ app.put("/usuarios/:id", auth, (req, res) => {
       return res.status(403).send("Apenas admin pode definir admin");
     }
 
-    const senhaFinal = senha && senha.trim() !== ""
-      ? await bcrypt.hash(senha, 10)
-      : alvo.senha;
+    const senhaFinal =
+      senha && senha.trim() !== "" ? await bcrypt.hash(senha, 10) : alvo.senha;
 
-    db.run(
+    await pool.query(
       `UPDATE usuarios
-       SET usuario = ?, senha = ?, tipo = ?, empresa = ?, nome_completo = ?, cpf = ?, nascimento = ?
-       WHERE id = ?`,
+       SET usuario = $1, senha = $2, tipo = $3, empresa = $4, nome_completo = $5, cpf = $6, nascimento = $7
+       WHERE id = $8`,
       [
         usuario,
         senhaFinal,
@@ -315,404 +308,443 @@ app.put("/usuarios/:id", auth, (req, res) => {
         cpf || "",
         nascimento || "",
         id
-      ],
-      function (updateErr) {
-        if (updateErr) return res.status(400).send("Erro ao atualizar usuário");
-        res.json({ sucesso: true });
-      }
+      ]
     );
-  });
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(400).send("Erro ao atualizar usuário");
+  }
 });
 
-app.delete("/usuarios/:id", auth, (req, res) => {
-  if (req.user.tipo !== "admin") {
-    return res.status(403).send("Apenas admin pode excluir usuário");
-  }
+app.delete("/usuarios/:id", auth, async (req, res) => {
+  try {
+    if (req.user.tipo !== "admin") {
+      return res.status(403).send("Apenas admin pode excluir usuário");
+    }
 
-  const id = req.params.id;
+    const id = req.params.id;
 
-  db.get("SELECT * FROM usuarios WHERE id = ?", [id], (err, user) => {
-    if (err) return res.status(500).send("Erro ao buscar usuário");
-    if (!user) return res.status(404).send("Usuário não encontrado");
-    if (user.usuario === "Lfelipeg") {
+    const result = await pool.query(`SELECT * FROM usuarios WHERE id = $1`, [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).send("Usuário não encontrado");
+    }
+
+    if (result.rows[0].usuario === "Lfelipeg") {
       return res.status(400).send("Não é permitido excluir o admin principal");
     }
 
-    db.run("DELETE FROM usuarios WHERE id = ?", [id], function (deleteErr) {
-      if (deleteErr) return res.status(500).send("Erro ao excluir usuário");
-      res.json({ sucesso: true });
-    });
-  });
+    await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir usuário");
+  }
 });
 
 // ================= PRODUTOS =================
-app.post("/produtos", auth, (req, res) => {
-  const { empresa, nome, preco, estoque } = req.body;
+app.post("/produtos", auth, async (req, res) => {
+  try {
+    const { empresa, nome, preco, estoque } = req.body;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    "INSERT INTO produtos (empresa, nome, preco, estoque) VALUES (?, ?, ?, ?)",
-    [empresa, nome, preco, estoque],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao cadastrar produto");
-      res.json({ id: this.lastID });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `INSERT INTO produtos (empresa, nome, preco, estoque)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [empresa, nome, preco, estoque]
+    );
+
+    res.json({ id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar produto");
+  }
 });
 
-app.get("/produtos/:empresa", auth, (req, res) => {
-  if (!validarEmpresa(req, req.params.empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.all(
-    "SELECT * FROM produtos WHERE empresa = ? ORDER BY nome COLLATE NOCASE ASC",
-    [req.params.empresa],
-    (err, rows) => {
-      if (err) return res.status(500).send("Erro ao buscar produtos");
-      res.json(rows);
+app.get("/produtos/:empresa", auth, async (req, res) => {
+  try {
+    if (!validarEmpresa(req, req.params.empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `SELECT * FROM produtos WHERE empresa = $1 ORDER BY nome ASC`,
+      [req.params.empresa]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar produtos");
+  }
 });
 
-app.put("/produtos/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const { empresa, nome, preco, estoque } = req.body;
+app.put("/produtos/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { empresa, nome, preco, estoque } = req.body;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    `UPDATE produtos
-     SET nome = ?, preco = ?, estoque = ?
-     WHERE id = ? AND empresa = ?`,
-    [nome, preco, estoque, id, empresa],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao atualizar produto");
-      if (this.changes === 0) return res.status(404).send("Produto não encontrado");
-      res.json({ sucesso: true });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `UPDATE produtos
+       SET nome = $1, preco = $2, estoque = $3
+       WHERE id = $4 AND empresa = $5`,
+      [nome, preco, estoque, id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Produto não encontrado");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar produto");
+  }
 });
 
-app.delete("/produtos/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const empresa = req.query.empresa;
+app.delete("/produtos/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const empresa = req.query.empresa;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    "DELETE FROM produtos WHERE id = ? AND empresa = ?",
-    [id, empresa],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao excluir produto");
-      if (this.changes === 0) return res.status(404).send("Produto não encontrado");
-      res.json({ sucesso: true });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `DELETE FROM produtos WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Produto não encontrado");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir produto");
+  }
 });
 
 // ================= CLIENTES =================
-app.post("/clientes", auth, (req, res) => {
-  const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
+app.post("/clientes", auth, async (req, res) => {
+  try {
+    const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    `INSERT INTO clientes (empresa, nome, endereco, telefone, nascimento, cpf)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [empresa, nome, endereco, telefone, nascimento, cpf || ""],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao cadastrar cliente");
-      res.json({ id: this.lastID });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `INSERT INTO clientes (empresa, nome, endereco, telefone, nascimento, cpf)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [empresa, nome, endereco, telefone, nascimento, cpf || ""]
+    );
+
+    res.json({ id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar cliente");
+  }
 });
 
-app.get("/clientes/:empresa", auth, (req, res) => {
-  if (!validarEmpresa(req, req.params.empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.all(
-    "SELECT * FROM clientes WHERE empresa = ? ORDER BY nome COLLATE NOCASE ASC",
-    [req.params.empresa],
-    (err, rows) => {
-      if (err) return res.status(500).send("Erro ao buscar clientes");
-      res.json(rows);
+app.get("/clientes/:empresa", auth, async (req, res) => {
+  try {
+    if (!validarEmpresa(req, req.params.empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `SELECT * FROM clientes WHERE empresa = $1 ORDER BY nome ASC`,
+      [req.params.empresa]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar clientes");
+  }
 });
 
-app.put("/clientes/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
+app.put("/clientes/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    `UPDATE clientes
-     SET nome = ?, endereco = ?, telefone = ?, nascimento = ?, cpf = ?
-     WHERE id = ? AND empresa = ?`,
-    [nome, endereco, telefone, nascimento, cpf || "", id, empresa],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao atualizar cliente");
-      if (this.changes === 0) return res.status(404).send("Cliente não encontrado");
-      res.json({ sucesso: true });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `UPDATE clientes
+       SET nome = $1, endereco = $2, telefone = $3, nascimento = $4, cpf = $5
+       WHERE id = $6 AND empresa = $7`,
+      [nome, endereco, telefone, nascimento, cpf || "", id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Cliente não encontrado");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar cliente");
+  }
 });
 
-app.delete("/clientes/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const empresa = req.query.empresa;
+app.delete("/clientes/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const empresa = req.query.empresa;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.run(
-    "DELETE FROM clientes WHERE id = ? AND empresa = ?",
-    [id, empresa],
-    function (err) {
-      if (err) return res.status(500).send("Erro ao excluir cliente");
-      if (this.changes === 0) return res.status(404).send("Cliente não encontrado");
-      res.json({ sucesso: true });
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `DELETE FROM clientes WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Cliente não encontrado");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir cliente");
+  }
 });
 
 // ================= VENDAS =================
-app.post("/vendas", auth, (req, res) => {
-  const { produto_id, quantidade, empresa, cliente_id, pagamento } = req.body;
+app.post("/vendas", auth, async (req, res) => {
+  try {
+    const { produto_id, quantidade, empresa, cliente_id, pagamento } = req.body;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.get(
-    "SELECT * FROM produtos WHERE id = ? AND empresa = ?",
-    [produto_id, empresa],
-    (err, produto) => {
-      if (err) return res.status(500).send("Erro ao buscar produto");
-      if (!produto) return res.status(404).send("Produto não encontrado");
-      if (produto.estoque < quantidade) {
-        return res.status(400).send("Estoque insuficiente");
-      }
-
-      const concluirVenda = (clienteNome) => {
-        const total = Number(produto.preco) * Number(quantidade);
-        const data = hoje();
-
-        db.run(
-          "UPDATE produtos SET estoque = estoque - ? WHERE id = ?",
-          [quantidade, produto_id],
-          (updateErr) => {
-            if (updateErr) return res.status(500).send("Erro ao atualizar estoque");
-
-            db.run(
-              `INSERT INTO vendas
-              (empresa, produto, quantidade, total, cliente_nome, pagamento, data)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [empresa, produto.nome, quantidade, total, clienteNome, pagamento, data],
-              function (insertErr) {
-                if (insertErr) return res.status(500).send("Erro ao registrar venda");
-
-                db.run(
-                  "INSERT INTO financeiro (empresa, valor) VALUES (?, ?)",
-                  [empresa, total],
-                  (finErr) => {
-                    if (finErr) return res.status(500).send("Erro ao registrar financeiro");
-                    res.json({ sucesso: true, id: this.lastID });
-                  }
-                );
-              }
-            );
-          }
-        );
-      };
-
-      if (cliente_id) {
-        db.get(
-          "SELECT * FROM clientes WHERE id = ? AND empresa = ?",
-          [cliente_id, empresa],
-          (clienteErr, cliente) => {
-            if (clienteErr) return res.status(500).send("Erro ao buscar cliente");
-            if (!cliente) return res.status(404).send("Cliente não encontrado");
-            concluirVenda(cliente.nome);
-          }
-        );
-      } else {
-        concluirVenda("Consumidor Final");
-      }
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
-});
 
-app.get("/vendas/:empresa", auth, (req, res) => {
-  if (!validarEmpresa(req, req.params.empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.all(
-    "SELECT * FROM vendas WHERE empresa = ? ORDER BY id DESC",
-    [req.params.empresa],
-    (err, rows) => {
-      if (err) return res.status(500).send("Erro ao buscar vendas");
-      res.json(rows);
-    }
-  );
-});
-
-app.put("/vendas/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const { empresa, produto, quantidade, total, cliente_nome, pagamento, data } = req.body;
-
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.get("SELECT * FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], (err, venda) => {
-    if (err) return res.status(500).send("Erro ao buscar venda");
-    if (!venda) return res.status(404).send("Venda não encontrada");
-
-    db.run(
-      `UPDATE vendas
-       SET produto = ?, quantidade = ?, total = ?, cliente_nome = ?, pagamento = ?, data = ?
-       WHERE id = ? AND empresa = ?`,
-      [produto, quantidade, total, cliente_nome, pagamento, data, id, empresa],
-      function (updateErr) {
-        if (updateErr) return res.status(500).send("Erro ao atualizar venda");
-
-        const diferenca = Number(total) - Number(venda.total || 0);
-
-        db.run(
-          `UPDATE financeiro
-           SET valor = valor + ?
-           WHERE empresa = ?
-           AND id = (
-             SELECT id FROM financeiro
-             WHERE empresa = ?
-             ORDER BY id DESC
-             LIMIT 1
-           )`,
-          [diferenca, empresa, empresa],
-          () => {
-            res.json({ sucesso: true });
-          }
-        );
-      }
+    const produtoResult = await pool.query(
+      `SELECT * FROM produtos WHERE id = $1 AND empresa = $2`,
+      [produto_id, empresa]
     );
-  });
+
+    if (produtoResult.rowCount === 0) {
+      return res.status(404).send("Produto não encontrado");
+    }
+
+    const produto = produtoResult.rows[0];
+    if (Number(produto.estoque) < Number(quantidade)) {
+      return res.status(400).send("Estoque insuficiente");
+    }
+
+    let clienteNome = "Consumidor Final";
+
+    if (cliente_id) {
+      const clienteResult = await pool.query(
+        `SELECT * FROM clientes WHERE id = $1 AND empresa = $2`,
+        [cliente_id, empresa]
+      );
+
+      if (clienteResult.rowCount === 0) {
+        return res.status(404).send("Cliente não encontrado");
+      }
+
+      clienteNome = clienteResult.rows[0].nome;
+    }
+
+    const total = Number(produto.preco) * Number(quantidade);
+    const data = hoje();
+
+    await pool.query(
+      `UPDATE produtos SET estoque = estoque - $1 WHERE id = $2`,
+      [quantidade, produto_id]
+    );
+
+    const vendaResult = await pool.query(
+      `INSERT INTO vendas
+      (empresa, produto, quantidade, total, cliente_nome, pagamento, data)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id`,
+      [empresa, produto.nome, quantidade, total, clienteNome, pagamento, data]
+    );
+
+    await pool.query(
+      `INSERT INTO financeiro (empresa, valor) VALUES ($1, $2)`,
+      [empresa, total]
+    );
+
+    res.json({ sucesso: true, id: vendaResult.rows[0].id });
+  } catch (error) {
+    res.status(500).send("Erro ao registrar venda");
+  }
 });
 
-app.delete("/vendas/:id", auth, (req, res) => {
-  const id = req.params.id;
-  const empresa = req.query.empresa;
+app.get("/vendas/:empresa", auth, async (req, res) => {
+  try {
+    if (!validarEmpresa(req, req.params.empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
+    const result = await pool.query(
+      `SELECT * FROM vendas WHERE empresa = $1 ORDER BY id DESC`,
+      [req.params.empresa]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar vendas");
   }
+});
 
-  db.get("SELECT * FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], (err, venda) => {
-    if (err) return res.status(500).send("Erro ao buscar venda");
-    if (!venda) return res.status(404).send("Venda não encontrada");
+app.put("/vendas/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { empresa, produto, quantidade, total, cliente_nome, pagamento, data } = req.body;
 
-    db.run("DELETE FROM vendas WHERE id = ? AND empresa = ?", [id, empresa], function (delErr) {
-      if (delErr) return res.status(500).send("Erro ao excluir venda");
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
 
-      db.run(
-        `UPDATE financeiro
-         SET valor = valor - ?
-         WHERE empresa = ?
-         AND id = (
-           SELECT id FROM financeiro
-           WHERE empresa = ?
-           ORDER BY id DESC
-           LIMIT 1
-         )`,
-        [Number(venda.total || 0), empresa, empresa],
-        () => {
-          res.json({ sucesso: true });
-        }
+    const vendaResult = await pool.query(
+      `SELECT * FROM vendas WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (vendaResult.rowCount === 0) {
+      return res.status(404).send("Venda não encontrada");
+    }
+
+    const venda = vendaResult.rows[0];
+
+    await pool.query(
+      `UPDATE vendas
+       SET produto = $1, quantidade = $2, total = $3, cliente_nome = $4, pagamento = $5, data = $6
+       WHERE id = $7 AND empresa = $8`,
+      [produto, quantidade, total, cliente_nome, pagamento, data, id, empresa]
+    );
+
+    const diferenca = Number(total) - Number(venda.total || 0);
+
+    if (diferenca !== 0) {
+      await pool.query(
+        `INSERT INTO financeiro (empresa, valor) VALUES ($1, $2)`,
+        [empresa, diferenca]
       );
-    });
-  });
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar venda");
+  }
+});
+
+app.delete("/vendas/:id", auth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const empresa = req.query.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const vendaResult = await pool.query(
+      `SELECT * FROM vendas WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (vendaResult.rowCount === 0) {
+      return res.status(404).send("Venda não encontrada");
+    }
+
+    const venda = vendaResult.rows[0];
+
+    await pool.query(
+      `DELETE FROM vendas WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    await pool.query(
+      `INSERT INTO financeiro (empresa, valor) VALUES ($1, $2)`,
+      [empresa, -Number(venda.total || 0)]
+    );
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir venda");
+  }
 });
 
 // ================= FINANCEIRO =================
-app.get("/financeiro/:empresa", auth, (req, res) => {
-  if (!validarEmpresa(req, req.params.empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.get(
-    "SELECT SUM(valor) as total FROM financeiro WHERE empresa = ?",
-    [req.params.empresa],
-    (err, row) => {
-      if (err) return res.status(500).send("Erro ao buscar financeiro");
-      res.json({ entrada: row?.total || 0 });
+app.get("/financeiro/:empresa", auth, async (req, res) => {
+  try {
+    if (!validarEmpresa(req, req.params.empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const result = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total FROM financeiro WHERE empresa = $1`,
+      [req.params.empresa]
+    );
+
+    res.json({ entrada: Number(result.rows[0].total || 0) });
+  } catch (error) {
+    res.status(500).send("Erro ao buscar financeiro");
+  }
 });
 
 // ================= DASHBOARD =================
-app.get("/dashboard/:empresa", auth, (req, res) => {
-  const empresa = req.params.empresa;
+app.get("/dashboard/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
 
-  if (!validarEmpresa(req, empresa)) {
-    return res.status(403).send("Sem acesso");
-  }
-
-  db.get(
-    "SELECT COUNT(*) as vendas FROM vendas WHERE empresa = ?",
-    [empresa],
-    (err, v) => {
-      if (err) return res.status(500).send("Erro dashboard vendas");
-
-      db.get(
-        "SELECT SUM(total) as faturamento FROM vendas WHERE empresa = ?",
-        [empresa],
-        (err2, f) => {
-          if (err2) return res.status(500).send("Erro dashboard faturamento");
-
-          db.get(
-            "SELECT COUNT(*) as produtos FROM produtos WHERE empresa = ?",
-            [empresa],
-            (err3, p) => {
-              if (err3) return res.status(500).send("Erro dashboard produtos");
-
-              db.get(
-                "SELECT COUNT(*) as clientes FROM clientes WHERE empresa = ?",
-                [empresa],
-                (err4, c) => {
-                  if (err4) return res.status(500).send("Erro dashboard clientes");
-
-                  res.json({
-                    totalVendas: v?.vendas || 0,
-                    faturamento: f?.faturamento || 0,
-                    totalProdutos: p?.produtos || 0,
-                    totalClientes: c?.clientes || 0
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
-  );
+
+    const vendas = await pool.query(
+      `SELECT COUNT(*) AS total FROM vendas WHERE empresa = $1`,
+      [empresa]
+    );
+
+    const faturamento = await pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total FROM vendas WHERE empresa = $1`,
+      [empresa]
+    );
+
+    const produtos = await pool.query(
+      `SELECT COUNT(*) AS total FROM produtos WHERE empresa = $1`,
+      [empresa]
+    );
+
+    const clientes = await pool.query(
+      `SELECT COUNT(*) AS total FROM clientes WHERE empresa = $1`,
+      [empresa]
+    );
+
+    res.json({
+      totalVendas: Number(vendas.rows[0].total || 0),
+      faturamento: Number(faturamento.rows[0].total || 0),
+      totalProdutos: Number(produtos.rows[0].total || 0),
+      totalClientes: Number(clientes.rows[0].total || 0)
+    });
+  } catch (error) {
+    res.status(500).send("Erro no dashboard");
+  }
 });
 
-// ================= SERVIDOR =================
-app.listen(PORT, () => console.log("Servidor com exclusão e edição completa 🔐"));
+// ================= START =================
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log("Servidor com PostgreSQL e exclusão/edição completa 🔐");
+    });
+  })
+  .catch((err) => {
+    console.error("Erro ao iniciar banco:", err);
+    process.exit(1);
+  });

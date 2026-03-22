@@ -1,7 +1,7 @@
 {
   "name": "lf-erp-backend",
-  "version": "1.0.0",
-  "description": "Sistema ERP LF",
+  "version": "2.0.0",
+  "description": "LF ERP com PostgreSQL no Neon",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,10 +9,10 @@
   "author": "LF Tech Solutions",
   "license": "ISC",
   "dependencies": {
-    "bcrypt": "^5.1.0",
+    "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.0",
-    "sqlite3": "^5.1.6"
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
   }
 }
