@@ -43,6 +43,24 @@ function normalizarDecimal(valor) {
   return Number.isFinite(numero) ? numero : 0;
 }
 
+function buildDateRangeClause(dateColumn, empresa, inicio, fim, extraClauses = "", statusParams = []) {
+  const params = [empresa];
+  let sql = ` WHERE empresa = $1 `;
+  if (inicio) {
+    params.push(inicio);
+    sql += ` AND ${dateColumn} >= $${params.length} `;
+  }
+  if (fim) {
+    params.push(fim);
+    sql += ` AND ${dateColumn} <= $${params.length} `;
+  }
+  if (extraClauses) {
+    sql += " " + extraClauses + " ";
+    params.push(...statusParams);
+  }
+  return { sql, params };
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -1202,14 +1220,28 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    const { inicio, fim } = req.query;
+    const paramsVendas = [empresa];
+    let filtroVendas = ` WHERE empresa = $1 `;
+
+    if (inicio) {
+      paramsVendas.push(inicio);
+      filtroVendas += ` AND data >= $${paramsVendas.length} `;
+    }
+
+    if (fim) {
+      paramsVendas.push(fim);
+      filtroVendas += ` AND data <= $${paramsVendas.length} `;
+    }
+
     const vendas = await pool.query(
-      `SELECT COUNT(*) AS total FROM vendas WHERE empresa = $1`,
-      [empresa]
+      `SELECT COUNT(*) AS total FROM vendas ${filtroVendas}`,
+      paramsVendas
     );
 
     const faturamento = await pool.query(
-      `SELECT COALESCE(SUM(total), 0) AS total FROM vendas WHERE empresa = $1`,
-      [empresa]
+      `SELECT COALESCE(SUM(total), 0) AS total FROM vendas ${filtroVendas}`,
+      paramsVendas
     );
 
     const produtos = await pool.query(
@@ -1222,19 +1254,49 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       [empresa]
     );
 
+    const paramsFinanceiro = [empresa];
+    let filtroFinanceiro = ` WHERE empresa = $1 `;
+
+    if (inicio) {
+      paramsFinanceiro.push(inicio);
+      filtroFinanceiro += ` AND COALESCE(pagamento_data, vencimento, criado_em::date::text) >= $${paramsFinanceiro.length} `;
+    }
+
+    if (fim) {
+      paramsFinanceiro.push(fim);
+      filtroFinanceiro += ` AND COALESCE(pagamento_data, vencimento, criado_em::date::text) <= $${paramsFinanceiro.length} `;
+    }
+
     const custos = await pool.query(
-      `SELECT COALESCE(SUM(valor), 0) AS total FROM lancamentos_financeiros WHERE empresa = $1 AND tipo = 'custo' AND status = 'pago'`,
-      [empresa]
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM lancamentos_financeiros
+       ${filtroFinanceiro} AND tipo = 'custo' AND status = 'pago'`,
+      paramsFinanceiro
     );
 
     const despesas = await pool.query(
-      `SELECT COALESCE(SUM(valor), 0) AS total FROM lancamentos_financeiros WHERE empresa = $1 AND tipo = 'despesa' AND status = 'pago'`,
-      [empresa]
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM lancamentos_financeiros
+       ${filtroFinanceiro} AND tipo = 'despesa' AND status = 'pago'`,
+      paramsFinanceiro
     );
 
+    const paramsInvest = [empresa];
+    let filtroInvest = ` WHERE empresa = $1 `;
+
+    if (inicio) {
+      paramsInvest.push(inicio);
+      filtroInvest += ` AND data >= $${paramsInvest.length} `;
+    }
+
+    if (fim) {
+      paramsInvest.push(fim);
+      filtroInvest += ` AND data <= $${paramsInvest.length} `;
+    }
+
     const investimentos = await pool.query(
-      `SELECT COALESCE(SUM(valor), 0) AS total FROM investimentos WHERE empresa = $1`,
-      [empresa]
+      `SELECT COALESCE(SUM(valor), 0) AS total FROM investimentos ${filtroInvest}`,
+      paramsInvest
     );
 
     res.json({
@@ -1248,6 +1310,75 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
     });
   } catch (error) {
     res.status(500).send("Erro no dashboard");
+  }
+});
+
+app.get("/dashboard-graficos/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const { inicio, fim } = req.query;
+    const params = [empresa];
+    let filtro = ` WHERE empresa = $1 `;
+
+    if (inicio) {
+      params.push(inicio);
+      filtro += ` AND data >= $${params.length} `;
+    }
+
+    if (fim) {
+      params.push(fim);
+      filtro += ` AND data <= $${params.length} `;
+    }
+
+    const vendasPorDia = await pool.query(
+      `SELECT data, COALESCE(SUM(total), 0) AS total
+       FROM vendas
+       ${filtro}
+       GROUP BY data
+       ORDER BY data ASC`,
+      params
+    );
+
+    const paramsFinanceiro = [empresa];
+    let filtroFinanceiro = ` WHERE empresa = $1 `;
+
+    if (inicio) {
+      paramsFinanceiro.push(inicio);
+      filtroFinanceiro += ` AND COALESCE(pagamento_data, vencimento, criado_em::date::text) >= $${paramsFinanceiro.length} `;
+    }
+
+    if (fim) {
+      paramsFinanceiro.push(fim);
+      filtroFinanceiro += ` AND COALESCE(pagamento_data, vencimento, criado_em::date::text) <= $${paramsFinanceiro.length} `;
+    }
+
+    const resumoFinanceiro = await pool.query(
+      `SELECT
+        COALESCE(SUM(CASE WHEN tipo = 'custo' AND status = 'pago' THEN valor ELSE 0 END), 0) AS custos,
+        COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END), 0) AS despesas
+       FROM lancamentos_financeiros
+       ${filtroFinanceiro}`,
+      paramsFinanceiro
+    );
+
+    res.json({
+      vendasPorDia: vendasPorDia.rows.map(item => ({
+        data: item.data,
+        total: Number(item.total || 0)
+      })),
+      resumo: {
+        receitas: Number((await pool.query(`SELECT COALESCE(SUM(total), 0) AS total FROM vendas ${filtro}`, params)).rows[0].total || 0),
+        custos: Number(resumoFinanceiro.rows[0].custos || 0),
+        despesas: Number(resumoFinanceiro.rows[0].despesas || 0)
+      }
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao gerar gráficos do dashboard");
   }
 });
 
