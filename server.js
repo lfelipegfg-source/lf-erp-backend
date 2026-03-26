@@ -69,6 +69,13 @@ function auth(req, res, next) {
   }
 }
 
+function apenasAdmin(req, res, next) {
+  if (req.user?.tipo !== "admin") {
+    return res.status(403).send("Apenas admin pode acessar");
+  }
+  next();
+}
+
 async function registrarMovimentacaoEstoque({
   empresa,
   produto_id,
@@ -1157,7 +1164,7 @@ app.delete("/vendas/:id", auth, async (req, res) => {
             empresa,
             venda.produto_id,
             normalizarInt(venda.quantidade),
-            `Estorno da venda #${venda.id}`,
+            `Estorno da venda ${venda.id}`,
             venda.id,
             req.user.id
           ]
@@ -1166,8 +1173,8 @@ app.delete("/vendas/:id", auth, async (req, res) => {
     }
 
     await client.query(`DELETE FROM vendas WHERE id = $1 AND empresa = $2`, [id, empresa]);
-    await client.query("COMMIT");
 
+    await client.query("COMMIT");
     res.json({ sucesso: true });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -1185,14 +1192,21 @@ app.post("/compras", auth, async (req, res) => {
       return res.status(403).send("Sem permissão");
     }
 
-    const { empresa, fornecedor_id, data, observacao, gerar_conta_pagar, itens } = req.body;
+    const {
+      empresa,
+      fornecedor_id,
+      data,
+      observacao,
+      gerar_conta_pagar,
+      itens
+    } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
     }
 
     if (!empresa || !fornecedor_id || !Array.isArray(itens) || itens.length === 0) {
-      return res.status(400).send("Preencha os campos obrigatórios da compra");
+      return res.status(400).send("Dados da compra inválidos");
     }
 
     await client.query("BEGIN");
@@ -1207,15 +1221,15 @@ app.post("/compras", auth, async (req, res) => {
       return res.status(404).send("Fornecedor não encontrado");
     }
 
-    let total = 0;
-    const itensValidados = [];
+    let totalCompra = 0;
+    const itensProcessados = [];
 
     for (const item of itens) {
       const produtoId = normalizarInt(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
       const custoUnitario = normalizarDecimal(item.custo_unitario);
 
-      if (!produtoId || quantidade <= 0 || custoUnitario <= 0) {
+      if (!produtoId || quantidade <= 0) {
         await client.query("ROLLBACK");
         return res.status(400).send("Itens da compra inválidos");
       }
@@ -1227,17 +1241,19 @@ app.post("/compras", auth, async (req, res) => {
 
       if (produtoResult.rowCount === 0) {
         await client.query("ROLLBACK");
-        return res.status(404).send("Produto da compra não encontrado");
+        return res.status(404).send(`Produto ${produtoId} não encontrado`);
       }
 
       const produto = produtoResult.rows[0];
       const subtotal = quantidade * custoUnitario;
-      total += subtotal;
+      totalCompra += subtotal;
 
-      itensValidados.push({
+      itensProcessados.push({
         produto,
+        produto_id: produtoId,
+        produto_nome: produto.nome,
         quantidade,
-        custoUnitario,
+        custo_unitario: custoUnitario,
         subtotal
       });
     }
@@ -1251,39 +1267,37 @@ app.post("/compras", auth, async (req, res) => {
         empresa,
         fornecedor_id,
         data || hoje(),
-        total,
+        totalCompra,
         observacao || "",
-        Boolean(gerar_conta_pagar),
+        !!gerar_conta_pagar,
         req.user.id
       ]
     );
 
     const compraId = compraResult.rows[0].id;
 
-    for (const item of itensValidados) {
+    for (const item of itensProcessados) {
       await client.query(
         `INSERT INTO compra_itens
          (compra_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           compraId,
-          item.produto.id,
-          item.produto.nome,
+          item.produto_id,
+          item.produto_nome,
           item.quantidade,
-          item.custoUnitario,
+          item.custo_unitario,
           item.subtotal
         ]
       );
 
       const estoqueAnterior = normalizarInt(item.produto.estoque);
       const custoAnterior = normalizarDecimal(item.produto.custo);
-      const quantidadeEntrada = normalizarInt(item.quantidade);
-      const estoqueNovo = estoqueAnterior + quantidadeEntrada;
+      const novoEstoque = estoqueAnterior + item.quantidade;
 
-      let custoMedioNovo = item.custoUnitario;
-      if (estoqueNovo > 0) {
-        custoMedioNovo =
-          ((estoqueAnterior * custoAnterior) + (quantidadeEntrada * item.custoUnitario)) / estoqueNovo;
+      let novoCusto = custoAnterior;
+      if (novoEstoque > 0) {
+        novoCusto = ((estoqueAnterior * custoAnterior) + (item.quantidade * item.custo_unitario)) / novoEstoque;
       }
 
       await client.query(
@@ -1292,7 +1306,7 @@ app.post("/compras", auth, async (req, res) => {
              custo = $2,
              atualizado_em = NOW()
          WHERE id = $3 AND empresa = $4`,
-        [estoqueNovo, custoMedioNovo, item.produto.id, empresa]
+        [novoEstoque, normalizarDecimal(novoCusto), item.produto_id, empresa]
       );
 
       await client.query(
@@ -1301,25 +1315,24 @@ app.post("/compras", auth, async (req, res) => {
          VALUES ($1, $2, 'entrada_compra', $3, $4, 'compra', $5, $6, NOW())`,
         [
           empresa,
-          item.produto.id,
-          quantidadeEntrada,
-          `Entrada por compra #${compraId}`,
+          item.produto_id,
+          item.quantidade,
+          `Entrada pela compra ${compraId}`,
           compraId,
           req.user.id
         ]
       );
     }
 
-    if (Boolean(gerar_conta_pagar)) {
-      const fornecedor = fornecedorResult.rows[0];
+    if (gerar_conta_pagar) {
       await client.query(
         `INSERT INTO lancamentos_financeiros
-         (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
-         VALUES ($1, 'custo', 'Compra de mercadoria', $2, $3, NULL, 'pendente', NULL, FALSE, NULL, $4, $5)`,
+         (empresa, tipo, categoria, descricao, valor, vencimento, status, observacao, criado_por)
+         VALUES ($1, 'despesa', 'compra_estoque', $2, $3, $4, 'pendente', $5, $6)`,
         [
           empresa,
-          `Compra #${compraId} - ${fornecedor.nome}`,
-          total,
+          `Compra #${compraId} - ${fornecedorResult.rows[0].nome}`,
+          totalCompra,
           data || hoje(),
           observacao || "",
           req.user.id
@@ -1346,8 +1359,7 @@ app.get("/compras/:empresa", auth, async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT c.*,
-              f.nome AS fornecedor_nome
+      `SELECT c.*, f.nome AS fornecedor_nome
        FROM compras c
        INNER JOIN fornecedores f ON f.id = c.fornecedor_id
        WHERE c.empresa = $1
@@ -1361,39 +1373,113 @@ app.get("/compras/:empresa", auth, async (req, res) => {
   }
 });
 
-app.get("/compras/:empresa/:id", auth, async (req, res) => {
+app.get("/compras-itens/:compraId", auth, async (req, res) => {
   try {
-    const empresa = req.params.empresa;
-    const id = req.params.id;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
+    const compraId = req.params.compraId;
 
     const compraResult = await pool.query(
-      `SELECT c.*,
-              f.nome AS fornecedor_nome
-       FROM compras c
-       INNER JOIN fornecedores f ON f.id = c.fornecedor_id
-       WHERE c.empresa = $1 AND c.id = $2`,
-      [empresa, id]
+      `SELECT * FROM compras WHERE id = $1`,
+      [compraId]
     );
 
     if (compraResult.rowCount === 0) {
       return res.status(404).send("Compra não encontrada");
     }
 
-    const itensResult = await pool.query(
+    const compra = compraResult.rows[0];
+
+    if (!validarEmpresa(req, compra.empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const result = await pool.query(
       `SELECT * FROM compra_itens WHERE compra_id = $1 ORDER BY id ASC`,
-      [id]
+      [compraId]
     );
 
-    res.json({
-      ...compraResult.rows[0],
-      itens: itensResult.rows
-    });
+    res.json(result.rows);
   } catch (error) {
-    res.status(500).send("Erro ao buscar detalhes da compra");
+    res.status(500).send("Erro ao buscar itens da compra");
+  }
+});
+
+app.delete("/compras/:id", auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!podeGerenciarCompras(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const compraId = req.params.id;
+
+    await client.query("BEGIN");
+
+    const compraResult = await client.query(
+      `SELECT * FROM compras WHERE id = $1 FOR UPDATE`,
+      [compraId]
+    );
+
+    if (compraResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).send("Compra não encontrada");
+    }
+
+    const compra = compraResult.rows[0];
+
+    if (!validarEmpresa(req, compra.empresa)) {
+      await client.query("ROLLBACK");
+      return res.status(403).send("Sem acesso");
+    }
+
+    const itensResult = await client.query(
+      `SELECT * FROM compra_itens WHERE compra_id = $1 ORDER BY id ASC`,
+      [compraId]
+    );
+
+    for (const item of itensResult.rows) {
+      const produtoResult = await client.query(
+        `SELECT * FROM produtos WHERE id = $1 AND empresa = $2 FOR UPDATE`,
+        [item.produto_id, compra.empresa]
+      );
+
+      if (produtoResult.rowCount > 0) {
+        const produto = produtoResult.rows[0];
+        const novoEstoque = Math.max(0, normalizarInt(produto.estoque) - normalizarInt(item.quantidade));
+
+        await client.query(
+          `UPDATE produtos
+           SET estoque = $1,
+               atualizado_em = NOW()
+           WHERE id = $2 AND empresa = $3`,
+          [novoEstoque, item.produto_id, compra.empresa]
+        );
+
+        await client.query(
+          `INSERT INTO movimentacoes_estoque
+           (empresa, produto_id, tipo, quantidade, observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
+           VALUES ($1, $2, 'estorno_compra', $3, $4, 'compra', $5, $6, NOW())`,
+          [
+            compra.empresa,
+            item.produto_id,
+            normalizarInt(item.quantidade),
+            `Estorno da compra ${compraId}`,
+            compraId,
+            req.user.id
+          ]
+        );
+      }
+    }
+
+    await client.query(`DELETE FROM compra_itens WHERE compra_id = $1`, [compraId]);
+    await client.query(`DELETE FROM compras WHERE id = $1`, [compraId]);
+
+    await client.query("COMMIT");
+    res.json({ sucesso: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).send("Erro ao excluir compra");
+  } finally {
+    client.release();
   }
 });
 
@@ -1407,8 +1493,7 @@ app.get("/movimentacoes-estoque/:empresa", auth, async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT m.*,
-              p.nome AS produto_nome
+      `SELECT m.*, p.nome AS produto_nome
        FROM movimentacoes_estoque m
        INNER JOIN produtos p ON p.id = m.produto_id
        WHERE m.empresa = $1
@@ -1425,10 +1510,6 @@ app.get("/movimentacoes-estoque/:empresa", auth, async (req, res) => {
 app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
   const client = await pool.connect();
   try {
-    if (!podeGerenciarCompras(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
     const { empresa, produto_id, tipo, quantidade, observacao } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
@@ -1437,11 +1518,7 @@ app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
 
     const qtd = normalizarInt(quantidade);
     if (!empresa || !produto_id || qtd <= 0) {
-      return res.status(400).send("Dados inválidos");
-    }
-
-    if (!["ajuste_entrada", "ajuste_saida", "perda", "avaria"].includes(tipo)) {
-      return res.status(400).send("Tipo de ajuste inválido");
+      return res.status(400).send("Dados inválidos para ajuste");
     }
 
     await client.query("BEGIN");
@@ -1464,14 +1541,15 @@ app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
     } else {
       if (novoEstoque < qtd) {
         await client.query("ROLLBACK");
-        return res.status(400).send("Estoque insuficiente para o ajuste");
+        return res.status(400).send("Estoque insuficiente para saída");
       }
       novoEstoque -= qtd;
     }
 
     await client.query(
       `UPDATE produtos
-       SET estoque = $1, atualizado_em = NOW()
+       SET estoque = $1,
+           atualizado_em = NOW()
        WHERE id = $2 AND empresa = $3`,
       [novoEstoque, produto_id, empresa]
     );
@@ -1479,21 +1557,196 @@ app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
     await client.query(
       `INSERT INTO movimentacoes_estoque
        (empresa, produto_id, tipo, quantidade, observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
-       VALUES ($1, $2, $3, $4, $5, 'ajuste', NULL, $6, NOW())`,
-      [empresa, produto_id, tipo, qtd, observacao || "", req.user.id]
+       VALUES ($1, $2, $3, $4, $5, 'ajuste_manual', NULL, $6, NOW())`,
+      [
+        empresa,
+        produto_id,
+        tipo || "ajuste_manual",
+        qtd,
+        observacao || "",
+        req.user.id
+      ]
     );
 
     await client.query("COMMIT");
     res.json({ sucesso: true });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).send("Erro ao registrar ajuste de estoque");
+    res.status(500).send("Erro ao ajustar estoque");
   } finally {
     client.release();
   }
 });
 
+// ================= ROTAS ADMIN CONSOLIDADAS =================
+
+app.get("/admin/empresas", auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT empresa FROM (
+        SELECT empresa FROM usuarios WHERE empresa IS NOT NULL AND empresa <> ''
+        UNION
+        SELECT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
+        UNION
+        SELECT empresa FROM clientes WHERE empresa IS NOT NULL AND empresa <> ''
+        UNION
+        SELECT empresa FROM fornecedores WHERE empresa IS NOT NULL AND empresa <> ''
+        UNION
+        SELECT empresa FROM compras WHERE empresa IS NOT NULL AND empresa <> ''
+      ) t
+      ORDER BY empresa ASC
+      `
+    );
+
+    res.json(result.rows.map((item) => item.empresa));
+  } catch (error) {
+    res.status(500).send("Erro ao buscar empresas do admin");
+  }
+});
+
+app.get("/admin/produtos", auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT *,
+              CASE WHEN estoque <= estoque_minimo THEN TRUE ELSE FALSE END AS alerta_estoque
+       FROM produtos
+       ORDER BY empresa ASC, nome ASC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar produtos do admin");
+  }
+});
+
+app.get("/admin/fornecedores", auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM fornecedores
+       ORDER BY empresa ASC, nome ASC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar fornecedores do admin");
+  }
+});
+
+app.get("/admin/compras", auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.*,
+              f.nome AS fornecedor_nome
+       FROM compras c
+       INNER JOIN fornecedores f ON f.id = c.fornecedor_id
+       ORDER BY c.data DESC, c.id DESC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar compras do admin");
+  }
+});
+
+app.get("/admin/movimentacoes-estoque", auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT m.*,
+              p.nome AS produto_nome
+       FROM movimentacoes_estoque m
+       INNER JOIN produtos p ON p.id = m.produto_id
+       ORDER BY m.data_movimentacao DESC, m.id DESC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar movimentações do admin");
+  }
+});
+
+app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
+  try {
+    const [produtos, fornecedores, compras, alertas] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos`),
+      pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores`),
+      pool.query(`SELECT COUNT(*) AS total_compras FROM compras`),
+      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE estoque <= estoque_minimo`)
+    ]);
+
+    res.json({
+      total_produtos: Number(produtos.rows[0].total_produtos || 0),
+      total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
+      total_compras: Number(compras.rows[0].total_compras || 0),
+      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0)
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao carregar dashboard admin");
+  }
+});
+
 // ================= FINANCEIRO =================
+app.get("/financeiro/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM financeiro WHERE empresa = $1 LIMIT 1`,
+      [empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.json({ valor: 0 });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar financeiro");
+  }
+});
+
+app.post("/financeiro", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const { empresa, valor } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const valorFinal = normalizarDecimal(valor);
+
+    const existing = await pool.query(
+      `SELECT id FROM financeiro WHERE empresa = $1`,
+      [empresa]
+    );
+
+    if (existing.rowCount === 0) {
+      await pool.query(
+        `INSERT INTO financeiro (empresa, valor) VALUES ($1, $2)`,
+        [empresa, valorFinal]
+      );
+    } else {
+      await pool.query(
+        `UPDATE financeiro SET valor = $1 WHERE empresa = $2`,
+        [valorFinal, empresa]
+      );
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar financeiro");
+  }
+});
+
 app.get("/lancamentos-financeiros/:empresa", auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
@@ -1502,14 +1755,10 @@ app.get("/lancamentos-financeiros/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
     const result = await pool.query(
       `SELECT * FROM lancamentos_financeiros
        WHERE empresa = $1
-       ORDER BY COALESCE(pagamento_data, vencimento, criado_em::text) DESC, id DESC`,
+       ORDER BY COALESCE(vencimento, pagamento_data, criado_em::text) DESC, id DESC`,
       [empresa]
     );
 
@@ -1544,7 +1793,7 @@ app.post("/lancamentos-financeiros", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!empresa || !tipo || !categoria || !descricao || !valor) {
+    if (!empresa || !tipo || !categoria || !descricao) {
       return res.status(400).send("Preencha os campos obrigatórios");
     }
 
@@ -1562,17 +1811,17 @@ app.post("/lancamentos-financeiros", auth, async (req, res) => {
         vencimento || null,
         pagamento_data || null,
         status || "pendente",
-        forma_pagamento || null,
-        Boolean(recorrente),
-        frequencia || null,
-        observacao || null,
+        forma_pagamento || "",
+        !!recorrente,
+        frequencia || "",
+        observacao || "",
         req.user.id
       ]
     );
 
-    res.json({ sucesso: true, id: result.rows[0].id });
+    res.json({ id: result.rows[0].id });
   } catch (error) {
-    res.status(500).send("Erro ao cadastrar lançamento financeiro");
+    res.status(500).send("Erro ao criar lançamento financeiro");
   }
 });
 
@@ -1602,16 +1851,7 @@ app.put("/lancamentos-financeiros/:id", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    const atual = await pool.query(
-      `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND empresa = $2`,
-      [id, empresa]
-    );
-
-    if (atual.rowCount === 0) {
-      return res.status(404).send("Lançamento não encontrado");
-    }
-
-    await pool.query(
+    const result = await pool.query(
       `UPDATE lancamentos_financeiros
        SET tipo = $1,
            categoria = $2,
@@ -1634,14 +1874,18 @@ app.put("/lancamentos-financeiros/:id", auth, async (req, res) => {
         vencimento || null,
         pagamento_data || null,
         status || "pendente",
-        forma_pagamento || null,
-        Boolean(recorrente),
-        frequencia || null,
-        observacao || null,
+        forma_pagamento || "",
+        !!recorrente,
+        frequencia || "",
+        observacao || "",
         id,
         empresa
       ]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Lançamento não encontrado");
+    }
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -1686,10 +1930,6 @@ app.get("/investimentos/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
     const result = await pool.query(
       `SELECT * FROM investimentos WHERE empresa = $1 ORDER BY data DESC, id DESC`,
       [empresa]
@@ -1707,13 +1947,21 @@ app.post("/investimentos", auth, async (req, res) => {
       return res.status(403).send("Sem permissão");
     }
 
-    const { empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao } = req.body;
+    const {
+      empresa,
+      tipo_investimento,
+      descricao,
+      valor,
+      data,
+      forma_pagamento,
+      observacao
+    } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!empresa || !tipo_investimento || !descricao || !valor || !data) {
+    if (!empresa || !tipo_investimento || !descricao || !data) {
       return res.status(400).send("Preencha os campos obrigatórios");
     }
 
@@ -1728,15 +1976,15 @@ app.post("/investimentos", auth, async (req, res) => {
         descricao,
         normalizarDecimal(valor),
         data,
-        forma_pagamento || null,
-        observacao || null,
+        forma_pagamento || "",
+        observacao || "",
         req.user.id
       ]
     );
 
-    res.json({ sucesso: true, id: result.rows[0].id });
+    res.json({ id: result.rows[0].id });
   } catch (error) {
-    res.status(500).send("Erro ao cadastrar investimento");
+    res.status(500).send("Erro ao criar investimento");
   }
 });
 
@@ -1747,7 +1995,15 @@ app.put("/investimentos/:id", auth, async (req, res) => {
     }
 
     const id = req.params.id;
-    const { empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao } = req.body;
+    const {
+      empresa,
+      tipo_investimento,
+      descricao,
+      valor,
+      data,
+      forma_pagamento,
+      observacao
+    } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
@@ -1768,8 +2024,8 @@ app.put("/investimentos/:id", auth, async (req, res) => {
         descricao,
         normalizarDecimal(valor),
         data,
-        forma_pagamento || null,
-        observacao || null,
+        forma_pagamento || "",
+        observacao || "",
         id,
         empresa
       ]
@@ -1822,31 +2078,19 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    const [vendas, produtos, clientes, lancamentos, investimentos, alertas] = await Promise.all([
-      pool.query(`SELECT COALESCE(SUM(total),0) AS faturamento, COUNT(*) AS total_vendas FROM vendas WHERE empresa = $1`, [empresa]),
+    const [produtos, clientes, vendas, financeiro, alertas] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_clientes FROM clientes WHERE empresa = $1`, [empresa]),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN tipo = 'custo' AND status = 'pago' THEN valor ELSE 0 END),0) AS custos_pagos,
-          COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END),0) AS despesas_pagas,
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendentes_total
-        FROM lancamentos_financeiros
-        WHERE empresa = $1
-      `, [empresa]),
-      pool.query(`SELECT COALESCE(SUM(valor),0) AS total_investimentos FROM investimentos WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT COUNT(*) AS total_vendas FROM vendas WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT valor FROM financeiro WHERE empresa = $1 LIMIT 1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE empresa = $1 AND estoque <= estoque_minimo`, [empresa])
     ]);
 
     res.json({
-      faturamento: Number(vendas.rows[0].faturamento || 0),
-      total_vendas: Number(vendas.rows[0].total_vendas || 0),
       total_produtos: Number(produtos.rows[0].total_produtos || 0),
       total_clientes: Number(clientes.rows[0].total_clientes || 0),
-      custos_pagos: Number(lancamentos.rows[0].custos_pagos || 0),
-      despesas_pagas: Number(lancamentos.rows[0].despesas_pagas || 0),
-      pendentes_total: Number(lancamentos.rows[0].pendentes_total || 0),
-      total_investimentos: Number(investimentos.rows[0].total_investimentos || 0),
+      total_vendas: Number(vendas.rows[0].total_vendas || 0),
+      financeiro: financeiro.rowCount > 0 ? Number(financeiro.rows[0].valor || 0) : 0,
       produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0)
     });
   } catch (error) {
@@ -1854,26 +2098,60 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
   }
 });
 
-// ================= DRE =================
-app.get("/dre/:empresa", auth, async (req, res) => {
+app.get("/dashboard-graficos/:empresa", auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
-    const inicio = req.query.inicio || "2000-01-01";
-    const fim = req.query.fim || "2999-12-31";
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
+    const vendasPorDia = await pool.query(
+      `SELECT data, COALESCE(SUM(total),0) AS total
+       FROM vendas
+       WHERE empresa = $1
+       GROUP BY data
+       ORDER BY data ASC`,
+      [empresa]
+    );
+
+    const produtosMaisVendidos = await pool.query(
+      `SELECT produto, COALESCE(SUM(quantidade),0) AS quantidade
+       FROM vendas
+       WHERE empresa = $1
+       GROUP BY produto
+       ORDER BY quantidade DESC
+       LIMIT 10`,
+      [empresa]
+    );
+
+    res.json({
+      vendas_por_dia: vendasPorDia.rows,
+      produtos_mais_vendidos: produtosMaisVendidos.rows
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao carregar gráficos do dashboard");
+  }
+});
+
+// ================= DRE =================
+app.get("/dre/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+    const { inicio, fim } = req.query;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
     }
+
+    const dataInicio = inicio || "1900-01-01";
+    const dataFim = fim || "2999-12-31";
 
     const vendas = await pool.query(
       `SELECT COALESCE(SUM(total),0) AS receita_bruta
        FROM vendas
        WHERE empresa = $1 AND data BETWEEN $2 AND $3`,
-      [empresa, inicio, fim]
+      [empresa, dataInicio, dataFim]
     );
 
     const lancamentos = await pool.query(
@@ -1882,7 +2160,7 @@ app.get("/dre/:empresa", auth, async (req, res) => {
           COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' AND COALESCE(pagamento_data, vencimento, criado_em::text) BETWEEN $2 AND $3 THEN valor ELSE 0 END),0) AS despesas
        FROM lancamentos_financeiros
        WHERE empresa = $1`,
-      [empresa, inicio, fim]
+      [empresa, dataInicio, dataFim]
     );
 
     const receitaBruta = Number(vendas.rows[0].receita_bruta || 0);
