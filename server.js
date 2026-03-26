@@ -230,6 +230,10 @@ async function initDb() {
       total NUMERIC(12,2) NOT NULL DEFAULT 0,
       observacao TEXT,
       gerar_conta_pagar BOOLEAN NOT NULL DEFAULT FALSE,
+      forma_pagamento TEXT,
+      status_pagamento TEXT NOT NULL DEFAULT 'pendente',
+      vencimento TEXT,
+      pagamento_data TEXT,
       status TEXT NOT NULL DEFAULT 'finalizada',
       criado_por INTEGER,
       criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -302,6 +306,13 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE clientes ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE clientes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
+  `);
+
+  await pool.query(`
+    ALTER TABLE compras ADD COLUMN IF NOT EXISTS forma_pagamento TEXT;
+    ALTER TABLE compras ADD COLUMN IF NOT EXISTS status_pagamento TEXT NOT NULL DEFAULT 'pendente';
+    ALTER TABLE compras ADD COLUMN IF NOT EXISTS vencimento TEXT;
+    ALTER TABLE compras ADD COLUMN IF NOT EXISTS pagamento_data TEXT;
   `);
 
   const hash = await bcrypt.hash("Lfgl.1308.", 10);
@@ -1169,7 +1180,17 @@ app.post("/compras", auth, async (req, res) => {
       return res.status(403).send("Sem permissão");
     }
 
-    const { empresa, fornecedor_id, data, observacao, gerar_conta_pagar, itens } = req.body;
+    const {
+      empresa,
+      fornecedor_id,
+      data,
+      observacao,
+      gerar_conta_pagar,
+      forma_pagamento,
+      status_pagamento,
+      vencimento,
+      itens
+    } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
@@ -1226,18 +1247,45 @@ app.post("/compras", auth, async (req, res) => {
       });
     }
 
+    const dataCompra = data || hoje();
+    const gerarContaPagarBool = Boolean(gerar_conta_pagar);
+    const formaPagamentoFinal = forma_pagamento || null;
+
+    let statusPagamentoFinal = "pago";
+    if (gerarContaPagarBool) {
+      statusPagamentoFinal = "pendente";
+    }
+    if (status_pagamento === "pago" || status_pagamento === "pendente") {
+      statusPagamentoFinal = status_pagamento;
+    }
+    if (!gerarContaPagarBool && statusPagamentoFinal !== "pago") {
+      statusPagamentoFinal = "pago";
+    }
+
+    const vencimentoFinal = gerarContaPagarBool
+      ? (vencimento || dataCompra)
+      : null;
+
+    const pagamentoDataFinal = statusPagamentoFinal === "pago"
+      ? dataCompra
+      : null;
+
     const compraResult = await client.query(
       `INSERT INTO compras
-       (empresa, fornecedor_id, data, total, observacao, gerar_conta_pagar, status, criado_por)
-       VALUES ($1, $2, $3, $4, $5, $6, 'finalizada', $7)
+       (empresa, fornecedor_id, data, total, observacao, gerar_conta_pagar, forma_pagamento, status_pagamento, vencimento, pagamento_data, status, criado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'finalizada', $11)
        RETURNING id`,
       [
         empresa,
         fornecedor_id,
-        data || hoje(),
+        dataCompra,
         total,
         observacao || "",
-        Boolean(gerar_conta_pagar),
+        gerarContaPagarBool,
+        formaPagamentoFinal,
+        statusPagamentoFinal,
+        vencimentoFinal,
+        pagamentoDataFinal,
         req.user.id
       ]
     );
@@ -1294,22 +1342,24 @@ app.post("/compras", auth, async (req, res) => {
       );
     }
 
-    if (Boolean(gerar_conta_pagar)) {
-      const fornecedor = fornecedorResult.rows[0];
-      await client.query(
-        `INSERT INTO lancamentos_financeiros
-         (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
-         VALUES ($1, 'custo', 'Compra de mercadoria', $2, $3, NULL, 'pendente', NULL, FALSE, NULL, $4, $5)`,
-        [
-          empresa,
-          `Compra #${compraId} - ${fornecedor.nome}`,
-          total,
-          data || hoje(),
-          observacao || "",
-          req.user.id
-        ]
-      );
-    }
+    const fornecedor = fornecedorResult.rows[0];
+
+    await client.query(
+      `INSERT INTO lancamentos_financeiros
+       (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
+       VALUES ($1, 'custo', 'Compra de mercadoria', $2, $3, $4, $5, $6, FALSE, NULL, $7, $8)`,
+      [
+        empresa,
+        `Compra #${compraId} - ${fornecedor.nome}`,
+        total,
+        vencimentoFinal,
+        pagamentoDataFinal,
+        statusPagamentoFinal,
+        formaPagamentoFinal,
+        observacao || "",
+        req.user.id
+      ]
+    );
 
     await client.query("COMMIT");
     res.json({ sucesso: true, id: compraId });
@@ -1806,7 +1856,17 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    const [vendas, produtos, clientes, lancamentos, investimentos, alertas] = await Promise.all([
+    const [
+      vendas,
+      produtos,
+      clientes,
+      lancamentos,
+      investimentos,
+      alertas,
+      fornecedores,
+      comprasResumo,
+      estoqueResumo
+    ] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(total),0) AS faturamento, COUNT(*) AS total_vendas FROM vendas WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_clientes FROM clientes WHERE empresa = $1`, [empresa]),
@@ -1819,7 +1879,10 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
         WHERE empresa = $1
       `, [empresa]),
       pool.query(`SELECT COALESCE(SUM(valor),0) AS total_investimentos FROM investimentos WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE empresa = $1 AND estoque <= estoque_minimo`, [empresa])
+      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE empresa = $1 AND estoque <= estoque_minimo`, [empresa]),
+      pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos WHERE empresa = $1`, [empresa])
     ]);
 
     res.json({
@@ -1831,7 +1894,11 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       despesas_pagas: Number(lancamentos.rows[0].despesas_pagas || 0),
       pendentes_total: Number(lancamentos.rows[0].pendentes_total || 0),
       total_investimentos: Number(investimentos.rows[0].total_investimentos || 0),
-      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0)
+      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0),
+      total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
+      total_compras: Number(comprasResumo.rows[0].total_compras || 0),
+      valor_total_compras: Number(comprasResumo.rows[0].valor_total_compras || 0),
+      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard");
@@ -1909,7 +1976,7 @@ app.get("/admin/empresas", auth, apenasAdmin, async (req, res) => {
       ORDER BY empresa ASC
     `);
 
-    res.json(result.rows.map(r => r.empresa));
+    res.json(result.rows.map((r) => r.empresa));
   } catch (error) {
     res.status(500).send("Erro ao buscar empresas");
   }
@@ -1972,18 +2039,21 @@ app.get("/admin/movimentacoes-estoque", auth, apenasAdmin, async (req, res) => {
 
 app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
   try {
-    const [produtos, fornecedores, compras, alertas] = await Promise.all([
+    const [produtos, fornecedores, compras, alertas, estoqueResumo] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos`),
       pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores`),
-      pool.query(`SELECT COUNT(*) AS total_compras FROM compras`),
-      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE estoque <= estoque_minimo`)
+      pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras`),
+      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE estoque <= estoque_minimo`),
+      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos`)
     ]);
 
     res.json({
       total_produtos: Number(produtos.rows[0].total_produtos || 0),
       total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
       total_compras: Number(compras.rows[0].total_compras || 0),
-      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0)
+      valor_total_compras: Number(compras.rows[0].valor_total_compras || 0),
+      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0),
+      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard admin");
