@@ -1,7 +1,7 @@
 {
   "name": "lf-erp-backend",
-  "version": "2.0.0",
-  "description": "LF ERP com PostgreSQL no Neon",
+  "version": "3.0.0",
+  "description": "LF ERP com PostgreSQL no Neon - Etapa 3",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
