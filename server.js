@@ -43,6 +43,12 @@ function normalizarDecimal(valor) {
   return Number.isFinite(numero) ? numero : 0;
 }
 
+function calcularStatusConta(status, vencimento, pagamento_data) {
+  if (status === "pago" || status === "recebido") return status;
+  if (vencimento && vencimento < hoje()) return "atrasado";
+  return status || "pendente";
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -138,6 +144,25 @@ async function initDb() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS contas_financeiras (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      tipo TEXT NOT NULL,
+      descricao TEXT NOT NULL,
+      cliente_fornecedor TEXT,
+      valor NUMERIC(12,2) NOT NULL DEFAULT 0,
+      vencimento TEXT NOT NULL,
+      pagamento_data TEXT,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      forma_pagamento TEXT,
+      observacao TEXT,
+      criado_por INTEGER,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_produtos_empresa ON produtos (empresa);
     CREATE INDEX IF NOT EXISTS idx_clientes_empresa ON clientes (empresa);
     CREATE INDEX IF NOT EXISTS idx_vendas_empresa ON vendas (empresa);
@@ -149,6 +174,10 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_lancamentos_empresa_vencimento ON lancamentos_financeiros (empresa, vencimento);
     CREATE INDEX IF NOT EXISTS idx_investimentos_empresa ON investimentos (empresa);
     CREATE INDEX IF NOT EXISTS idx_investimentos_empresa_data ON investimentos (empresa, data);
+    CREATE INDEX IF NOT EXISTS idx_contas_empresa ON contas_financeiras (empresa);
+    CREATE INDEX IF NOT EXISTS idx_contas_empresa_tipo ON contas_financeiras (empresa, tipo);
+    CREATE INDEX IF NOT EXISTS idx_contas_empresa_status ON contas_financeiras (empresa, status);
+    CREATE INDEX IF NOT EXISTS idx_contas_empresa_vencimento ON contas_financeiras (empresa, vencimento);
   `);
 
   const hash = await bcrypt.hash("Lfgl.1308.", 10);
@@ -766,9 +795,23 @@ app.get("/financeiro/:empresa", auth, async (req, res) => {
       [empresa]
     );
 
-    const totalRecebido = Number(recebimentos.rows[0].total || 0);
+    const contasPagarPagas = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       WHERE empresa = $1 AND tipo = 'pagar' AND status = 'pago'`,
+      [empresa]
+    );
+
+    const contasReceberRecebidas = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       WHERE empresa = $1 AND tipo = 'receber' AND status = 'recebido'`,
+      [empresa]
+    );
+
+    const totalRecebido = Number(recebimentos.rows[0].total || 0) + Number(contasReceberRecebidas.rows[0].total || 0);
     const totalCustos = Number(custosPagos.rows[0].total || 0);
-    const totalDespesas = Number(despesasPagas.rows[0].total || 0);
+    const totalDespesas = Number(despesasPagas.rows[0].total || 0) + Number(contasPagarPagas.rows[0].total || 0);
     const totalInvestimentos = Number(investimentos.rows[0].total || 0);
     const saldoGerencial = totalRecebido - totalCustos - totalDespesas - totalInvestimentos;
 
@@ -805,7 +848,12 @@ app.get("/lancamentos-financeiros/:empresa", auth, async (req, res) => {
       [empresa]
     );
 
-    res.json(result.rows);
+    const rows = result.rows.map(item => ({
+      ...item,
+      status: calcularStatusConta(item.status, item.vencimento, item.pagamento_data)
+    }));
+
+    res.json(rows);
   } catch (error) {
     res.status(500).send("Erro ao buscar lançamentos financeiros");
   }
@@ -1096,6 +1144,252 @@ app.delete("/investimentos/:id", auth, async (req, res) => {
   }
 });
 
+app.get("/contas-financeiras/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+    const { tipo, status } = req.query;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const params = [empresa];
+    let sql = `
+      SELECT *
+      FROM contas_financeiras
+      WHERE empresa = $1
+    `;
+
+    if (tipo) {
+      params.push(tipo);
+      sql += ` AND tipo = $${params.length} `;
+    }
+
+    if (status) {
+      if (status === "atrasado") {
+        params.push(hoje());
+        sql += ` AND status NOT IN ('pago','recebido') AND vencimento < $${params.length} `;
+      } else {
+        params.push(status);
+        sql += ` AND status = $${params.length} `;
+      }
+    }
+
+    sql += ` ORDER BY vencimento ASC, id DESC`;
+
+    const result = await pool.query(sql, params);
+
+    const rows = result.rows.map(item => ({
+      ...item,
+      status: calcularStatusConta(item.status, item.vencimento, item.pagamento_data)
+    }));
+
+    res.json(rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar contas");
+  }
+});
+
+app.post("/contas-financeiras", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const {
+      empresa,
+      tipo,
+      descricao,
+      cliente_fornecedor,
+      valor,
+      vencimento,
+      pagamento_data,
+      status,
+      forma_pagamento,
+      observacao
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    if (!empresa || !tipo || !descricao || !valor || !vencimento) {
+      return res.status(400).send("Preencha os campos obrigatórios");
+    }
+
+    if (!["pagar", "receber"].includes(tipo)) {
+      return res.status(400).send("Tipo inválido");
+    }
+
+    if (!["pendente", "pago", "recebido", "atrasado"].includes(status || "pendente")) {
+      return res.status(400).send("Status inválido");
+    }
+
+    const result = await pool.query(
+      `INSERT INTO contas_financeiras
+      (empresa, tipo, descricao, cliente_fornecedor, valor, vencimento, pagamento_data, status, forma_pagamento, observacao, criado_por, atualizado_em)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+      RETURNING id`,
+      [
+        empresa,
+        tipo,
+        descricao,
+        cliente_fornecedor || null,
+        normalizarDecimal(valor),
+        vencimento,
+        pagamento_data || null,
+        status || "pendente",
+        forma_pagamento || null,
+        observacao || null,
+        req.user.id
+      ]
+    );
+
+    res.json({ sucesso: true, id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar conta");
+  }
+});
+
+app.put("/contas-financeiras/:id", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const {
+      empresa,
+      tipo,
+      descricao,
+      cliente_fornecedor,
+      valor,
+      vencimento,
+      pagamento_data,
+      status,
+      forma_pagamento,
+      observacao
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const atual = await pool.query(
+      `SELECT * FROM contas_financeiras WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (atual.rowCount === 0) {
+      return res.status(404).send("Conta não encontrada");
+    }
+
+    await pool.query(
+      `UPDATE contas_financeiras
+       SET tipo = $1,
+           descricao = $2,
+           cliente_fornecedor = $3,
+           valor = $4,
+           vencimento = $5,
+           pagamento_data = $6,
+           status = $7,
+           forma_pagamento = $8,
+           observacao = $9,
+           atualizado_em = NOW()
+       WHERE id = $10 AND empresa = $11`,
+      [
+        tipo,
+        descricao,
+        cliente_fornecedor || null,
+        normalizarDecimal(valor),
+        vencimento,
+        pagamento_data || null,
+        status || "pendente",
+        forma_pagamento || null,
+        observacao || null,
+        id,
+        empresa
+      ]
+    );
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar conta");
+  }
+});
+
+app.put("/contas-financeiras/:id/marcar", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const { empresa } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const atual = await pool.query(
+      `SELECT * FROM contas_financeiras WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (atual.rowCount === 0) {
+      return res.status(404).send("Conta não encontrada");
+    }
+
+    const conta = atual.rows[0];
+    const novoStatus = conta.tipo === "pagar" ? "pago" : "recebido";
+
+    await pool.query(
+      `UPDATE contas_financeiras
+       SET status = $1,
+           pagamento_data = $2,
+           atualizado_em = NOW()
+       WHERE id = $3 AND empresa = $4`,
+      [novoStatus, hoje(), id, empresa]
+    );
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao marcar conta");
+  }
+});
+
+app.delete("/contas-financeiras/:id", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const empresa = req.query.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const result = await pool.query(
+      `DELETE FROM contas_financeiras WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Conta não encontrada");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir conta");
+  }
+});
+
 app.get("/dre/:empresa", auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
@@ -1135,6 +1429,14 @@ app.get("/dre/:empresa", auth, async (req, res) => {
       filtroInvest += ` AND data >= $2 AND data <= $3 `;
     }
 
+    const paramsContas = [empresa];
+    let filtroContas = ` WHERE empresa = $1 `;
+
+    if (temPeriodo) {
+      paramsContas.push(inicio, fim);
+      filtroContas += ` AND COALESCE(pagamento_data, vencimento) >= $2 AND COALESCE(pagamento_data, vencimento) <= $3 `;
+    }
+
     const vendas = await pool.query(
       `SELECT COALESCE(SUM(total), 0) AS total FROM vendas ${filtroVendas}`,
       paramsVendas
@@ -1154,6 +1456,20 @@ app.get("/dre/:empresa", auth, async (req, res) => {
       paramsLanc
     );
 
+    const contasPagar = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       ${filtroContas} AND tipo = 'pagar' AND status = 'pago'`,
+      paramsContas
+    );
+
+    const contasReceber = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       ${filtroContas} AND tipo = 'receber' AND status = 'recebido'`,
+      paramsContas
+    );
+
     const investimentos = await pool.query(
       `SELECT COALESCE(SUM(valor), 0) AS total FROM investimentos ${filtroInvest}`,
       paramsInvest
@@ -1166,16 +1482,24 @@ app.get("/dre/:empresa", auth, async (req, res) => {
       paramsLanc
     );
 
-    const receitaBruta = Number(vendas.rows[0].total || 0);
+    const contasPendentes = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       WHERE empresa = $1
+         AND status NOT IN ('pago','recebido')`,
+      [empresa]
+    );
+
+    const receitaBruta = Number(vendas.rows[0].total || 0) + Number(contasReceber.rows[0].total || 0);
     const deducoes = 0;
     const receitaLiquida = receitaBruta - deducoes;
     const totalCustos = Number(custos.rows[0].total || 0);
     const lucroBruto = receitaLiquida - totalCustos;
-    const despesasOperacionais = Number(despesas.rows[0].total || 0);
+    const despesasOperacionais = Number(despesas.rows[0].total || 0) + Number(contasPagar.rows[0].total || 0);
     const resultadoOperacional = lucroBruto - despesasOperacionais;
     const totalInvestimentos = Number(investimentos.rows[0].total || 0);
     const impactoFinalCaixa = resultadoOperacional - totalInvestimentos;
-    const totalPendente = Number(pendentes.rows[0].total || 0);
+    const totalPendente = Number(pendentes.rows[0].total || 0) + Number(contasPendentes.rows[0].total || 0);
 
     res.json({
       receitaBruta,
@@ -1235,10 +1559,32 @@ app.get("/fluxo-caixa/:empresa", auth, async (req, res) => {
       [empresa, inicio]
     );
 
+    const saldoInicialContasReceber = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       WHERE empresa = $1
+         AND tipo = 'receber'
+         AND status = 'recebido'
+         AND COALESCE(pagamento_data, vencimento) < $2`,
+      [empresa, inicio]
+    );
+
+    const saldoInicialContasPagar = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM contas_financeiras
+       WHERE empresa = $1
+         AND tipo = 'pagar'
+         AND status = 'pago'
+         AND COALESCE(pagamento_data, vencimento) < $2`,
+      [empresa, inicio]
+    );
+
     const saldoInicial =
-      Number(saldoInicialVendas.rows[0].total || 0) -
+      Number(saldoInicialVendas.rows[0].total || 0) +
+      Number(saldoInicialContasReceber.rows[0].total || 0) -
       Number(saldoInicialLancamentos.rows[0].total || 0) -
-      Number(saldoInicialInvestimentos.rows[0].total || 0);
+      Number(saldoInicialInvestimentos.rows[0].total || 0) -
+      Number(saldoInicialContasPagar.rows[0].total || 0);
 
     const vendasPeriodo = await pool.query(
       `SELECT
@@ -1289,6 +1635,23 @@ app.get("/fluxo-caixa/:empresa", auth, async (req, res) => {
       [empresa, inicio, fim]
     );
 
+    const contasPeriodo = await pool.query(
+      `SELECT
+         id,
+         COALESCE(pagamento_data, vencimento) AS movimento_data,
+         CASE WHEN tipo = 'receber' THEN 'entrada' ELSE 'saida' END AS natureza,
+         tipo AS origem,
+         descricao AS titulo,
+         cliente_fornecedor AS detalhe,
+         valor
+       FROM contas_financeiras
+       WHERE empresa = $1
+         AND status IN ('pago','recebido')
+         AND COALESCE(pagamento_data, vencimento) >= $2
+         AND COALESCE(pagamento_data, vencimento) <= $3`,
+      [empresa, inicio, fim]
+    );
+
     const movimentos = [
       ...vendasPeriodo.rows.map(item => ({
         id: item.id,
@@ -1309,6 +1672,15 @@ app.get("/fluxo-caixa/:empresa", auth, async (req, res) => {
         valor: Number(item.valor || 0)
       })),
       ...investimentosPeriodo.rows.map(item => ({
+        id: item.id,
+        data: item.movimento_data,
+        natureza: item.natureza,
+        origem: item.origem,
+        titulo: item.titulo,
+        detalhe: item.detalhe,
+        valor: Number(item.valor || 0)
+      })),
+      ...contasPeriodo.rows.map(item => ({
         id: item.id,
         data: item.movimento_data,
         natureza: item.natureza,
