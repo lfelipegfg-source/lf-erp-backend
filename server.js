@@ -43,24 +43,6 @@ function normalizarDecimal(valor) {
   return Number.isFinite(numero) ? numero : 0;
 }
 
-function buildDateRangeClause(dateColumn, empresa, inicio, fim, extraClauses = "", statusParams = []) {
-  const params = [empresa];
-  let sql = ` WHERE empresa = $1 `;
-  if (inicio) {
-    params.push(inicio);
-    sql += ` AND ${dateColumn} >= $${params.length} `;
-  }
-  if (fim) {
-    params.push(fim);
-    sql += ` AND ${dateColumn} <= $${params.length} `;
-  }
-  if (extraClauses) {
-    sql += " " + extraClauses + " ";
-    params.push(...statusParams);
-  }
-  return { sql, params };
-}
-
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -1209,6 +1191,171 @@ app.get("/dre/:empresa", auth, async (req, res) => {
     });
   } catch (error) {
     res.status(500).send("Erro ao calcular DRE");
+  }
+});
+
+app.get("/fluxo-caixa/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const { inicio, fim } = req.query;
+
+    if (!inicio || !fim) {
+      return res.status(400).send("Informe data inicial e final");
+    }
+
+    const saldoInicialVendas = await pool.query(
+      `SELECT COALESCE(SUM(total), 0) AS total
+       FROM vendas
+       WHERE empresa = $1 AND data < $2`,
+      [empresa, inicio]
+    );
+
+    const saldoInicialLancamentos = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM lancamentos_financeiros
+       WHERE empresa = $1
+         AND status = 'pago'
+         AND COALESCE(pagamento_data, vencimento, criado_em::date::text) < $2`,
+      [empresa, inicio]
+    );
+
+    const saldoInicialInvestimentos = await pool.query(
+      `SELECT COALESCE(SUM(valor), 0) AS total
+       FROM investimentos
+       WHERE empresa = $1 AND data < $2`,
+      [empresa, inicio]
+    );
+
+    const saldoInicial =
+      Number(saldoInicialVendas.rows[0].total || 0) -
+      Number(saldoInicialLancamentos.rows[0].total || 0) -
+      Number(saldoInicialInvestimentos.rows[0].total || 0);
+
+    const vendasPeriodo = await pool.query(
+      `SELECT
+         id,
+         data AS movimento_data,
+         'entrada' AS natureza,
+         'venda' AS origem,
+         produto AS titulo,
+         COALESCE(cliente_nome, 'Consumidor Final') AS detalhe,
+         total AS valor
+       FROM vendas
+       WHERE empresa = $1
+         AND data >= $2
+         AND data <= $3`,
+      [empresa, inicio, fim]
+    );
+
+    const lancamentosPeriodo = await pool.query(
+      `SELECT
+         id,
+         COALESCE(pagamento_data, vencimento, criado_em::date::text) AS movimento_data,
+         'saida' AS natureza,
+         tipo AS origem,
+         descricao AS titulo,
+         categoria AS detalhe,
+         valor
+       FROM lancamentos_financeiros
+       WHERE empresa = $1
+         AND status = 'pago'
+         AND COALESCE(pagamento_data, vencimento, criado_em::date::text) >= $2
+         AND COALESCE(pagamento_data, vencimento, criado_em::date::text) <= $3`,
+      [empresa, inicio, fim]
+    );
+
+    const investimentosPeriodo = await pool.query(
+      `SELECT
+         id,
+         data AS movimento_data,
+         'saida' AS natureza,
+         'investimento' AS origem,
+         tipo_investimento AS titulo,
+         descricao AS detalhe,
+         valor
+       FROM investimentos
+       WHERE empresa = $1
+         AND data >= $2
+         AND data <= $3`,
+      [empresa, inicio, fim]
+    );
+
+    const movimentos = [
+      ...vendasPeriodo.rows.map(item => ({
+        id: item.id,
+        data: item.movimento_data,
+        natureza: item.natureza,
+        origem: item.origem,
+        titulo: item.titulo,
+        detalhe: item.detalhe,
+        valor: Number(item.valor || 0)
+      })),
+      ...lancamentosPeriodo.rows.map(item => ({
+        id: item.id,
+        data: item.movimento_data,
+        natureza: item.natureza,
+        origem: item.origem,
+        titulo: item.titulo,
+        detalhe: item.detalhe,
+        valor: Number(item.valor || 0)
+      })),
+      ...investimentosPeriodo.rows.map(item => ({
+        id: item.id,
+        data: item.movimento_data,
+        natureza: item.natureza,
+        origem: item.origem,
+        titulo: item.titulo,
+        detalhe: item.detalhe,
+        valor: Number(item.valor || 0)
+      }))
+    ];
+
+    movimentos.sort((a, b) => {
+      if (a.data === b.data) {
+        if (a.natureza === b.natureza) return 0;
+        return a.natureza === "entrada" ? -1 : 1;
+      }
+      return a.data.localeCompare(b.data);
+    });
+
+    let saldoAcumulado = saldoInicial;
+    const movimentosComSaldo = movimentos.map(item => {
+      saldoAcumulado += item.natureza === "entrada" ? item.valor : -item.valor;
+      return {
+        ...item,
+        saldo_apos: saldoAcumulado
+      };
+    });
+
+    const entradas = movimentosComSaldo
+      .filter(item => item.natureza === "entrada")
+      .reduce((acc, item) => acc + Number(item.valor || 0), 0);
+
+    const saidas = movimentosComSaldo
+      .filter(item => item.natureza === "saida")
+      .reduce((acc, item) => acc + Number(item.valor || 0), 0);
+
+    const saldoFinal = saldoInicial + entradas - saidas;
+
+    res.json({
+      saldoInicial,
+      entradas,
+      saidas,
+      saldoFinal,
+      periodo: { inicio, fim },
+      movimentos: movimentosComSaldo
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao calcular fluxo de caixa");
   }
 });
 
