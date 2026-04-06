@@ -99,6 +99,86 @@ async function registrarMovimentacaoEstoque({
   );
 }
 
+async function montarRelatorioEstoquePorEmpresa(empresa) {
+  const [resumoResult, produtosResult, entradasSaidasResult] = await Promise.all([
+    pool.query(
+      `
+      SELECT
+        COUNT(*) AS total_produtos,
+        COALESCE(SUM(estoque), 0) AS total_unidades,
+        COALESCE(SUM(estoque * custo), 0) AS valor_total_estoque,
+        COALESCE(SUM(CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN 1 ELSE 0 END), 0) AS produtos_alerta,
+        COALESCE(SUM(CASE WHEN estoque = 0 THEN 1 ELSE 0 END), 0) AS produtos_zerados
+      FROM produtos
+      WHERE empresa = $1
+      `,
+      [empresa]
+    ),
+    pool.query(
+      `
+      SELECT
+        id,
+        empresa,
+        nome,
+        categoria,
+        preco,
+        custo,
+        estoque,
+        estoque_minimo,
+        (estoque * custo) AS valor_estoque,
+        CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN TRUE ELSE FALSE END AS alerta_estoque
+      FROM produtos
+      WHERE empresa = $1
+      ORDER BY valor_estoque DESC, nome ASC
+      `,
+      [empresa]
+    ),
+    pool.query(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN tipo IN ('entrada_compra', 'ajuste_entrada', 'cadastro_inicial', 'estorno_venda') THEN quantidade ELSE 0 END), 0) AS total_entradas,
+        COALESCE(SUM(CASE WHEN tipo IN ('saida_venda', 'ajuste_saida', 'perda', 'avaria') THEN quantidade ELSE 0 END), 0) AS total_saidas
+      FROM movimentacoes_estoque
+      WHERE empresa = $1
+      `,
+      [empresa]
+    )
+  ]);
+
+  const produtos = produtosResult.rows.map((p) => ({
+    ...p,
+    preco: Number(p.preco || 0),
+    custo: Number(p.custo || 0),
+    estoque: Number(p.estoque || 0),
+    estoque_minimo: Number(p.estoque_minimo || 0),
+    valor_estoque: Number(p.valor_estoque || 0),
+    alerta_estoque: Boolean(p.alerta_estoque)
+  }));
+
+  const topValorParado = [...produtos]
+    .sort((a, b) => b.valor_estoque - a.valor_estoque)
+    .slice(0, 10);
+
+  const produtosAlerta = produtos
+    .filter((p) => p.alerta_estoque)
+    .sort((a, b) => a.estoque - b.estoque);
+
+  return {
+    resumo: {
+      total_produtos: Number(resumoResult.rows[0].total_produtos || 0),
+      total_unidades: Number(resumoResult.rows[0].total_unidades || 0),
+      valor_total_estoque: Number(resumoResult.rows[0].valor_total_estoque || 0),
+      produtos_alerta: Number(resumoResult.rows[0].produtos_alerta || 0),
+      produtos_zerados: Number(resumoResult.rows[0].produtos_zerados || 0),
+      total_entradas: Number(entradasSaidasResult.rows[0].total_entradas || 0),
+      total_saidas: Number(entradasSaidasResult.rows[0].total_saidas || 0)
+    },
+    top_valor_parado: topValorParado,
+    produtos_alerta: produtosAlerta,
+    produtos
+  };
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -1905,6 +1985,22 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
   }
 });
 
+// ================= RELATÓRIO GERENCIAL DE ESTOQUE =================
+app.get("/relatorio-estoque/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const relatorio = await montarRelatorioEstoquePorEmpresa(empresa);
+    res.json(relatorio);
+  } catch (error) {
+    res.status(500).send("Erro ao carregar relatório de estoque");
+  }
+});
+
 // ================= DRE =================
 app.get("/dre/:empresa", auth, async (req, res) => {
   try {
@@ -2057,6 +2153,32 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard admin");
+  }
+});
+
+app.get("/admin/relatorio-estoque", auth, apenasAdmin, async (req, res) => {
+  try {
+    const empresasResult = await pool.query(`
+      SELECT empresa FROM (
+        SELECT DISTINCT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
+      ) t
+      ORDER BY empresa ASC
+    `);
+
+    const empresas = empresasResult.rows.map((r) => r.empresa);
+    const relatorios = [];
+
+    for (const empresa of empresas) {
+      const relatorio = await montarRelatorioEstoquePorEmpresa(empresa);
+      relatorios.push({
+        empresa,
+        ...relatorio
+      });
+    }
+
+    res.json(relatorios);
+  } catch (error) {
+    res.status(500).send("Erro ao carregar relatório consolidado de estoque");
   }
 });
 
