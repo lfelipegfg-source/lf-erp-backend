@@ -179,6 +179,132 @@ async function montarRelatorioEstoquePorEmpresa(empresa) {
   };
 }
 
+async function montarRelatorioPerformancePorEmpresa(empresa) {
+  const [produtosResult, vendasResult] = await Promise.all([
+    pool.query(
+      `
+      SELECT
+        id,
+        empresa,
+        nome,
+        categoria,
+        preco,
+        custo,
+        estoque,
+        estoque_minimo,
+        (estoque * custo) AS valor_estoque
+      FROM produtos
+      WHERE empresa = $1
+      ORDER BY nome ASC
+      `,
+      [empresa]
+    ),
+    pool.query(
+      `
+      SELECT
+        produto_id,
+        produto,
+        COALESCE(SUM(quantidade), 0) AS quantidade_vendida,
+        COALESCE(SUM(total), 0) AS faturamento
+      FROM vendas
+      WHERE empresa = $1
+      GROUP BY produto_id, produto
+      `,
+      [empresa]
+    )
+  ]);
+
+  const mapaVendas = new Map();
+  for (const row of vendasResult.rows) {
+    mapaVendas.set(Number(row.produto_id), {
+      quantidade_vendida: Number(row.quantidade_vendida || 0),
+      faturamento: Number(row.faturamento || 0)
+    });
+  }
+
+  const produtos = produtosResult.rows.map((p) => {
+    const venda = mapaVendas.get(Number(p.id)) || {
+      quantidade_vendida: 0,
+      faturamento: 0
+    };
+
+    const preco = Number(p.preco || 0);
+    const custo = Number(p.custo || 0);
+    const estoque = Number(p.estoque || 0);
+    const estoqueMinimo = Number(p.estoque_minimo || 0);
+    const valorEstoque = Number(p.valor_estoque || 0);
+    const quantidadeVendida = Number(venda.quantidade_vendida || 0);
+    const faturamento = Number(venda.faturamento || 0);
+
+    const lucroUnitario = preco - custo;
+    const margemPercentual = preco > 0 ? (lucroUnitario / preco) * 100 : 0;
+    const lucroEstimadoVendido = lucroUnitario * quantidadeVendida;
+    const semSaida = quantidadeVendida === 0;
+    const baixoGiro = quantidadeVendida > 0 && quantidadeVendida <= 3;
+
+    return {
+      id: Number(p.id),
+      empresa: p.empresa,
+      nome: p.nome,
+      categoria: p.categoria || "",
+      preco,
+      custo,
+      estoque,
+      estoque_minimo: estoqueMinimo,
+      valor_estoque: valorEstoque,
+      quantidade_vendida: quantidadeVendida,
+      faturamento,
+      lucro_unitario: lucroUnitario,
+      margem_percentual: margemPercentual,
+      lucro_estimado_vendido: lucroEstimadoVendido,
+      sem_saida: semSaida,
+      baixo_giro: baixoGiro,
+      alerta_estoque: estoque <= estoqueMinimo && estoqueMinimo > 0
+    };
+  });
+
+  const resumo = {
+    total_produtos: produtos.length,
+    produtos_sem_saida: produtos.filter((p) => p.sem_saida).length,
+    produtos_baixo_giro: produtos.filter((p) => p.baixo_giro).length,
+    valor_total_parado: produtos.reduce((acc, p) => acc + p.valor_estoque, 0),
+    faturamento_total: produtos.reduce((acc, p) => acc + p.faturamento, 0),
+    lucro_estimado_total: produtos.reduce((acc, p) => acc + p.lucro_estimado_vendido, 0)
+  };
+
+  const topFaturamento = [...produtos]
+    .filter((p) => p.faturamento > 0)
+    .sort((a, b) => b.faturamento - a.faturamento)
+    .slice(0, 10);
+
+  const topQuantidadeVendida = [...produtos]
+    .filter((p) => p.quantidade_vendida > 0)
+    .sort((a, b) => b.quantidade_vendida - a.quantidade_vendida)
+    .slice(0, 10);
+
+  const topValorParado = [...produtos]
+    .sort((a, b) => b.valor_estoque - a.valor_estoque)
+    .slice(0, 10);
+
+  const semSaida = produtos
+    .filter((p) => p.sem_saida)
+    .sort((a, b) => b.valor_estoque - a.valor_estoque);
+
+  const baixoGiro = produtos
+    .filter((p) => p.baixo_giro)
+    .sort((a, b) => a.quantidade_vendida - b.quantidade_vendida || b.valor_estoque - a.valor_estoque);
+
+  return {
+    resumo,
+    top_faturamento: topFaturamento,
+    top_quantidade_vendida: topQuantidadeVendida,
+    top_valor_parado: topValorParado,
+    produtos_sem_saida: semSaida,
+    produtos_baixo_giro: baixoGiro,
+    produtos
+  };
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -2001,6 +2127,22 @@ app.get("/relatorio-estoque/:empresa", auth, async (req, res) => {
   }
 });
 
+// ================= RELATÓRIO DE PERFORMANCE =================
+app.get("/relatorio-performance/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const relatorio = await montarRelatorioPerformancePorEmpresa(empresa);
+    res.json(relatorio);
+  } catch (error) {
+    res.status(500).send("Erro ao carregar relatório de performance");
+  }
+});
+
 // ================= DRE =================
 app.get("/dre/:empresa", auth, async (req, res) => {
   try {
@@ -2179,6 +2321,32 @@ app.get("/admin/relatorio-estoque", auth, apenasAdmin, async (req, res) => {
     res.json(relatorios);
   } catch (error) {
     res.status(500).send("Erro ao carregar relatório consolidado de estoque");
+  }
+});
+
+app.get("/admin/relatorio-performance", auth, apenasAdmin, async (req, res) => {
+  try {
+    const empresasResult = await pool.query(`
+      SELECT empresa FROM (
+        SELECT DISTINCT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
+      ) t
+      ORDER BY empresa ASC
+    `);
+
+    const empresas = empresasResult.rows.map((r) => r.empresa);
+    const relatorios = [];
+
+    for (const empresa of empresas) {
+      const relatorio = await montarRelatorioPerformancePorEmpresa(empresa);
+      relatorios.push({
+        empresa,
+        ...relatorio
+      });
+    }
+
+    res.json(relatorios);
+  } catch (error) {
+    res.status(500).send("Erro ao carregar relatório consolidado de performance");
   }
 });
 
