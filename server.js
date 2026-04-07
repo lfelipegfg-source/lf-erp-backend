@@ -35,6 +35,16 @@ function normalizarInt(valor) {
   return Number.isFinite(numero) ? numero : 0;
 }
 
+function addDias(dataBase, dias) {
+  const data = new Date(`${dataBase}T00:00:00`);
+  data.setDate(data.getDate() + Number(dias || 0));
+  return data.toISOString().slice(0, 10);
+}
+
+function compararData(a, b) {
+  return String(a || "").localeCompare(String(b || ""));
+}
+
 function validarEmpresa(req, empresa) {
   if (req.user.tipo === "admin") return true;
   return req.user.empresa === empresa;
@@ -97,6 +107,107 @@ async function registrarMovimentacaoEstoque({
       usuario_id || null
     ]
   );
+}
+
+async function atualizarStatusContasReceberPorEmpresa(empresa) {
+  await pool.query(
+    `UPDATE contas_receber
+     SET status = 'atrasado',
+         atualizado_em = NOW()
+     WHERE empresa = $1
+       AND status = 'pendente'
+       AND data_vencimento IS NOT NULL
+       AND data_vencimento < $2`,
+    [empresa, hoje()]
+  );
+}
+
+async function atualizarStatusContasReceberGlobal() {
+  await pool.query(
+    `UPDATE contas_receber
+     SET status = 'atrasado',
+         atualizado_em = NOW()
+     WHERE status = 'pendente'
+       AND data_vencimento IS NOT NULL
+       AND data_vencimento < $1`,
+    [hoje()]
+  );
+}
+
+async function criarParcelasContasReceber({
+  client,
+  empresa,
+  venda_id,
+  cliente_id,
+  cliente_nome,
+  total,
+  quantidade_parcelas,
+  data_primeiro_vencimento,
+  intervalo_dias,
+  observacao,
+  criado_por
+}) {
+  const parcelas = normalizarInt(quantidade_parcelas);
+  const valorTotal = normalizarDecimal(total);
+
+  if (parcelas <= 0) return [];
+
+  const valorBase = Math.floor((valorTotal / parcelas) * 100) / 100;
+  let acumulado = 0;
+  const parcelasGeradas = [];
+
+  for (let i = 1; i <= parcelas; i++) {
+    let valorParcela = valorBase;
+
+    if (i === parcelas) {
+      valorParcela = Number((valorTotal - acumulado).toFixed(2));
+    }
+
+    acumulado = Number((acumulado + valorParcela).toFixed(2));
+
+    const vencimento = i === 1
+      ? data_primeiro_vencimento
+      : addDias(data_primeiro_vencimento, (i - 1) * normalizarInt(intervalo_dias || 30));
+
+    const result = await client.query(
+      `INSERT INTO contas_receber
+       (
+         empresa,
+         venda_id,
+         cliente_id,
+         cliente_nome,
+         parcela,
+         total_parcelas,
+         valor,
+         data_vencimento,
+         data_pagamento,
+         status,
+         forma_pagamento,
+         observacao,
+         criado_por,
+         criado_em,
+         atualizado_em
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 'pendente', 'Promissória', $9, $10, NOW(), NOW())
+       RETURNING *`,
+      [
+        empresa,
+        venda_id,
+        cliente_id || null,
+        cliente_nome || "",
+        i,
+        parcelas,
+        valorParcela,
+        vencimento,
+        observacao || "",
+        criado_por || null
+      ]
+    );
+
+    parcelasGeradas.push(result.rows[0]);
+  }
+
+  return parcelasGeradas;
 }
 
 async function montarRelatorioEstoquePorEmpresa(empresa) {
@@ -475,6 +586,27 @@ async function initDb() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS contas_receber (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      venda_id INTEGER,
+      cliente_id INTEGER,
+      cliente_nome TEXT,
+      parcela INTEGER NOT NULL DEFAULT 1,
+      total_parcelas INTEGER NOT NULL DEFAULT 1,
+      valor NUMERIC(12,2) NOT NULL DEFAULT 0,
+      data_vencimento TEXT,
+      data_pagamento TEXT,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      forma_pagamento TEXT,
+      observacao TEXT,
+      criado_por INTEGER,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+      atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_produtos_empresa ON produtos (empresa);
     CREATE INDEX IF NOT EXISTS idx_clientes_empresa ON clientes (empresa);
     CREATE INDEX IF NOT EXISTS idx_vendas_empresa ON vendas (empresa);
@@ -487,6 +619,11 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_compra_itens_compra ON compra_itens (compra_id);
     CREATE INDEX IF NOT EXISTS idx_mov_estoque_empresa ON movimentacoes_estoque (empresa);
     CREATE INDEX IF NOT EXISTS idx_mov_estoque_produto ON movimentacoes_estoque (produto_id);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_empresa ON contas_receber (empresa);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_status ON contas_receber (empresa, status);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_vencimento ON contas_receber (empresa, data_vencimento);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_cliente ON contas_receber (empresa, cliente_id);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_venda ON contas_receber (venda_id);
   `);
 
   await pool.query(`
@@ -521,6 +658,23 @@ async function initDb() {
     ALTER TABLE compras ADD COLUMN IF NOT EXISTS pagamento_data TEXT;
   `);
 
+  await pool.query(`
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS venda_id INTEGER;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS cliente_id INTEGER;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS cliente_nome TEXT;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS parcela INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS total_parcelas INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS valor NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS data_vencimento TEXT;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS data_pagamento TEXT;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pendente';
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS forma_pagamento TEXT;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS observacao TEXT;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS criado_por INTEGER;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
+  `);
+
   const hash = await bcrypt.hash("Lfgl.1308.", 10);
   const existing = await pool.query(
     `SELECT id FROM usuarios WHERE usuario = $1`,
@@ -546,6 +700,8 @@ async function initDb() {
       [hash, "admin", null, "Lfelipeg", "Lfelipeg"]
     );
   }
+
+  await atualizarStatusContasReceberGlobal();
 }
 
 app.get("/", async (req, res) => {
@@ -1045,6 +1201,15 @@ app.delete("/clientes/:id", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    const vinculadas = await pool.query(
+      `SELECT id FROM contas_receber WHERE cliente_id = $1 AND empresa = $2 LIMIT 1`,
+      [id, empresa]
+    );
+
+    if (vinculadas.rowCount > 0) {
+      return res.status(400).send("Cliente vinculado a contas a receber. Não pode ser excluído.");
+    }
+
     const result = await pool.query(
       `DELETE FROM clientes WHERE id = $1 AND empresa = $2`,
       [id, empresa]
@@ -1179,7 +1344,20 @@ app.delete("/fornecedores/:id", auth, async (req, res) => {
 app.post("/vendas", auth, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { empresa, produto_id, quantidade, cliente_nome, pagamento, data } = req.body;
+    const {
+      empresa,
+      produto_id,
+      quantidade,
+      cliente_nome,
+      pagamento,
+      data,
+      cliente_id,
+      venda_a_prazo,
+      num_parcelas,
+      data_primeiro_vencimento,
+      intervalo_dias,
+      observacao_crediario
+    } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
@@ -1252,6 +1430,36 @@ app.post("/vendas", auth, async (req, res) => {
       ]
     );
 
+    const ehPrazo =
+      Boolean(venda_a_prazo) ||
+      String(pagamento || "").toLowerCase() === "promissória" ||
+      String(pagamento || "").toLowerCase() === "promissoria" ||
+      String(pagamento || "").toLowerCase() === "crediário" ||
+      String(pagamento || "").toLowerCase() === "crediario";
+
+    if (ehPrazo) {
+      const parcelas = normalizarInt(num_parcelas || 1);
+
+      if (parcelas <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).send("Quantidade de parcelas inválida");
+      }
+
+      await criarParcelasContasReceber({
+        client,
+        empresa,
+        venda_id: venda.rows[0].id,
+        cliente_id: cliente_id || null,
+        cliente_nome: cliente_nome || "",
+        total,
+        quantidade_parcelas: parcelas,
+        data_primeiro_vencimento: data_primeiro_vencimento || dataVenda,
+        intervalo_dias: intervalo_dias || 30,
+        observacao: observacao_crediario || `Contas a receber geradas pela venda #${venda.rows[0].id}`,
+        criado_por: req.user.id
+      });
+    }
+
     await client.query("COMMIT");
     res.json({ sucesso: true, id: venda.rows[0].id });
   } catch (error) {
@@ -1303,6 +1511,14 @@ app.put("/vendas/:id", auth, async (req, res) => {
       return res.status(404).send("Venda não encontrada");
     }
 
+    await pool.query(
+      `UPDATE contas_receber
+       SET cliente_nome = $1,
+           atualizado_em = NOW()
+       WHERE venda_id = $2 AND empresa = $3`,
+      [cliente_nome || "", id, empresa]
+    );
+
     res.json({ sucesso: true });
   } catch (error) {
     res.status(500).send("Erro ao atualizar venda");
@@ -1332,6 +1548,18 @@ app.delete("/vendas/:id", auth, async (req, res) => {
     }
 
     const venda = vendaResult.rows[0];
+
+    const contasPagas = await client.query(
+      `SELECT id FROM contas_receber
+       WHERE venda_id = $1 AND empresa = $2 AND status = 'pago'
+       LIMIT 1`,
+      [id, empresa]
+    );
+
+    if (contasPagas.rowCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).send("Esta venda possui parcelas já pagas e não pode ser excluída.");
+    }
 
     if (venda.produto_id) {
       const produtoResult = await client.query(
@@ -1365,6 +1593,11 @@ app.delete("/vendas/:id", auth, async (req, res) => {
         );
       }
     }
+
+    await client.query(
+      `DELETE FROM contas_receber WHERE venda_id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
 
     await client.query(`DELETE FROM vendas WHERE id = $1 AND empresa = $2`, [id, empresa]);
     await client.query("COMMIT");
@@ -1784,7 +2017,7 @@ app.post("/lancamentos-financeiros", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!empresa || !tipo || !categoria || !descricao || !valor) {
+    if (!empresa || !tipo || !categoria || !descricao || valor === undefined || valor === null) {
       return res.status(400).send("Preencha os campos obrigatórios");
     }
 
@@ -1917,6 +2150,328 @@ app.delete("/lancamentos-financeiros/:id", auth, async (req, res) => {
   }
 });
 
+// ================= CONTAS A RECEBER =================
+app.get("/contas-receber/:empresa", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    await atualizarStatusContasReceberPorEmpresa(empresa);
+
+    const status = req.query.status || "";
+    const clienteId = req.query.cliente_id ? Number(req.query.cliente_id) : null;
+    const busca = (req.query.busca || "").trim().toLowerCase();
+
+    let sql = `
+      SELECT *
+      FROM contas_receber
+      WHERE empresa = $1
+    `;
+    const params = [empresa];
+    let idx = 2;
+
+    if (status) {
+      sql += ` AND status = $${idx} `;
+      params.push(status);
+      idx++;
+    }
+
+    if (clienteId) {
+      sql += ` AND cliente_id = $${idx} `;
+      params.push(clienteId);
+      idx++;
+    }
+
+    if (busca) {
+      sql += ` AND LOWER(COALESCE(cliente_nome, '')) LIKE $${idx} `;
+      params.push(`%${busca}%`);
+      idx++;
+    }
+
+    sql += ` ORDER BY status ASC, data_vencimento ASC NULLS LAST, id ASC`;
+
+    const result = await pool.query(sql, params);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar contas a receber");
+  }
+});
+
+app.get("/contas-receber/:empresa/resumo", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    await atualizarStatusContasReceberPorEmpresa(empresa);
+
+    const result = await pool.query(
+      `SELECT
+          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END), 0) AS pendente,
+          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END), 0) AS pago,
+          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END), 0) AS atrasado,
+          COUNT(*) AS total_parcelas,
+          COALESCE(SUM(valor), 0) AS valor_total
+       FROM contas_receber
+       WHERE empresa = $1`,
+      [empresa]
+    );
+
+    res.json({
+      pendente: Number(result.rows[0].pendente || 0),
+      pago: Number(result.rows[0].pago || 0),
+      atrasado: Number(result.rows[0].atrasado || 0),
+      total_parcelas: Number(result.rows[0].total_parcelas || 0),
+      valor_total: Number(result.rows[0].valor_total || 0)
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao buscar resumo de contas a receber");
+  }
+});
+
+app.get("/contas-receber/:empresa/:id", auth, async (req, res) => {
+  try {
+    const empresa = req.params.empresa;
+    const id = req.params.id;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    await atualizarStatusContasReceberPorEmpresa(empresa);
+
+    const result = await pool.query(
+      `SELECT * FROM contas_receber WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Parcela não encontrada");
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar parcela");
+  }
+});
+
+app.post("/contas-receber", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const {
+      empresa,
+      cliente_id,
+      cliente_nome,
+      valor,
+      data_vencimento,
+      forma_pagamento,
+      observacao
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    if (!empresa || !cliente_nome || normalizarDecimal(valor) <= 0 || !data_vencimento) {
+      return res.status(400).send("Preencha os campos obrigatórios");
+    }
+
+    const result = await pool.query(
+      `INSERT INTO contas_receber
+       (
+         empresa,
+         cliente_id,
+         cliente_nome,
+         parcela,
+         total_parcelas,
+         valor,
+         data_vencimento,
+         status,
+         forma_pagamento,
+         observacao,
+         criado_por,
+         criado_em,
+         atualizado_em
+       )
+       VALUES ($1, $2, $3, 1, 1, $4, $5, 'pendente', $6, $7, $8, NOW(), NOW())
+       RETURNING id`,
+      [
+        empresa,
+        cliente_id || null,
+        cliente_nome,
+        normalizarDecimal(valor),
+        data_vencimento,
+        forma_pagamento || "Promissória",
+        observacao || "",
+        req.user.id
+      ]
+    );
+
+    res.json({ sucesso: true, id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar conta a receber");
+  }
+});
+
+app.put("/contas-receber/:id/baixar", auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const {
+      empresa,
+      data_pagamento,
+      forma_pagamento,
+      observacao
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    await client.query("BEGIN");
+
+    const contaResult = await client.query(
+      `SELECT * FROM contas_receber WHERE id = $1 AND empresa = $2 FOR UPDATE`,
+      [id, empresa]
+    );
+
+    if (contaResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).send("Parcela não encontrada");
+    }
+
+    const conta = contaResult.rows[0];
+
+    if (conta.status === "pago") {
+      await client.query("ROLLBACK");
+      return res.status(400).send("Parcela já está paga");
+    }
+
+    const dataPagamentoFinal = data_pagamento || hoje();
+    const formaPagamentoFinal = forma_pagamento || conta.forma_pagamento || "Dinheiro";
+
+    await client.query(
+      `UPDATE contas_receber
+       SET status = 'pago',
+           data_pagamento = $1,
+           forma_pagamento = $2,
+           observacao = $3,
+           atualizado_em = NOW()
+       WHERE id = $4 AND empresa = $5`,
+      [
+        dataPagamentoFinal,
+        formaPagamentoFinal,
+        observacao || conta.observacao || "",
+        id,
+        empresa
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO lancamentos_financeiros
+       (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
+       VALUES ($1, 'receita', 'Contas a receber', $2, $3, $4, 'pago', $5, FALSE, NULL, $6, $7)`,
+      [
+        empresa,
+        `Recebimento parcela ${conta.parcela}/${conta.total_parcelas} - ${conta.cliente_nome || "Cliente"}`,
+        conta.valor,
+        conta.data_vencimento || dataPagamentoFinal,
+        dataPagamentoFinal,
+        formaPagamentoFinal,
+        observacao || `Baixa da conta a receber #${conta.id}`,
+        req.user.id
+      ]
+    );
+
+    await client.query("COMMIT");
+    res.json({ sucesso: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).send("Erro ao baixar parcela");
+  } finally {
+    client.release();
+  }
+});
+
+app.put("/contas-receber/:id", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const {
+      empresa,
+      cliente_id,
+      cliente_nome,
+      valor,
+      data_vencimento,
+      forma_pagamento,
+      observacao,
+      status
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const atual = await pool.query(
+      `SELECT * FROM contas_receber WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (atual.rowCount === 0) {
+      return res.status(404).send("Parcela não encontrada");
+    }
+
+    if (atual.rows[0].status === "pago" && status && status !== "pago") {
+      return res.status(400).send("Parcela paga não pode voltar por esta rota. Use regra específica se quiser reabrir.");
+    }
+
+    await pool.query(
+      `UPDATE contas_receber
+       SET cliente_id = $1,
+           cliente_nome = $2,
+           valor = $3,
+           data_vencimento = $4,
+           forma_pagamento = $5,
+           observacao = $6,
+           status = $7,
+           atualizado_em = NOW()
+       WHERE id = $8 AND empresa = $9`,
+      [
+        cliente_id || null,
+        cliente_nome || "",
+        normalizarDecimal(valor),
+        data_vencimento || null,
+        forma_pagamento || null,
+        observacao || "",
+        status || atual.rows[0].status,
+        id,
+        empresa
+      ]
+    );
+
+    await atualizarStatusContasReceberPorEmpresa(empresa);
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao atualizar parcela");
+  }
+});
+
 // ================= INVESTIMENTOS =================
 app.get("/investimentos/:empresa", auth, async (req, res) => {
   try {
@@ -1953,7 +2508,7 @@ app.post("/investimentos", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!empresa || !tipo_investimento || !descricao || !valor || !data) {
+    if (!empresa || !tipo_investimento || !descricao || valor === undefined || valor === null || !data) {
       return res.status(400).send("Preencha os campos obrigatórios");
     }
 
@@ -2062,6 +2617,8 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    await atualizarStatusContasReceberPorEmpresa(empresa);
+
     const [
       vendas,
       produtos,
@@ -2071,7 +2628,8 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       alertas,
       fornecedores,
       comprasResumo,
-      estoqueResumo
+      estoqueResumo,
+      contasReceberResumo
     ] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(total),0) AS faturamento, COUNT(*) AS total_vendas FROM vendas WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos WHERE empresa = $1`, [empresa]),
@@ -2088,7 +2646,15 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE empresa = $1 AND estoque <= estoque_minimo`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos WHERE empresa = $1`, [empresa])
+      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos WHERE empresa = $1`, [empresa]),
+      pool.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS receber_pendente,
+          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS receber_atrasado,
+          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS receber_pago
+        FROM contas_receber
+        WHERE empresa = $1
+      `, [empresa])
     ]);
 
     res.json({
@@ -2104,7 +2670,10 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
       total_compras: Number(comprasResumo.rows[0].total_compras || 0),
       valor_total_compras: Number(comprasResumo.rows[0].valor_total_compras || 0),
-      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0)
+      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0),
+      receber_pendente: Number(contasReceberResumo.rows[0].receber_pendente || 0),
+      receber_atrasado: Number(contasReceberResumo.rows[0].receber_atrasado || 0),
+      receber_pago: Number(contasReceberResumo.rows[0].receber_pago || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard");
@@ -2174,6 +2743,15 @@ app.get("/dre/:empresa", auth, async (req, res) => {
       [empresa, inicio, fim]
     );
 
+    const recebimentos = await pool.query(
+      `SELECT COALESCE(SUM(valor),0) AS recebimentos
+       FROM contas_receber
+       WHERE empresa = $1
+         AND status = 'pago'
+         AND COALESCE(data_pagamento, data_vencimento) BETWEEN $2 AND $3`,
+      [empresa, inicio, fim]
+    );
+
     const receitaBruta = Number(vendas.rows[0].receita_bruta || 0);
     const deducoes = 0;
     const receitaLiquida = receitaBruta - deducoes;
@@ -2189,7 +2767,8 @@ app.get("/dre/:empresa", auth, async (req, res) => {
       custos,
       lucro_bruto: lucroBruto,
       despesas,
-      resultado_operacional: resultadoOperacional
+      resultado_operacional: resultadoOperacional,
+      recebimentos: Number(recebimentos.rows[0].recebimentos || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar DRE");
@@ -2210,6 +2789,8 @@ app.get("/admin/empresas", auth, apenasAdmin, async (req, res) => {
         SELECT DISTINCT empresa FROM compras WHERE empresa IS NOT NULL AND empresa <> ''
         UNION
         SELECT DISTINCT empresa FROM clientes WHERE empresa IS NOT NULL AND empresa <> ''
+        UNION
+        SELECT DISTINCT empresa FROM contas_receber WHERE empresa IS NOT NULL AND empresa <> ''
       ) t
       ORDER BY empresa ASC
     `);
@@ -2228,9 +2809,10 @@ app.get("/admin/produtos", auth, apenasAdmin, async (req, res) => {
        FROM produtos
        ORDER BY empresa ASC, nome ASC`
     );
+
     res.json(result.rows);
   } catch (error) {
-    res.status(500).send("Erro ao buscar produtos do admin");
+    res.status(500).send("Erro ao buscar produtos admin");
   }
 });
 
@@ -2239,50 +2821,66 @@ app.get("/admin/fornecedores", auth, apenasAdmin, async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM fornecedores ORDER BY empresa ASC, nome ASC`
     );
+
     res.json(result.rows);
   } catch (error) {
-    res.status(500).send("Erro ao buscar fornecedores do admin");
+    res.status(500).send("Erro ao buscar fornecedores admin");
   }
 });
 
 app.get("/admin/compras", auth, apenasAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT c.*,
-              f.nome AS fornecedor_nome
+      `SELECT c.*, f.nome AS fornecedor_nome
        FROM compras c
        INNER JOIN fornecedores f ON f.id = c.fornecedor_id
        ORDER BY c.data DESC, c.id DESC`
     );
+
     res.json(result.rows);
   } catch (error) {
-    res.status(500).send("Erro ao buscar compras do admin");
+    res.status(500).send("Erro ao buscar compras admin");
   }
 });
 
 app.get("/admin/movimentacoes-estoque", auth, apenasAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT m.*,
-              p.nome AS produto_nome
+      `SELECT m.*, p.nome AS produto_nome
        FROM movimentacoes_estoque m
        INNER JOIN produtos p ON p.id = m.produto_id
        ORDER BY m.data_movimentacao DESC, m.id DESC`
     );
+
     res.json(result.rows);
   } catch (error) {
-    res.status(500).send("Erro ao buscar movimentações do admin");
+    res.status(500).send("Erro ao buscar movimentações admin");
   }
 });
 
 app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
   try {
-    const [produtos, fornecedores, compras, alertas, estoqueResumo] = await Promise.all([
+    await atualizarStatusContasReceberGlobal();
+
+    const [
+      produtos,
+      fornecedores,
+      compras,
+      alertas,
+      estoqueResumo,
+      contasReceberResumo
+    ] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos`),
       pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores`),
       pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras`),
       pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE estoque <= estoque_minimo`),
-      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos`)
+      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos`),
+      pool.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS receber_pendente,
+          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS receber_atrasado
+        FROM contas_receber
+      `)
     ]);
 
     res.json({
@@ -2291,7 +2889,9 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
       total_compras: Number(compras.rows[0].total_compras || 0),
       valor_total_compras: Number(compras.rows[0].valor_total_compras || 0),
       produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0),
-      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0)
+      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0),
+      receber_pendente: Number(contasReceberResumo.rows[0].receber_pendente || 0),
+      receber_atrasado: Number(contasReceberResumo.rows[0].receber_atrasado || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard admin");
@@ -2347,6 +2947,22 @@ app.get("/admin/relatorio-performance", auth, apenasAdmin, async (req, res) => {
     res.json(relatorios);
   } catch (error) {
     res.status(500).send("Erro ao carregar relatório consolidado de performance");
+  }
+});
+
+app.get("/admin/contas-receber", auth, apenasAdmin, async (req, res) => {
+  try {
+    await atualizarStatusContasReceberGlobal();
+
+    const result = await pool.query(
+      `SELECT *
+       FROM contas_receber
+       ORDER BY empresa ASC, status ASC, data_vencimento ASC NULLS LAST, id ASC`
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar contas a receber admin");
   }
 });
 
