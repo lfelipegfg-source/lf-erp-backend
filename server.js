@@ -1998,7 +1998,7 @@ app.post("/vendas", auth, async (req, res) => {
 
       if (estoqueAtual < quantidade) {
         await client.query("ROLLBACK");
-        return res.status(400).send(\`Estoque insuficiente para o produto \${produto.nome}\`);
+        return res.status(400).send(`Estoque insuficiente para o produto ${produto.nome}`);
       }
 
       const precoUnitario = item.preco_unitario !== undefined && item.preco_unitario !== null
@@ -2124,7 +2124,7 @@ app.post("/vendas", auth, async (req, res) => {
         produto_id: item.produto.id,
         tipo: "saida_venda",
         quantidade: item.quantidade,
-        observacao: \`Venda #\${vendaId} - \${item.produto.nome}\`,
+        observacao: `Venda #${vendaId} - ${item.produto.nome}`,
         referencia_tipo: "venda",
         referencia_id: vendaId,
         usuario_id: req.user.id
@@ -2142,7 +2142,7 @@ app.post("/vendas", auth, async (req, res) => {
         quantidade_parcelas: parcelasFinal,
         data_primeiro_vencimento: normalizarDataISO(data_primeiro_vencimento) || dataVenda,
         intervalo_dias: intervalo_dias || 30,
-        observacao: observacao || \`Contas geradas pela venda #\${vendaId}\`,
+        observacao: observacao || `Contas geradas pela venda #${vendaId}`,
         criado_por: req.user.id,
         forma_pagamento: pagamentoFinal
       });
@@ -2167,7 +2167,7 @@ app.post("/vendas", auth, async (req, res) => {
          VALUES ($1, 'receita', 'Venda', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
         [
           empresa,
-          \`Venda #\${vendaId}\`,
+          `Venda #${vendaId}`,
           totalFinal,
           dataVenda,
           dataVenda,
@@ -2361,7 +2361,7 @@ app.delete("/vendas/:id", auth, async (req, res) => {
           produto_id: item.produto_id,
           tipo: "estorno_venda",
           quantidade: normalizarInt(item.quantidade),
-          observacao: \`Estorno da venda #\${id} - \${item.produto_nome}\`,
+          observacao: `Estorno da venda #${id} - ${item.produto_nome}`,
           referencia_tipo: "venda",
           referencia_id: Number(id),
           usuario_id: req.user.id
@@ -2380,7 +2380,7 @@ app.delete("/vendas/:id", auth, async (req, res) => {
          AND tipo = 'receita'
          AND categoria = 'Venda'
          AND descricao = $2`,
-      [empresa, \`Venda #\${id}\`]
+      [empresa, `Venda #${id}`]
     );
 
     await client.query(`DELETE FROM venda_itens WHERE venda_id = $1`, [id]);
@@ -2786,7 +2786,7 @@ app.patch("/contas-receber/:id/receber", auth, async (req, res) => {
        VALUES ($1, 'receita', 'Conta a receber', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
-        \`Recebimento parcela \${conta.parcela}/\${conta.total_parcelas} - \${conta.cliente_nome || "Cliente"}\`,
+        `Recebimento parcela ${conta.parcela}/${conta.total_parcelas} - ${conta.cliente_nome || "Cliente"}`,
         normalizarDecimal(conta.valor),
         conta.data_vencimento,
         normalizarDataISO(data_pagamento) || hoje(),
@@ -3085,7 +3085,7 @@ app.patch("/contas-pagar/:id/pagar", auth, async (req, res) => {
        VALUES ($1, 'despesa', 'Conta a pagar', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
-        conta.descricao || \`Pagamento conta #\${id}\`,
+        conta.descricao || `Pagamento conta #${id}`,
         normalizarDecimal(conta.valor),
         conta.data_vencimento,
         normalizarDataISO(data_pagamento) || hoje(),
