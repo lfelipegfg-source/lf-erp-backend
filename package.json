@@ -1,18 +1,16 @@
 {
   "name": "lf-erp-backend",
-  "version": "3.0.0",
-  "description": "LF ERP com PostgreSQL no Neon - Etapa 3",
+  "version": "1.0.0",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
-  "author": "LF Tech Solutions",
-  "license": "ISC",
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
-    "express": "^4.21.2",
+    "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.13.1"
+    "pg": "^8.11.5"
   }
 }

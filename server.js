@@ -739,7 +739,6 @@ async function initDb() {
       atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
-
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_produtos_empresa ON produtos (empresa);
     CREATE INDEX IF NOT EXISTS idx_clientes_empresa ON clientes (empresa);
@@ -952,7 +951,7 @@ app.post("/usuarios", auth, async (req, res) => {
       }
     }
 
-    const hash = await bcrypt.hash(senha, 10);
+    const hashSenha = await bcrypt.hash(senha, 10);
 
     const result = await pool.query(
       `INSERT INTO usuarios
@@ -961,7 +960,7 @@ app.post("/usuarios", auth, async (req, res) => {
       RETURNING id`,
       [
         usuario,
-        hash,
+        hashSenha,
         tipo,
         tipo === "admin" ? null : empresa,
         nome_completo,
@@ -1180,8 +1179,7 @@ app.get("/admin/produtos", auth, apenasAdmin, async (req, res) => {
       campo: "criado_em",
       params,
       dataInicial,
-      dataFinal,
-      castDate: true
+      dataFinal
     });
 
     const result = await pool.query(
@@ -1579,8 +1577,11 @@ app.delete("/fornecedores/:id", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    const compras = await pool.query(`SELECT id FROM compras WHERE fornecedor_id = $1 LIMIT 1`, [id]);
-    if (compras.rowCount > 0) {
+    const comprasFornecedor = await pool.query(
+      `SELECT id FROM compras WHERE fornecedor_id = $1 LIMIT 1`,
+      [id]
+    );
+    if (comprasFornecedor.rowCount > 0) {
       return res.status(400).send("Fornecedor vinculado a compras. Não pode ser excluído.");
     }
 
@@ -1997,7 +1998,7 @@ app.post("/vendas", auth, async (req, res) => {
 
       if (estoqueAtual < quantidade) {
         await client.query("ROLLBACK");
-        return res.status(400).send(`Estoque insuficiente para o produto ${produto.nome}`);
+        return res.status(400).send(\`Estoque insuficiente para o produto \${produto.nome}\`);
       }
 
       const precoUnitario = item.preco_unitario !== undefined && item.preco_unitario !== null
@@ -2123,7 +2124,7 @@ app.post("/vendas", auth, async (req, res) => {
         produto_id: item.produto.id,
         tipo: "saida_venda",
         quantidade: item.quantidade,
-        observacao: `Venda #${vendaId} - ${item.produto.nome}`,
+        observacao: \`Venda #\${vendaId} - \${item.produto.nome}\`,
         referencia_tipo: "venda",
         referencia_id: vendaId,
         usuario_id: req.user.id
@@ -2141,7 +2142,7 @@ app.post("/vendas", auth, async (req, res) => {
         quantidade_parcelas: parcelasFinal,
         data_primeiro_vencimento: normalizarDataISO(data_primeiro_vencimento) || dataVenda,
         intervalo_dias: intervalo_dias || 30,
-        observacao: observacao || `Contas geradas pela venda #${vendaId}`,
+        observacao: observacao || \`Contas geradas pela venda #\${vendaId}\`,
         criado_por: req.user.id,
         forma_pagamento: pagamentoFinal
       });
@@ -2166,7 +2167,7 @@ app.post("/vendas", auth, async (req, res) => {
          VALUES ($1, 'receita', 'Venda', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
         [
           empresa,
-          `Venda #${vendaId}`,
+          \`Venda #\${vendaId}\`,
           totalFinal,
           dataVenda,
           dataVenda,
@@ -2360,7 +2361,7 @@ app.delete("/vendas/:id", auth, async (req, res) => {
           produto_id: item.produto_id,
           tipo: "estorno_venda",
           quantidade: normalizarInt(item.quantidade),
-          observacao: `Estorno da venda #${id} - ${item.produto_nome}`,
+          observacao: \`Estorno da venda #\${id} - \${item.produto_nome}\`,
           referencia_tipo: "venda",
           referencia_id: Number(id),
           usuario_id: req.user.id
@@ -2379,7 +2380,7 @@ app.delete("/vendas/:id", auth, async (req, res) => {
          AND tipo = 'receita'
          AND categoria = 'Venda'
          AND descricao = $2`,
-      [empresa, `Venda #${id}`]
+      [empresa, \`Venda #\${id}\`]
     );
 
     await client.query(`DELETE FROM venda_itens WHERE venda_id = $1`, [id]);
@@ -2785,7 +2786,7 @@ app.patch("/contas-receber/:id/receber", auth, async (req, res) => {
        VALUES ($1, 'receita', 'Conta a receber', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
-        `Recebimento parcela ${conta.parcela}/${conta.total_parcelas} - ${conta.cliente_nome || "Cliente"}`,
+        \`Recebimento parcela \${conta.parcela}/\${conta.total_parcelas} - \${conta.cliente_nome || "Cliente"}\`,
         normalizarDecimal(conta.valor),
         conta.data_vencimento,
         normalizarDataISO(data_pagamento) || hoje(),
@@ -3084,7 +3085,7 @@ app.patch("/contas-pagar/:id/pagar", auth, async (req, res) => {
        VALUES ($1, 'despesa', 'Conta a pagar', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
-        conta.descricao || `Pagamento conta #${id}`,
+        conta.descricao || \`Pagamento conta #\${id}\`,
         normalizarDecimal(conta.valor),
         conta.data_vencimento,
         normalizarDataISO(data_pagamento) || hoje(),
@@ -3193,7 +3194,9 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       valorEstoqueResult,
       movimentacoesResult,
       receberResumo,
-      pagarResumo
+      pagarResumo,
+      faturamentoResult,
+      custoComprasResult
     ] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total FROM produtos WHERE empresa = $1`, [empresa]),
       pool.query(`SELECT COUNT(*) AS total FROM fornecedores WHERE empresa = $1`, [empresa]),
@@ -3239,8 +3242,28 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
          WHERE empresa = $1
          ${filtroPagar}`,
         paramsPagar
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(total),0) AS total
+         FROM vendas
+         WHERE empresa = $1
+         ${filtroVendas}`,
+        paramsVendas
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(total),0) AS total
+         FROM compras
+         WHERE empresa = $1
+         ${filtroCompras}`,
+        paramsCompras
       )
     ]);
+
+    const faturamento = Number(faturamentoResult.rows[0].total || 0);
+    const custoCompras = Number(custoComprasResult.rows[0].total || 0);
+    const lucroEstimado = faturamento - custoCompras;
+    const totalVendas = Number(vendasResult.rows[0].total || 0);
+    const ticketMedio = totalVendas > 0 ? faturamento / totalVendas : 0;
 
     res.json({
       periodo: {
@@ -3250,7 +3273,7 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       total_produtos: Number(produtosResult.rows[0].total || 0),
       total_fornecedores: Number(fornecedoresResult.rows[0].total || 0),
       total_compras: Number(comprasResult.rows[0].total || 0),
-      total_vendas: Number(vendasResult.rows[0].total || 0),
+      total_vendas: totalVendas,
       produtos_alerta: Number(alertasResult.rows[0].total || 0),
       valor_estoque: Number(valorEstoqueResult.rows[0].total || 0),
       total_movimentacoes: Number(movimentacoesResult.rows[0].total || 0),
@@ -3259,7 +3282,11 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
       receber_atrasado: Number(receberResumo.rows[0].atrasado || 0),
       pagar_pendente: Number(pagarResumo.rows[0].pendente || 0),
       pagar_pago: Number(pagarResumo.rows[0].pago || 0),
-      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0)
+      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0),
+      faturamento,
+      custo_compras: custoCompras,
+      lucro_estimado: lucroEstimado,
+      ticket_medio: ticketMedio
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard");
@@ -3331,7 +3358,9 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
       valorEstoqueResult,
       movimentacoesResult,
       receberResumo,
-      pagarResumo
+      pagarResumo,
+      faturamentoResult,
+      custoComprasResult
     ] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total FROM produtos`),
       pool.query(`SELECT COUNT(*) AS total FROM fornecedores`),
@@ -3370,8 +3399,26 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
          FROM contas_pagar
          ${wherePagar}`,
         paramsPagar
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(total),0) AS total
+         FROM vendas
+         ${whereVendas}`,
+        paramsVendas
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(total),0) AS total
+         FROM compras
+         ${whereCompras}`,
+        paramsCompras
       )
     ]);
+
+    const faturamento = Number(faturamentoResult.rows[0].total || 0);
+    const custoCompras = Number(custoComprasResult.rows[0].total || 0);
+    const lucroEstimado = faturamento - custoCompras;
+    const totalVendas = Number(vendasResult.rows[0].total || 0);
+    const ticketMedio = totalVendas > 0 ? faturamento / totalVendas : 0;
 
     res.json({
       periodo: {
@@ -3381,7 +3428,7 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
       total_produtos: Number(produtosResult.rows[0].total || 0),
       total_fornecedores: Number(fornecedoresResult.rows[0].total || 0),
       total_compras: Number(comprasResult.rows[0].total || 0),
-      total_vendas: Number(vendasResult.rows[0].total || 0),
+      total_vendas: totalVendas,
       produtos_alerta: Number(alertasResult.rows[0].total || 0),
       valor_estoque: Number(valorEstoqueResult.rows[0].total || 0),
       total_movimentacoes: Number(movimentacoesResult.rows[0].total || 0),
@@ -3390,7 +3437,11 @@ app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
       receber_atrasado: Number(receberResumo.rows[0].atrasado || 0),
       pagar_pendente: Number(pagarResumo.rows[0].pendente || 0),
       pagar_pago: Number(pagarResumo.rows[0].pago || 0),
-      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0)
+      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0),
+      faturamento,
+      custo_compras: custoCompras,
+      lucro_estimado: lucroEstimado,
+      ticket_medio: ticketMedio
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard admin");
