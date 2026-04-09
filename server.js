@@ -45,6 +45,65 @@ function addDias(dataBase, dias) {
   return data.toISOString().slice(0, 10);
 }
 
+function normalizarDataISO(valor) {
+  if (!valor) return null;
+  if (typeof valor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(valor.trim())) {
+    return valor.trim();
+  }
+  const d = new Date(valor);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function obterPeriodo(req) {
+  return {
+    dataInicial: normalizarDataISO(req.query.data_inicial || req.query.inicio || ""),
+    dataFinal: normalizarDataISO(req.query.data_final || req.query.fim || "")
+  };
+}
+
+function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {
+  let sql = "";
+  const campoSql = castDate ? `DATE(${campo})` : campo;
+
+  if (dataInicial) {
+    params.push(dataInicial);
+    sql += ` AND ${campoSql} >= $${params.length}`;
+  }
+
+  if (dataFinal) {
+    params.push(dataFinal);
+    sql += ` AND ${campoSql} <= $${params.length}`;
+  }
+
+  return sql;
+}
+
+function adicionarFiltroPeriodoRange({
+  campoInicial,
+  campoFinal,
+  params,
+  dataInicial,
+  dataFinal,
+  castDate = true
+}) {
+  let sql = "";
+  const inicioSql = castDate ? `DATE(${campoInicial})` : campoInicial;
+  const fimSql = castDate ? `DATE(${campoFinal})` : campoFinal;
+
+  if (dataInicial) {
+    params.push(dataInicial);
+    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) >= $${params.length}`;
+  }
+
+  if (dataFinal) {
+    params.push(dataFinal);
+    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) <= $${params.length}`;
+  }
+
+  return sql;
+}
+
 function validarEmpresa(req, empresa) {
   if (req.user.tipo === "admin") return true;
   return req.user.empresa === empresa;
@@ -1110,6 +1169,36 @@ app.get("/produtos/:empresa", auth, async (req, res) => {
   }
 });
 
+app.get("/admin/produtos", auth, apenasAdmin, async (req, res) => {
+  try {
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    where += adicionarFiltroPeriodo({
+      campo: "criado_em",
+      params,
+      dataInicial,
+      dataFinal,
+      castDate: true
+    });
+
+    const result = await pool.query(
+      `SELECT *,
+              CASE WHEN estoque <= estoque_minimo THEN TRUE ELSE FALSE END AS alerta_estoque
+       FROM produtos
+       ${where}
+       ORDER BY empresa ASC, nome ASC`,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar produtos");
+  }
+});
+
 app.put("/produtos/:id", auth, async (req, res) => {
   try {
     const id = req.params.id;
@@ -1269,6 +1358,33 @@ app.get("/clientes/:empresa", auth, async (req, res) => {
   }
 });
 
+app.get("/admin/clientes", auth, apenasAdmin, async (req, res) => {
+  try {
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    where += adicionarFiltroPeriodo({
+      campo: "criado_em",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT * FROM clientes
+       ${where}
+       ORDER BY empresa ASC, nome ASC`,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar clientes");
+  }
+});
+
 app.put("/clientes/:id", auth, async (req, res) => {
   try {
     const id = req.params.id;
@@ -1387,6 +1503,33 @@ app.get("/fornecedores/:empresa", auth, async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM fornecedores WHERE empresa = $1 ORDER BY nome ASC`,
       [empresa]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar fornecedores");
+  }
+});
+
+app.get("/admin/fornecedores", auth, apenasAdmin, async (req, res) => {
+  try {
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    where += adicionarFiltroPeriodo({
+      campo: "criado_em",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT * FROM fornecedores
+       ${where}
+       ORDER BY empresa ASC, nome ASC`,
+      params
     );
 
     res.json(result.rows);
@@ -1530,14 +1673,12 @@ app.post("/compras", auth, async (req, res) => {
       });
     }
 
-    const dataCompra = data || hoje();
+    const dataCompra = normalizarDataISO(data) || hoje();
     const gerarContaPagarBool = Boolean(gerar_conta_pagar);
     const formaPagamentoFinal = forma_pagamento || null;
 
     let statusPagamentoFinal = "pago";
-    if (gerarContaPagarBool) {
-      statusPagamentoFinal = "pendente";
-    }
+    if (gerarContaPagarBool) statusPagamentoFinal = "pendente";
     if (status_pagamento === "pago" || status_pagamento === "pendente") {
       statusPagamentoFinal = status_pagamento;
     }
@@ -1546,7 +1687,7 @@ app.post("/compras", auth, async (req, res) => {
     }
 
     const vencimentoFinal = gerarContaPagarBool
-      ? (vencimento || dataCompra)
+      ? (normalizarDataISO(vencimento) || dataCompra)
       : null;
 
     const pagamentoDataFinal = statusPagamentoFinal === "pago"
@@ -1704,14 +1845,54 @@ app.get("/compras/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [empresa];
+
+    const filtroPeriodo = adicionarFiltroPeriodo({
+      campo: "c.data",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
     const result = await pool.query(
       `SELECT c.*,
               f.nome AS fornecedor_nome
        FROM compras c
        INNER JOIN fornecedores f ON f.id = c.fornecedor_id
        WHERE c.empresa = $1
+       ${filtroPeriodo}
        ORDER BY c.data DESC, c.id DESC`,
-      [empresa]
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar compras");
+  }
+});
+
+app.get("/admin/compras", auth, apenasAdmin, async (req, res) => {
+  try {
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    where += adicionarFiltroPeriodo({
+      campo: "c.data",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT c.*,
+              f.nome AS fornecedor_nome
+       FROM compras c
+       INNER JOIN fornecedores f ON f.id = c.fornecedor_id
+       ${where}
+       ORDER BY c.empresa ASC, c.data DESC, c.id DESC`,
+      params
     );
 
     res.json(result.rows);
@@ -1852,7 +2033,7 @@ app.post("/vendas", auth, async (req, res) => {
 
     const pagamentoFinal = pagamento || "Dinheiro";
     const parcelasFinal = Math.max(1, normalizarInt(parcelas || 1));
-    const dataVenda = data || hoje();
+    const dataVenda = normalizarDataISO(data) || hoje();
 
     const pagamentoPrazo =
       ["Promissória", "Promissoria", "Crédito Parcelado", "Credito Parcelado"].includes(pagamentoFinal) ||
@@ -1958,7 +2139,7 @@ app.post("/vendas", auth, async (req, res) => {
         cliente_nome: cliente_nome || "",
         total: totalFinal,
         quantidade_parcelas: parcelasFinal,
-        data_primeiro_vencimento: data_primeiro_vencimento || dataVenda,
+        data_primeiro_vencimento: normalizarDataISO(data_primeiro_vencimento) || dataVenda,
         intervalo_dias: intervalo_dias || 30,
         observacao: observacao || `Contas geradas pela venda #${vendaId}`,
         criado_por: req.user.id,
@@ -2014,12 +2195,50 @@ app.get("/vendas/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [empresa];
+
+    const filtroPeriodo = adicionarFiltroPeriodo({
+      campo: "data",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
     const result = await pool.query(
       `SELECT *
        FROM vendas
        WHERE empresa = $1
+       ${filtroPeriodo}
        ORDER BY data DESC, id DESC`,
-      [empresa]
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar vendas");
+  }
+});
+
+app.get("/admin/vendas", auth, apenasAdmin, async (req, res) => {
+  try {
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    where += adicionarFiltroPeriodo({
+      campo: "data",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT *
+       FROM vendas
+       ${where}
+       ORDER BY empresa ASC, data DESC, id DESC`,
+      params
     );
 
     res.json(result.rows);
@@ -2099,8 +2318,6 @@ app.delete("/vendas/:id", auth, async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(404).send("Venda não encontrada");
     }
-
-    const venda = vendaResult.rows[0];
 
     const contasPagas = await client.query(
       `SELECT id FROM contas_receber
@@ -2186,14 +2403,54 @@ app.get("/movimentacoes-estoque/:empresa", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [empresa];
+
+    const filtroPeriodo = adicionarFiltroPeriodo({
+      campo: "m.data_movimentacao",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
     const result = await pool.query(
       `SELECT m.*,
               p.nome AS produto_nome
        FROM movimentacoes_estoque m
        INNER JOIN produtos p ON p.id = m.produto_id
        WHERE m.empresa = $1
+       ${filtroPeriodo}
        ORDER BY m.data_movimentacao DESC, m.id DESC`,
-      [empresa]
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar movimentações de estoque");
+  }
+});
+
+app.get("/admin/movimentacoes-estoque", auth, apenasAdmin, async (req, res) => {
+  try {
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    where += adicionarFiltroPeriodo({
+      campo: "m.data_movimentacao",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT m.*,
+              p.nome AS produto_nome
+       FROM movimentacoes_estoque m
+       INNER JOIN produtos p ON p.id = m.produto_id
+       ${where}
+       ORDER BY m.empresa ASC, m.data_movimentacao DESC, m.id DESC`,
+      params
     );
 
     res.json(result.rows);
@@ -2251,7 +2508,8 @@ app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
 
     await client.query(
       `UPDATE produtos
-       SET estoque = $1, atualizado_em = NOW()
+       SET estoque = $1,
+           atualizado_em = NOW()
        WHERE id = $2 AND empresa = $3`,
       [novoEstoque, produto_id, empresa]
     );
@@ -2272,38 +2530,13 @@ app.post("/movimentacoes-estoque/ajuste", auth, async (req, res) => {
     res.json({ sucesso: true });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).send("Erro ao registrar ajuste de estoque");
+    res.status(500).send("Erro ao registrar ajuste");
   } finally {
     client.release();
   }
 });
 
-app.get("/lancamentos-financeiros/:empresa", auth, async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const result = await pool.query(
-      `SELECT * FROM lancamentos_financeiros
-       WHERE empresa = $1
-       ORDER BY COALESCE(pagamento_data, vencimento, criado_em::text) DESC, id DESC`,
-      [empresa]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar lançamentos financeiros");
-  }
-});
-
-app.post("/lancamentos-financeiros", auth, async (req, res) => {
+app.post("/contas-receber", auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return res.status(403).send("Sem permissão");
@@ -2311,16 +2544,16 @@ app.post("/lancamentos-financeiros", auth, async (req, res) => {
 
     const {
       empresa,
-      tipo,
-      categoria,
-      descricao,
+      venda_id,
+      cliente_id,
+      cliente_nome,
+      parcela,
+      total_parcelas,
       valor,
-      vencimento,
-      pagamento_data,
+      data_vencimento,
+      data_pagamento,
       status,
       forma_pagamento,
-      recorrente,
-      frequencia,
       observacao
     } = req.body;
 
@@ -2328,136 +2561,47 @@ app.post("/lancamentos-financeiros", auth, async (req, res) => {
       return res.status(403).send("Sem acesso");
     }
 
-    if (!empresa || !tipo || !categoria || !descricao || valor === undefined || valor === null) {
-      return res.status(400).send("Preencha os campos obrigatórios");
-    }
-
-    const result = await pool.query(
-      `INSERT INTO lancamentos_financeiros
-       (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id`,
+    await pool.query(
+      `INSERT INTO contas_receber
+       (
+         empresa,
+         venda_id,
+         cliente_id,
+         cliente_nome,
+         parcela,
+         total_parcelas,
+         valor,
+         data_vencimento,
+         data_pagamento,
+         status,
+         forma_pagamento,
+         observacao,
+         criado_por,
+         criado_em,
+         atualizado_em
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
       [
         empresa,
-        tipo,
-        categoria,
-        descricao,
+        venda_id || null,
+        cliente_id || null,
+        cliente_nome || "",
+        normalizarInt(parcela || 1),
+        normalizarInt(total_parcelas || 1),
         normalizarDecimal(valor),
-        vencimento || null,
-        pagamento_data || null,
+        normalizarDataISO(data_vencimento),
+        normalizarDataISO(data_pagamento),
         status || "pendente",
-        forma_pagamento || null,
-        Boolean(recorrente),
-        frequencia || null,
-        observacao || null,
+        forma_pagamento || "",
+        observacao || "",
         req.user.id
       ]
     );
 
-    res.json({ sucesso: true, id: result.rows[0].id });
-  } catch (error) {
-    res.status(500).send("Erro ao cadastrar lançamento financeiro");
-  }
-});
-
-app.put("/lancamentos-financeiros/:id", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const id = req.params.id;
-    const {
-      empresa,
-      tipo,
-      categoria,
-      descricao,
-      valor,
-      vencimento,
-      pagamento_data,
-      status,
-      forma_pagamento,
-      recorrente,
-      frequencia,
-      observacao
-    } = req.body;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    const atual = await pool.query(
-      `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND empresa = $2`,
-      [id, empresa]
-    );
-
-    if (atual.rowCount === 0) {
-      return res.status(404).send("Lançamento não encontrado");
-    }
-
-    await pool.query(
-      `UPDATE lancamentos_financeiros
-       SET tipo = $1,
-           categoria = $2,
-           descricao = $3,
-           valor = $4,
-           vencimento = $5,
-           pagamento_data = $6,
-           status = $7,
-           forma_pagamento = $8,
-           recorrente = $9,
-           frequencia = $10,
-           observacao = $11,
-           atualizado_em = NOW()
-       WHERE id = $12 AND empresa = $13`,
-      [
-        tipo,
-        categoria,
-        descricao,
-        normalizarDecimal(valor),
-        vencimento || null,
-        pagamento_data || null,
-        status || "pendente",
-        forma_pagamento || null,
-        Boolean(recorrente),
-        frequencia || null,
-        observacao || null,
-        id,
-        empresa
-      ]
-    );
-
+    await atualizarStatusContasReceberPorEmpresa(empresa);
     res.json({ sucesso: true });
   } catch (error) {
-    res.status(500).send("Erro ao atualizar lançamento financeiro");
-  }
-});
-
-app.delete("/lancamentos-financeiros/:id", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const id = req.params.id;
-    const empresa = req.query.empresa;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    const result = await pool.query(
-      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND empresa = $2`,
-      [id, empresa]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).send("Lançamento não encontrado");
-    }
-
-    res.json({ sucesso: true });
-  } catch (error) {
-    res.status(500).send("Erro ao excluir lançamento financeiro");
+    res.status(500).send("Erro ao cadastrar conta a receber");
   }
 });
 
@@ -2471,39 +2615,70 @@ app.get("/contas-receber/:empresa", auth, async (req, res) => {
 
     await atualizarStatusContasReceberPorEmpresa(empresa);
 
-    const status = req.query.status || "";
-    const clienteId = req.query.cliente_id ? Number(req.query.cliente_id) : null;
-    const busca = (req.query.busca || "").trim().toLowerCase();
-
-    let sql = `
-      SELECT *
-      FROM contas_receber
-      WHERE empresa = $1
-    `;
+    const { dataInicial, dataFinal } = obterPeriodo(req);
     const params = [empresa];
-    let idx = 2;
 
-    if (status) {
-      sql += ` AND status = $${idx} `;
-      params.push(status);
-      idx++;
-    }
+    const filtroPeriodo = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
 
-    if (clienteId) {
-      sql += ` AND cliente_id = $${idx} `;
-      params.push(clienteId);
-      idx++;
-    }
+    const result = await pool.query(
+      `SELECT *
+       FROM contas_receber
+       WHERE empresa = $1
+       ${filtroPeriodo}
+       ORDER BY
+         CASE
+           WHEN status = 'atrasado' THEN 0
+           WHEN status = 'pendente' THEN 1
+           ELSE 2
+         END,
+         data_vencimento ASC,
+         id DESC`,
+      params
+    );
 
-    if (busca) {
-      sql += ` AND LOWER(COALESCE(cliente_nome, '')) LIKE $${idx} `;
-      params.push(`%${busca}%`);
-      idx++;
-    }
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar contas a receber");
+  }
+});
 
-    sql += ` ORDER BY status ASC, data_vencimento ASC NULLS LAST, id ASC`;
+app.get("/admin/contas-receber", auth, apenasAdmin, async (req, res) => {
+  try {
+    await atualizarStatusContasReceberGlobal();
 
-    const result = await pool.query(sql, params);
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    where += adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT *
+       FROM contas_receber
+       ${where}
+       ORDER BY empresa ASC,
+         CASE
+           WHEN status = 'atrasado' THEN 0
+           WHEN status = 'pendente' THEN 1
+           ELSE 2
+         END,
+         data_vencimento ASC,
+         id DESC`,
+      params
+    );
+
     res.json(result.rows);
   } catch (error) {
     res.status(500).send("Erro ao buscar contas a receber");
@@ -2520,133 +2695,60 @@ app.get("/contas-receber/:empresa/resumo", auth, async (req, res) => {
 
     await atualizarStatusContasReceberPorEmpresa(empresa);
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [empresa];
+
+    const filtroPeriodo = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
     const result = await pool.query(
       `SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END), 0) AS pendente,
-          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END), 0) AS pago,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END), 0) AS atrasado,
-          COUNT(*) AS total_parcelas,
-          COALESCE(SUM(valor), 0) AS valor_total
+         COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+         COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+         COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado,
+         COUNT(*) AS total_parcelas
        FROM contas_receber
-       WHERE empresa = $1`,
-      [empresa]
+       WHERE empresa = $1
+       ${filtroPeriodo}`,
+      params
     );
 
-    res.json({
-      pendente: Number(result.rows[0].pendente || 0),
-      pago: Number(result.rows[0].pago || 0),
-      atrasado: Number(result.rows[0].atrasado || 0),
-      total_parcelas: Number(result.rows[0].total_parcelas || 0),
-      valor_total: Number(result.rows[0].valor_total || 0)
-    });
+    res.json(result.rows[0]);
   } catch (error) {
-    res.status(500).send("Erro ao buscar resumo de contas a receber");
+    res.status(500).send("Erro ao gerar resumo de contas a receber");
   }
 });
 
-app.post("/contas-receber", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const {
-      empresa,
-      cliente_id,
-      cliente_nome,
-      valor,
-      data_vencimento,
-      forma_pagamento,
-      observacao
-    } = req.body;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!empresa || !cliente_nome || normalizarDecimal(valor) <= 0 || !data_vencimento) {
-      return res.status(400).send("Preencha os campos obrigatórios");
-    }
-
-    const result = await pool.query(
-      `INSERT INTO contas_receber
-       (
-         empresa,
-         cliente_id,
-         cliente_nome,
-         parcela,
-         total_parcelas,
-         valor,
-         data_vencimento,
-         status,
-         forma_pagamento,
-         observacao,
-         criado_por,
-         criado_em,
-         atualizado_em
-       )
-       VALUES ($1, $2, $3, 1, 1, $4, $5, 'pendente', $6, $7, $8, NOW(), NOW())
-       RETURNING id`,
-      [
-        empresa,
-        cliente_id || null,
-        cliente_nome,
-        normalizarDecimal(valor),
-        data_vencimento,
-        forma_pagamento || "Promissória",
-        observacao || "",
-        req.user.id
-      ]
-    );
-
-    res.json({ sucesso: true, id: result.rows[0].id });
-  } catch (error) {
-    res.status(500).send("Erro ao cadastrar conta a receber");
-  }
-});
-
-app.put("/contas-receber/:id/baixar", auth, async (req, res) => {
-  const client = await pool.connect();
+app.patch("/contas-receber/:id/receber", auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return res.status(403).send("Sem permissão");
     }
 
     const id = req.params.id;
-    const {
-      empresa,
-      data_pagamento,
-      forma_pagamento,
-      observacao
-    } = req.body;
+    const { empresa, data_pagamento, forma_pagamento, observacao } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
     }
 
-    await client.query("BEGIN");
-
-    const contaResult = await client.query(
-      `SELECT * FROM contas_receber WHERE id = $1 AND empresa = $2 FOR UPDATE`,
+    const contaResult = await pool.query(
+      `SELECT * FROM contas_receber WHERE id = $1 AND empresa = $2`,
       [id, empresa]
     );
 
     if (contaResult.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).send("Parcela não encontrada");
+      return res.status(404).send("Conta não encontrada");
     }
 
     const conta = contaResult.rows[0];
 
-    if (conta.status === "pago") {
-      await client.query("ROLLBACK");
-      return res.status(400).send("Parcela já está paga");
-    }
-
-    const dataPagamentoFinal = data_pagamento || hoje();
-    const formaPagamentoFinal = forma_pagamento || conta.forma_pagamento || "Dinheiro";
-
-    await client.query(
+    await pool.query(
       `UPDATE contas_receber
        SET status = 'pago',
            data_pagamento = $1,
@@ -2655,55 +2757,150 @@ app.put("/contas-receber/:id/baixar", auth, async (req, res) => {
            atualizado_em = NOW()
        WHERE id = $4 AND empresa = $5`,
       [
-        dataPagamentoFinal,
-        formaPagamentoFinal,
-        observacao || conta.observacao || "",
+        normalizarDataISO(data_pagamento) || hoje(),
+        forma_pagamento || conta.forma_pagamento || "",
+        observacao !== undefined ? observacao : (conta.observacao || ""),
         id,
         empresa
       ]
     );
 
-    await client.query(
+    await pool.query(
       `INSERT INTO lancamentos_financeiros
-       (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
-       VALUES ($1, 'receita', 'Contas a receber', $2, $3, $4, 'pago', $5, FALSE, NULL, $6, $7)`,
+       (
+         empresa,
+         tipo,
+         categoria,
+         descricao,
+         valor,
+         vencimento,
+         pagamento_data,
+         status,
+         forma_pagamento,
+         recorrente,
+         frequencia,
+         observacao,
+         criado_por
+       )
+       VALUES ($1, 'receita', 'Conta a receber', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
         `Recebimento parcela ${conta.parcela}/${conta.total_parcelas} - ${conta.cliente_nome || "Cliente"}`,
-        conta.valor,
-        conta.data_vencimento || dataPagamentoFinal,
-        dataPagamentoFinal,
-        formaPagamentoFinal,
-        observacao || `Baixa da conta a receber #${conta.id}`,
+        normalizarDecimal(conta.valor),
+        conta.data_vencimento,
+        normalizarDataISO(data_pagamento) || hoje(),
+        forma_pagamento || conta.forma_pagamento || "",
+        observacao || conta.observacao || "",
         req.user.id
       ]
     );
 
-    if (conta.venda_id) {
-      const pendentes = await client.query(
-        `SELECT COUNT(*) AS total
-         FROM contas_receber
-         WHERE venda_id = $1 AND empresa = $2 AND status <> 'pago'`,
-        [conta.venda_id, empresa]
-      );
-
-      if (Number(pendentes.rows[0].total || 0) === 0) {
-        await client.query(
-          `UPDATE vendas
-           SET status_pagamento = 'pago'
-           WHERE id = $1 AND empresa = $2`,
-          [conta.venda_id, empresa]
-        );
-      }
-    }
-
-    await client.query("COMMIT");
     res.json({ sucesso: true });
   } catch (error) {
-    await client.query("ROLLBACK");
-    res.status(500).send("Erro ao baixar parcela");
-  } finally {
-    client.release();
+    res.status(500).send("Erro ao baixar conta a receber");
+  }
+});
+
+app.delete("/contas-receber/:id", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const id = req.params.id;
+    const empresa = req.query.empresa;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    const result = await pool.query(
+      `DELETE FROM contas_receber WHERE id = $1 AND empresa = $2`,
+      [id, empresa]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).send("Conta não encontrada");
+    }
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao excluir conta a receber");
+  }
+});
+
+app.post("/contas-pagar", auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) {
+      return res.status(403).send("Sem permissão");
+    }
+
+    const {
+      empresa,
+      fornecedor_id,
+      fornecedor_nome,
+      descricao,
+      parcela,
+      total_parcelas,
+      valor,
+      data_vencimento,
+      data_pagamento,
+      status,
+      forma_pagamento,
+      observacao,
+      compra_id,
+      lancamento_id
+    } = req.body;
+
+    if (!validarEmpresa(req, empresa)) {
+      return res.status(403).send("Sem acesso");
+    }
+
+    await pool.query(
+      `INSERT INTO contas_pagar
+       (
+         empresa,
+         compra_id,
+         lancamento_id,
+         fornecedor_id,
+         fornecedor_nome,
+         descricao,
+         parcela,
+         total_parcelas,
+         valor,
+         data_vencimento,
+         data_pagamento,
+         status,
+         forma_pagamento,
+         observacao,
+         criado_por,
+         criado_em,
+         atualizado_em
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+      [
+        empresa,
+        compra_id || null,
+        lancamento_id || null,
+        fornecedor_id || null,
+        fornecedor_nome || "",
+        descricao || "",
+        normalizarInt(parcela || 1),
+        normalizarInt(total_parcelas || 1),
+        normalizarDecimal(valor),
+        normalizarDataISO(data_vencimento),
+        normalizarDataISO(data_pagamento),
+        status || "pendente",
+        forma_pagamento || "",
+        observacao || "",
+        req.user.id
+      ]
+    );
+
+    await atualizarStatusContasPagarPorEmpresa(empresa);
+    res.json({ sucesso: true });
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar conta a pagar");
   }
 });
 
@@ -2717,42 +2914,70 @@ app.get("/contas-pagar/:empresa", auth, async (req, res) => {
 
     await atualizarStatusContasPagarPorEmpresa(empresa);
 
-    const status = req.query.status || "";
-    const fornecedorId = req.query.fornecedor_id ? Number(req.query.fornecedor_id) : null;
-    const busca = (req.query.busca || "").trim().toLowerCase();
-
-    let sql = `
-      SELECT *
-      FROM contas_pagar
-      WHERE empresa = $1
-    `;
+    const { dataInicial, dataFinal } = obterPeriodo(req);
     const params = [empresa];
-    let idx = 2;
 
-    if (status) {
-      sql += ` AND status = $${idx} `;
-      params.push(status);
-      idx++;
-    }
+    const filtroPeriodo = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
 
-    if (fornecedorId) {
-      sql += ` AND fornecedor_id = $${idx} `;
-      params.push(fornecedorId);
-      idx++;
-    }
+    const result = await pool.query(
+      `SELECT *
+       FROM contas_pagar
+       WHERE empresa = $1
+       ${filtroPeriodo}
+       ORDER BY
+         CASE
+           WHEN status = 'atrasado' THEN 0
+           WHEN status = 'pendente' THEN 1
+           ELSE 2
+         END,
+         data_vencimento ASC,
+         id DESC`,
+      params
+    );
 
-    if (busca) {
-      sql += ` AND (
-        LOWER(COALESCE(fornecedor_nome, '')) LIKE $${idx}
-        OR LOWER(COALESCE(descricao, '')) LIKE $${idx}
-      ) `;
-      params.push(`%${busca}%`);
-      idx++;
-    }
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Erro ao buscar contas a pagar");
+  }
+});
 
-    sql += ` ORDER BY status ASC, data_vencimento ASC NULLS LAST, id ASC`;
+app.get("/admin/contas-pagar", auth, apenasAdmin, async (req, res) => {
+  try {
+    await atualizarStatusContasPagarGlobal();
 
-    const result = await pool.query(sql, params);
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [];
+    let where = `WHERE 1=1`;
+
+    where += adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
+    const result = await pool.query(
+      `SELECT *
+       FROM contas_pagar
+       ${where}
+       ORDER BY empresa ASC,
+         CASE
+           WHEN status = 'atrasado' THEN 0
+           WHEN status = 'pendente' THEN 1
+           ELSE 2
+         END,
+         data_vencimento ASC,
+         id DESC`,
+      params
+    );
+
     res.json(result.rows);
   } catch (error) {
     res.status(500).send("Erro ao buscar contas a pagar");
@@ -2769,136 +2994,60 @@ app.get("/contas-pagar/:empresa/resumo", auth, async (req, res) => {
 
     await atualizarStatusContasPagarPorEmpresa(empresa);
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const params = [empresa];
+
+    const filtroPeriodo = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params,
+      dataInicial,
+      dataFinal
+    });
+
     const result = await pool.query(
       `SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END), 0) AS pendente,
-          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END), 0) AS pago,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END), 0) AS atrasado,
-          COUNT(*) AS total_parcelas,
-          COALESCE(SUM(valor), 0) AS valor_total
+         COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+         COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+         COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado,
+         COUNT(*) AS total_parcelas
        FROM contas_pagar
-       WHERE empresa = $1`,
-      [empresa]
+       WHERE empresa = $1
+       ${filtroPeriodo}`,
+      params
     );
 
-    res.json({
-      pendente: Number(result.rows[0].pendente || 0),
-      pago: Number(result.rows[0].pago || 0),
-      atrasado: Number(result.rows[0].atrasado || 0),
-      total_parcelas: Number(result.rows[0].total_parcelas || 0),
-      valor_total: Number(result.rows[0].valor_total || 0)
-    });
+    res.json(result.rows[0]);
   } catch (error) {
-    res.status(500).send("Erro ao buscar resumo de contas a pagar");
+    res.status(500).send("Erro ao gerar resumo de contas a pagar");
   }
 });
 
-app.post("/contas-pagar", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const {
-      empresa,
-      fornecedor_id,
-      fornecedor_nome,
-      descricao,
-      valor,
-      data_vencimento,
-      forma_pagamento,
-      observacao
-    } = req.body;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!empresa || !descricao || normalizarDecimal(valor) <= 0 || !data_vencimento) {
-      return res.status(400).send("Preencha os campos obrigatórios");
-    }
-
-    const result = await pool.query(
-      `INSERT INTO contas_pagar
-       (
-         empresa,
-         fornecedor_id,
-         fornecedor_nome,
-         descricao,
-         parcela,
-         total_parcelas,
-         valor,
-         data_vencimento,
-         status,
-         forma_pagamento,
-         observacao,
-         criado_por,
-         criado_em,
-         atualizado_em
-       )
-       VALUES ($1, $2, $3, $4, 1, 1, $5, $6, 'pendente', $7, $8, $9, NOW(), NOW())
-       RETURNING id`,
-      [
-        empresa,
-        fornecedor_id || null,
-        fornecedor_nome || "",
-        descricao,
-        normalizarDecimal(valor),
-        data_vencimento,
-        forma_pagamento || null,
-        observacao || "",
-        req.user.id
-      ]
-    );
-
-    res.json({ sucesso: true, id: result.rows[0].id });
-  } catch (error) {
-    res.status(500).send("Erro ao cadastrar conta a pagar");
-  }
-});
-
-app.put("/contas-pagar/:id/pagar", auth, async (req, res) => {
-  const client = await pool.connect();
+app.patch("/contas-pagar/:id/pagar", auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return res.status(403).send("Sem permissão");
     }
 
     const id = req.params.id;
-    const {
-      empresa,
-      data_pagamento,
-      forma_pagamento,
-      observacao
-    } = req.body;
+    const { empresa, data_pagamento, forma_pagamento, observacao } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send("Sem acesso");
     }
 
-    await client.query("BEGIN");
-
-    const contaResult = await client.query(
-      `SELECT * FROM contas_pagar WHERE id = $1 AND empresa = $2 FOR UPDATE`,
+    const contaResult = await pool.query(
+      `SELECT * FROM contas_pagar WHERE id = $1 AND empresa = $2`,
       [id, empresa]
     );
 
     if (contaResult.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).send("Conta a pagar não encontrada");
+      return res.status(404).send("Conta não encontrada");
     }
 
     const conta = contaResult.rows[0];
 
-    if (conta.status === "pago") {
-      await client.query("ROLLBACK");
-      return res.status(400).send("Conta já está paga");
-    }
-
-    const dataPagamentoFinal = data_pagamento || hoje();
-    const formaPagamentoFinal = forma_pagamento || conta.forma_pagamento || "Dinheiro";
-
-    await client.query(
+    await pool.query(
       `UPDATE contas_pagar
        SET status = 'pago',
            data_pagamento = $1,
@@ -2907,188 +3056,51 @@ app.put("/contas-pagar/:id/pagar", auth, async (req, res) => {
            atualizado_em = NOW()
        WHERE id = $4 AND empresa = $5`,
       [
-        dataPagamentoFinal,
-        formaPagamentoFinal,
-        observacao || conta.observacao || "",
+        normalizarDataISO(data_pagamento) || hoje(),
+        forma_pagamento || conta.forma_pagamento || "",
+        observacao !== undefined ? observacao : (conta.observacao || ""),
         id,
         empresa
       ]
     );
 
-    if (conta.lancamento_id) {
-      await client.query(
-        `UPDATE lancamentos_financeiros
-         SET pagamento_data = $1,
-             status = 'pago',
-             forma_pagamento = $2,
-             observacao = $3,
-             atualizado_em = NOW()
-         WHERE id = $4 AND empresa = $5`,
-        [
-          dataPagamentoFinal,
-          formaPagamentoFinal,
-          observacao || conta.observacao || "",
-          conta.lancamento_id,
-          empresa
-        ]
-      );
-    } else {
-      const lancamentoResult = await client.query(
-        `INSERT INTO lancamentos_financeiros
-         (empresa, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, forma_pagamento, recorrente, frequencia, observacao, criado_por)
-         VALUES ($1, 'despesa', 'Contas a pagar', $2, $3, $4, 'pago', $5, FALSE, NULL, $6, $7)
-         RETURNING id`,
-        [
-          empresa,
-          conta.descricao || `Pagamento conta #${conta.id}`,
-          conta.valor,
-          conta.data_vencimento || dataPagamentoFinal,
-          dataPagamentoFinal,
-          formaPagamentoFinal,
-          observacao || `Baixa da conta a pagar #${conta.id}`,
-          req.user.id
-        ]
-      );
-
-      await client.query(
-        `UPDATE contas_pagar
-         SET lancamento_id = $1,
-             atualizado_em = NOW()
-         WHERE id = $2 AND empresa = $3`,
-        [lancamentoResult.rows[0].id, id, empresa]
-      );
-    }
-
-    if (conta.compra_id) {
-      await client.query(
-        `UPDATE compras
-         SET status_pagamento = 'pago',
-             pagamento_data = $1,
-             forma_pagamento = $2,
-             atualizado_em = NOW()
-         WHERE id = $3 AND empresa = $4`,
-        [dataPagamentoFinal, formaPagamentoFinal, conta.compra_id, empresa]
-      );
-    }
-
-    await client.query("COMMIT");
-    res.json({ sucesso: true });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    res.status(500).send("Erro ao pagar conta");
-  } finally {
-    client.release();
-  }
-});
-
-app.get("/investimentos/:empresa", auth, async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const result = await pool.query(
-      `SELECT * FROM investimentos WHERE empresa = $1 ORDER BY data DESC, id DESC`,
-      [empresa]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar investimentos");
-  }
-});
-
-app.post("/investimentos", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const { empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao } = req.body;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!empresa || !tipo_investimento || !descricao || valor === undefined || valor === null || !data) {
-      return res.status(400).send("Preencha os campos obrigatórios");
-    }
-
-    const result = await pool.query(
-      `INSERT INTO investimentos
-       (empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao, criado_por)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id`,
+    await pool.query(
+      `INSERT INTO lancamentos_financeiros
+       (
+         empresa,
+         tipo,
+         categoria,
+         descricao,
+         valor,
+         vencimento,
+         pagamento_data,
+         status,
+         forma_pagamento,
+         recorrente,
+         frequencia,
+         observacao,
+         criado_por
+       )
+       VALUES ($1, 'despesa', 'Conta a pagar', $2, $3, $4, $5, 'pago', $6, FALSE, NULL, $7, $8)`,
       [
         empresa,
-        tipo_investimento,
-        descricao,
-        normalizarDecimal(valor),
-        data,
-        forma_pagamento || null,
-        observacao || null,
+        conta.descricao || `Pagamento conta #${id}`,
+        normalizarDecimal(conta.valor),
+        conta.data_vencimento,
+        normalizarDataISO(data_pagamento) || hoje(),
+        forma_pagamento || conta.forma_pagamento || "",
+        observacao || conta.observacao || "",
         req.user.id
       ]
     );
 
-    res.json({ sucesso: true, id: result.rows[0].id });
-  } catch (error) {
-    res.status(500).send("Erro ao cadastrar investimento");
-  }
-});
-
-app.put("/investimentos/:id", auth, async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const id = req.params.id;
-    const { empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao } = req.body;
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    const result = await pool.query(
-      `UPDATE investimentos
-       SET tipo_investimento = $1,
-           descricao = $2,
-           valor = $3,
-           data = $4,
-           forma_pagamento = $5,
-           observacao = $6,
-           atualizado_em = NOW()
-       WHERE id = $7 AND empresa = $8`,
-      [
-        tipo_investimento,
-        descricao,
-        normalizarDecimal(valor),
-        data,
-        forma_pagamento || null,
-        observacao || null,
-        id,
-        empresa
-      ]
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).send("Investimento não encontrado");
-    }
-
     res.json({ sucesso: true });
   } catch (error) {
-    res.status(500).send("Erro ao atualizar investimento");
+    res.status(500).send("Erro ao pagar conta");
   }
 });
 
-app.delete("/investimentos/:id", auth, async (req, res) => {
+app.delete("/contas-pagar/:id", auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return res.status(403).send("Sem permissão");
@@ -3102,17 +3114,17 @@ app.delete("/investimentos/:id", auth, async (req, res) => {
     }
 
     const result = await pool.query(
-      `DELETE FROM investimentos WHERE id = $1 AND empresa = $2`,
+      `DELETE FROM contas_pagar WHERE id = $1 AND empresa = $2`,
       [id, empresa]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).send("Investimento não encontrado");
+      return res.status(404).send("Conta não encontrada");
     }
 
     res.json({ sucesso: true });
   } catch (error) {
-    res.status(500).send("Erro ao excluir investimento");
+    res.status(500).send("Erro ao excluir conta a pagar");
   }
 });
 
@@ -3127,80 +3139,265 @@ app.get("/dashboard/:empresa", auth, async (req, res) => {
     await atualizarStatusContasReceberPorEmpresa(empresa);
     await atualizarStatusContasPagarPorEmpresa(empresa);
 
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    const paramsCompras = [empresa];
+    const paramsVendas = [empresa];
+    const paramsMov = [empresa];
+    const paramsReceber = [empresa];
+    const paramsPagar = [empresa];
+
+    const filtroCompras = adicionarFiltroPeriodo({
+      campo: "data",
+      params: paramsCompras,
+      dataInicial,
+      dataFinal
+    });
+
+    const filtroVendas = adicionarFiltroPeriodo({
+      campo: "data",
+      params: paramsVendas,
+      dataInicial,
+      dataFinal
+    });
+
+    const filtroMov = adicionarFiltroPeriodo({
+      campo: "data_movimentacao",
+      params: paramsMov,
+      dataInicial,
+      dataFinal
+    });
+
+    const filtroReceber = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params: paramsReceber,
+      dataInicial,
+      dataFinal
+    });
+
+    const filtroPagar = adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params: paramsPagar,
+      dataInicial,
+      dataFinal
+    });
+
     const [
-      vendas,
-      produtos,
-      clientes,
-      lancamentos,
-      investimentos,
-      alertas,
-      fornecedores,
-      comprasResumo,
-      estoqueResumo,
-      contasReceberResumo,
-      contasPagarResumo
+      produtosResult,
+      fornecedoresResult,
+      comprasResult,
+      vendasResult,
+      alertasResult,
+      valorEstoqueResult,
+      movimentacoesResult,
+      receberResumo,
+      pagarResumo
     ] = await Promise.all([
-      pool.query(`SELECT COALESCE(SUM(total),0) AS faturamento, COUNT(*) AS total_vendas FROM vendas WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS total_clientes FROM clientes WHERE empresa = $1`, [empresa]),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN tipo = 'custo' AND status = 'pago' THEN valor ELSE 0 END),0) AS custos_pagos,
-          COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' THEN valor ELSE 0 END),0) AS despesas_pagas,
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendentes_total
-        FROM lancamentos_financeiros
-        WHERE empresa = $1
-      `, [empresa]),
-      pool.query(`SELECT COALESCE(SUM(valor),0) AS total_investimentos FROM investimentos WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE empresa = $1 AND estoque <= estoque_minimo`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras WHERE empresa = $1`, [empresa]),
-      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos WHERE empresa = $1`, [empresa]),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS receber_pendente,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS receber_atrasado,
-          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS receber_pago
-        FROM contas_receber
-        WHERE empresa = $1
-      `, [empresa]),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pagar_pendente,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS pagar_atrasado,
-          COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pagar_pago
-        FROM contas_pagar
-        WHERE empresa = $1
-      `, [empresa])
+      pool.query(`SELECT COUNT(*) AS total FROM produtos WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT COUNT(*) AS total FROM fornecedores WHERE empresa = $1`, [empresa]),
+      pool.query(`SELECT COUNT(*) AS total FROM compras WHERE empresa = $1 ${filtroCompras}`, paramsCompras),
+      pool.query(`SELECT COUNT(*) AS total FROM vendas WHERE empresa = $1 ${filtroVendas}`, paramsVendas),
+      pool.query(
+        `SELECT COUNT(*) AS total
+         FROM produtos
+         WHERE empresa = $1
+           AND estoque <= estoque_minimo
+           AND estoque_minimo > 0`,
+        [empresa]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(estoque * custo),0) AS total
+         FROM produtos
+         WHERE empresa = $1`,
+        [empresa]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total
+         FROM movimentacoes_estoque
+         WHERE empresa = $1
+         ${filtroMov}`,
+        paramsMov
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+           COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+           COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+         FROM contas_receber
+         WHERE empresa = $1
+         ${filtroReceber}`,
+        paramsReceber
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+           COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+           COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+         FROM contas_pagar
+         WHERE empresa = $1
+         ${filtroPagar}`,
+        paramsPagar
+      )
     ]);
 
     res.json({
-      faturamento: Number(vendas.rows[0].faturamento || 0),
-      total_vendas: Number(vendas.rows[0].total_vendas || 0),
-      total_produtos: Number(produtos.rows[0].total_produtos || 0),
-      total_clientes: Number(clientes.rows[0].total_clientes || 0),
-      custos_pagos: Number(lancamentos.rows[0].custos_pagos || 0),
-      despesas_pagas: Number(lancamentos.rows[0].despesas_pagas || 0),
-      pendentes_total: Number(lancamentos.rows[0].pendentes_total || 0),
-      total_investimentos: Number(investimentos.rows[0].total_investimentos || 0),
-      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0),
-      total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
-      total_compras: Number(comprasResumo.rows[0].total_compras || 0),
-      valor_total_compras: Number(comprasResumo.rows[0].valor_total_compras || 0),
-      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0),
-      receber_pendente: Number(contasReceberResumo.rows[0].receber_pendente || 0),
-      receber_atrasado: Number(contasReceberResumo.rows[0].receber_atrasado || 0),
-      receber_pago: Number(contasReceberResumo.rows[0].receber_pago || 0),
-      pagar_pendente: Number(contasPagarResumo.rows[0].pagar_pendente || 0),
-      pagar_atrasado: Number(contasPagarResumo.rows[0].pagar_atrasado || 0),
-      pagar_pago: Number(contasPagarResumo.rows[0].pagar_pago || 0)
+      periodo: {
+        dataInicial: dataInicial || null,
+        dataFinal: dataFinal || null
+      },
+      total_produtos: Number(produtosResult.rows[0].total || 0),
+      total_fornecedores: Number(fornecedoresResult.rows[0].total || 0),
+      total_compras: Number(comprasResult.rows[0].total || 0),
+      total_vendas: Number(vendasResult.rows[0].total || 0),
+      produtos_alerta: Number(alertasResult.rows[0].total || 0),
+      valor_estoque: Number(valorEstoqueResult.rows[0].total || 0),
+      total_movimentacoes: Number(movimentacoesResult.rows[0].total || 0),
+      receber_pendente: Number(receberResumo.rows[0].pendente || 0),
+      receber_pago: Number(receberResumo.rows[0].pago || 0),
+      receber_atrasado: Number(receberResumo.rows[0].atrasado || 0),
+      pagar_pendente: Number(pagarResumo.rows[0].pendente || 0),
+      pagar_pago: Number(pagarResumo.rows[0].pago || 0),
+      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0)
     });
   } catch (error) {
     res.status(500).send("Erro ao carregar dashboard");
   }
 });
 
-app.get("/relatorio-estoque/:empresa", auth, async (req, res) => {
+app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
+  try {
+    await atualizarStatusContasReceberGlobal();
+    await atualizarStatusContasPagarGlobal();
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    const paramsCompras = [];
+    const paramsVendas = [];
+    const paramsMov = [];
+    const paramsReceber = [];
+    const paramsPagar = [];
+
+    let whereCompras = `WHERE 1=1`;
+    let whereVendas = `WHERE 1=1`;
+    let whereMov = `WHERE 1=1`;
+    let whereReceber = `WHERE 1=1`;
+    let wherePagar = `WHERE 1=1`;
+
+    whereCompras += adicionarFiltroPeriodo({
+      campo: "data",
+      params: paramsCompras,
+      dataInicial,
+      dataFinal
+    });
+
+    whereVendas += adicionarFiltroPeriodo({
+      campo: "data",
+      params: paramsVendas,
+      dataInicial,
+      dataFinal
+    });
+
+    whereMov += adicionarFiltroPeriodo({
+      campo: "data_movimentacao",
+      params: paramsMov,
+      dataInicial,
+      dataFinal
+    });
+
+    whereReceber += adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params: paramsReceber,
+      dataInicial,
+      dataFinal
+    });
+
+    wherePagar += adicionarFiltroPeriodoRange({
+      campoInicial: "data_vencimento",
+      campoFinal: "data_pagamento",
+      params: paramsPagar,
+      dataInicial,
+      dataFinal
+    });
+
+    const [
+      produtosResult,
+      fornecedoresResult,
+      comprasResult,
+      vendasResult,
+      alertasResult,
+      valorEstoqueResult,
+      movimentacoesResult,
+      receberResumo,
+      pagarResumo
+    ] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS total FROM produtos`),
+      pool.query(`SELECT COUNT(*) AS total FROM fornecedores`),
+      pool.query(`SELECT COUNT(*) AS total FROM compras ${whereCompras}`, paramsCompras),
+      pool.query(`SELECT COUNT(*) AS total FROM vendas ${whereVendas}`, paramsVendas),
+      pool.query(
+        `SELECT COUNT(*) AS total
+         FROM produtos
+         WHERE estoque <= estoque_minimo
+           AND estoque_minimo > 0`
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(estoque * custo),0) AS total
+         FROM produtos`
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total
+         FROM movimentacoes_estoque
+         ${whereMov}`,
+        paramsMov
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+           COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+           COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+         FROM contas_receber
+         ${whereReceber}`,
+        paramsReceber
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
+           COALESCE(SUM(CASE WHEN status = 'pago' THEN valor ELSE 0 END),0) AS pago,
+           COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+         FROM contas_pagar
+         ${wherePagar}`,
+        paramsPagar
+      )
+    ]);
+
+    res.json({
+      periodo: {
+        dataInicial: dataInicial || null,
+        dataFinal: dataFinal || null
+      },
+      total_produtos: Number(produtosResult.rows[0].total || 0),
+      total_fornecedores: Number(fornecedoresResult.rows[0].total || 0),
+      total_compras: Number(comprasResult.rows[0].total || 0),
+      total_vendas: Number(vendasResult.rows[0].total || 0),
+      produtos_alerta: Number(alertasResult.rows[0].total || 0),
+      valor_estoque: Number(valorEstoqueResult.rows[0].total || 0),
+      total_movimentacoes: Number(movimentacoesResult.rows[0].total || 0),
+      receber_pendente: Number(receberResumo.rows[0].pendente || 0),
+      receber_pago: Number(receberResumo.rows[0].pago || 0),
+      receber_atrasado: Number(receberResumo.rows[0].atrasado || 0),
+      pagar_pendente: Number(pagarResumo.rows[0].pendente || 0),
+      pagar_pago: Number(pagarResumo.rows[0].pago || 0),
+      pagar_atrasado: Number(pagarResumo.rows[0].atrasado || 0)
+    });
+  } catch (error) {
+    res.status(500).send("Erro ao carregar dashboard admin");
+  }
+});
+
+app.get("/relatorios/estoque/:empresa", auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
 
@@ -3211,11 +3408,11 @@ app.get("/relatorio-estoque/:empresa", auth, async (req, res) => {
     const relatorio = await montarRelatorioEstoquePorEmpresa(empresa);
     res.json(relatorio);
   } catch (error) {
-    res.status(500).send("Erro ao carregar relatório de estoque");
+    res.status(500).send("Erro ao gerar relatório de estoque");
   }
 });
 
-app.get("/relatorio-performance/:empresa", auth, async (req, res) => {
+app.get("/relatorios/performance/:empresa", auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
 
@@ -3226,324 +3423,23 @@ app.get("/relatorio-performance/:empresa", auth, async (req, res) => {
     const relatorio = await montarRelatorioPerformancePorEmpresa(empresa);
     res.json(relatorio);
   } catch (error) {
-    res.status(500).send("Erro ao carregar relatório de performance");
+    res.status(500).send("Erro ao gerar relatório de performance");
   }
 });
 
-app.get("/dre/:empresa", auth, async (req, res) => {
+app.get("/health", async (req, res) => {
   try {
-    const empresa = req.params.empresa;
-    const inicio = req.query.inicio || "2000-01-01";
-    const fim = req.query.fim || "2999-12-31";
-
-    if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send("Sem acesso");
-    }
-
-    if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send("Sem permissão");
-    }
-
-    const vendas = await pool.query(
-      `SELECT COALESCE(SUM(total),0) AS receita_bruta
-       FROM vendas
-       WHERE empresa = $1 AND data BETWEEN $2 AND $3`,
-      [empresa, inicio, fim]
-    );
-
-    const lancamentos = await pool.query(
-      `SELECT
-          COALESCE(SUM(CASE WHEN tipo = 'custo' AND status = 'pago' AND COALESCE(pagamento_data, vencimento, criado_em::text) BETWEEN $2 AND $3 THEN valor ELSE 0 END),0) AS custos,
-          COALESCE(SUM(CASE WHEN tipo = 'despesa' AND status = 'pago' AND COALESCE(pagamento_data, vencimento, criado_em::text) BETWEEN $2 AND $3 THEN valor ELSE 0 END),0) AS despesas
-       FROM lancamentos_financeiros
-       WHERE empresa = $1`,
-      [empresa, inicio, fim]
-    );
-
-    const recebimentos = await pool.query(
-      `SELECT COALESCE(SUM(valor),0) AS recebimentos
-       FROM contas_receber
-       WHERE empresa = $1
-         AND status = 'pago'
-         AND COALESCE(data_pagamento, data_vencimento) BETWEEN $2 AND $3`,
-      [empresa, inicio, fim]
-    );
-
-    const pagamentos = await pool.query(
-      `SELECT COALESCE(SUM(valor),0) AS pagamentos
-       FROM contas_pagar
-       WHERE empresa = $1
-         AND status = 'pago'
-         AND COALESCE(data_pagamento, data_vencimento) BETWEEN $2 AND $3`,
-      [empresa, inicio, fim]
-    );
-
-    const receitaBruta = Number(vendas.rows[0].receita_bruta || 0);
-    const deducoes = 0;
-    const receitaLiquida = receitaBruta - deducoes;
-    const custos = Number(lancamentos.rows[0].custos || 0);
-    const lucroBruto = receitaLiquida - custos;
-    const despesas = Number(lancamentos.rows[0].despesas || 0);
-    const resultadoOperacional = lucroBruto - despesas;
-
-    res.json({
-      receita_bruta: receitaBruta,
-      deducoes,
-      receita_liquida: receitaLiquida,
-      custos,
-      lucro_bruto: lucroBruto,
-      despesas,
-      resultado_operacional: resultadoOperacional,
-      recebimentos: Number(recebimentos.rows[0].recebimentos || 0),
-      pagamentos: Number(pagamentos.rows[0].pagamentos || 0)
-    });
+    await pool.query("SELECT 1");
+    res.json({ ok: true, message: "LF ERP backend online 🚀" });
   } catch (error) {
-    res.status(500).send("Erro ao carregar DRE");
-  }
-});
-
-app.get("/admin/empresas", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT empresa FROM (
-        SELECT DISTINCT empresa FROM usuarios WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM fornecedores WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM compras WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM vendas WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM clientes WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM contas_receber WHERE empresa IS NOT NULL AND empresa <> ''
-        UNION
-        SELECT DISTINCT empresa FROM contas_pagar WHERE empresa IS NOT NULL AND empresa <> ''
-      ) t
-      ORDER BY empresa ASC
-    `);
-
-    res.json(result.rows.map((r) => r.empresa));
-  } catch (error) {
-    res.status(500).send("Erro ao buscar empresas");
-  }
-});
-
-app.get("/admin/produtos", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT *,
-              CASE WHEN estoque <= estoque_minimo THEN TRUE ELSE FALSE END AS alerta_estoque
-       FROM produtos
-       ORDER BY empresa ASC, nome ASC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar produtos admin");
-  }
-});
-
-app.get("/admin/fornecedores", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM fornecedores ORDER BY empresa ASC, nome ASC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar fornecedores admin");
-  }
-});
-
-app.get("/admin/compras", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT c.*, f.nome AS fornecedor_nome
-       FROM compras c
-       INNER JOIN fornecedores f ON f.id = c.fornecedor_id
-       ORDER BY c.data DESC, c.id DESC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar compras admin");
-  }
-});
-
-app.get("/admin/vendas", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT *
-       FROM vendas
-       ORDER BY data DESC, id DESC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar vendas admin");
-  }
-});
-
-app.get("/admin/movimentacoes-estoque", auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT m.*, p.nome AS produto_nome
-       FROM movimentacoes_estoque m
-       INNER JOIN produtos p ON p.id = m.produto_id
-       ORDER BY m.data_movimentacao DESC, m.id DESC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar movimentações admin");
-  }
-});
-
-app.get("/admin/dashboard", auth, apenasAdmin, async (req, res) => {
-  try {
-    await atualizarStatusContasReceberGlobal();
-    await atualizarStatusContasPagarGlobal();
-
-    const [
-      produtos,
-      fornecedores,
-      compras,
-      vendas,
-      alertas,
-      estoqueResumo,
-      contasReceberResumo,
-      contasPagarResumo
-    ] = await Promise.all([
-      pool.query(`SELECT COUNT(*) AS total_produtos FROM produtos`),
-      pool.query(`SELECT COUNT(*) AS total_fornecedores FROM fornecedores`),
-      pool.query(`SELECT COUNT(*) AS total_compras, COALESCE(SUM(total),0) AS valor_total_compras FROM compras`),
-      pool.query(`SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total),0) AS faturamento FROM vendas`),
-      pool.query(`SELECT COUNT(*) AS produtos_alerta FROM produtos WHERE estoque <= estoque_minimo`),
-      pool.query(`SELECT COALESCE(SUM(estoque * custo),0) AS valor_estoque FROM produtos`),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS receber_pendente,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS receber_atrasado
-        FROM contas_receber
-      `),
-      pool.query(`
-        SELECT
-          COALESCE(SUM(CASE WHEN status = 'pendente' THEN valor ELSE 0 END),0) AS pagar_pendente,
-          COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor ELSE 0 END),0) AS pagar_atrasado
-        FROM contas_pagar
-      `)
-    ]);
-
-    res.json({
-      total_produtos: Number(produtos.rows[0].total_produtos || 0),
-      total_fornecedores: Number(fornecedores.rows[0].total_fornecedores || 0),
-      total_compras: Number(compras.rows[0].total_compras || 0),
-      valor_total_compras: Number(compras.rows[0].valor_total_compras || 0),
-      total_vendas: Number(vendas.rows[0].total_vendas || 0),
-      faturamento: Number(vendas.rows[0].faturamento || 0),
-      produtos_alerta: Number(alertas.rows[0].produtos_alerta || 0),
-      valor_estoque: Number(estoqueResumo.rows[0].valor_estoque || 0),
-      receber_pendente: Number(contasReceberResumo.rows[0].receber_pendente || 0),
-      receber_atrasado: Number(contasReceberResumo.rows[0].receber_atrasado || 0),
-      pagar_pendente: Number(contasPagarResumo.rows[0].pagar_pendente || 0),
-      pagar_atrasado: Number(contasPagarResumo.rows[0].pagar_atrasado || 0)
-    });
-  } catch (error) {
-    res.status(500).send("Erro ao carregar dashboard admin");
-  }
-});
-
-app.get("/admin/relatorio-estoque", auth, apenasAdmin, async (req, res) => {
-  try {
-    const empresasResult = await pool.query(`
-      SELECT empresa FROM (
-        SELECT DISTINCT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
-      ) t
-      ORDER BY empresa ASC
-    `);
-
-    const empresas = empresasResult.rows.map((r) => r.empresa);
-    const relatorios = [];
-
-    for (const empresa of empresas) {
-      const relatorio = await montarRelatorioEstoquePorEmpresa(empresa);
-      relatorios.push({
-        empresa,
-        ...relatorio
-      });
-    }
-
-    res.json(relatorios);
-  } catch (error) {
-    res.status(500).send("Erro ao carregar relatório consolidado de estoque");
-  }
-});
-
-app.get("/admin/relatorio-performance", auth, apenasAdmin, async (req, res) => {
-  try {
-    const empresasResult = await pool.query(`
-      SELECT empresa FROM (
-        SELECT DISTINCT empresa FROM produtos WHERE empresa IS NOT NULL AND empresa <> ''
-      ) t
-      ORDER BY empresa ASC
-    `);
-
-    const empresas = empresasResult.rows.map((r) => r.empresa);
-    const relatorios = [];
-
-    for (const empresa of empresas) {
-      const relatorio = await montarRelatorioPerformancePorEmpresa(empresa);
-      relatorios.push({
-        empresa,
-        ...relatorio
-      });
-    }
-
-    res.json(relatorios);
-  } catch (error) {
-    res.status(500).send("Erro ao carregar relatório consolidado de performance");
-  }
-});
-
-app.get("/admin/contas-receber", auth, apenasAdmin, async (req, res) => {
-  try {
-    await atualizarStatusContasReceberGlobal();
-
-    const result = await pool.query(
-      `SELECT *
-       FROM contas_receber
-       ORDER BY empresa ASC, status ASC, data_vencimento ASC NULLS LAST, id ASC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar contas a receber admin");
-  }
-});
-
-app.get("/admin/contas-pagar", auth, apenasAdmin, async (req, res) => {
-  try {
-    await atualizarStatusContasPagarGlobal();
-
-    const result = await pool.query(
-      `SELECT *
-       FROM contas_pagar
-       ORDER BY empresa ASC, status ASC, data_vencimento ASC NULLS LAST, id ASC`
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).send("Erro ao buscar contas a pagar admin");
+    res.status(500).json({ ok: false, message: "Erro no banco" });
   }
 });
 
 initDb()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`LF ERP backend online na porta ${PORT} 🚀`);
+      console.log(`Servidor rodando na porta ${PORT} 🚀`);
     });
   })
   .catch((error) => {
