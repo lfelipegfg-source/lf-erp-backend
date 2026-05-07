@@ -810,38 +810,64 @@ MAX(v.data) AS ultima_venda
         params
       );
 
-      return res.json(
-        result.rows.map((row) => ({
-          produto_id: row.produto_id,
-          produto_nome: row.produto_nome,
+      const linhas = result.rows.map((row) => ({
+        produto_id: row.produto_id,
+        produto_nome: row.produto_nome,
 
-          quantidade_vendida: Number(row.quantidade_vendida || 0),
+        quantidade_vendida: Number(row.quantidade_vendida || 0),
 
-          faturamento_total: Number(row.faturamento_total || 0),
+        faturamento_total: Number(row.faturamento_total || 0),
 
-          custo_medio: Number(row.custo_medio || 0),
+        custo_medio: Number(row.custo_medio || 0),
 
-          lucro_unitario: Number(row.lucro_unitario || 0),
+        lucro_unitario: Number(row.lucro_unitario || 0),
 
-          margem_lucro: Number(row.margem_lucro || 0),
+        margem_lucro: Number(row.margem_lucro || 0),
 
-          custo_total: Number(row.custo_total || 0),
+        custo_total: Number(row.custo_total || 0),
 
-          lucro_total: Number(row.lucro_total || 0),
+        lucro_total: Number(row.lucro_total || 0),
 
-          estoque_atual: Number(row.estoque_atual || 0),
+        estoque_atual: Number(row.estoque_atual || 0),
 
-          estoque_investido: Number(row.estoque_investido || 0),
+        estoque_investido: Number(row.estoque_investido || 0),
 
-          lucro_potencial: Number(row.lucro_potencial || 0),
+        lucro_potencial: Number(row.lucro_potencial || 0),
 
-          estoque_parado: Number(row.estoque_parado || 0),
+        estoque_parado: Number(row.estoque_parado || 0),
 
-          capital_parado: Number(row.capital_parado || 0),
+        capital_parado: Number(row.capital_parado || 0),
 
-          ultima_venda: row.ultima_venda || null
-        }))
-      );
+        ultima_venda: row.ultima_venda || null
+      }));
+
+      const totalLucroGeral = linhas.reduce((acc, item) => acc + Number(item.lucro_total || 0), 0);
+
+      let acumulado = 0;
+
+      const linhasComAbc = linhas.map((item) => {
+        const participacao =
+          totalLucroGeral > 0 ? (Number(item.lucro_total || 0) / totalLucroGeral) * 100 : 0;
+
+        acumulado += participacao;
+
+        let classeAbc = 'C';
+
+        if (acumulado <= 80) {
+          classeAbc = 'A';
+        } else if (acumulado <= 95) {
+          classeAbc = 'B';
+        }
+
+        return {
+          ...item,
+          participacao_lucro: Number(participacao.toFixed(2)),
+          participacao_acumulada: Number(acumulado.toFixed(2)),
+          classe_abc: classeAbc
+        };
+      });
+
+      return res.json(linhasComAbc);
     } catch (error) {
       console.error('Erro real ao gerar relatório de lucratividade:', error);
 
