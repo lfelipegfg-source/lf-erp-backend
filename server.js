@@ -4645,6 +4645,45 @@ app.get('/dashboard', auth, async (req, res) => {
       classe_b: Number(abcRow.classe_b || 0),
 
       classe_c: Number(abcRow.classe_c || 0),
+
+      recomendacoes: [
+        ...(Number(indicadoresFinanceirosRow.produtos_prejuizo || 0) > 0
+          ? [
+              {
+                tipo: 'danger',
+                texto: `${Number(indicadoresFinanceirosRow.produtos_prejuizo)} produto(s) operando com prejuízo`
+              }
+            ]
+          : []),
+
+        ...(Number(indicadoresFinanceirosRow.margem_media || 0) < 15
+          ? [
+              {
+                tipo: 'warning',
+                texto: 'Margem média da operação está baixa'
+              }
+            ]
+          : []),
+
+        ...(Number(abcRow.classe_c || 0) > Number(abcRow.classe_a || 0)
+          ? [
+              {
+                tipo: 'warning',
+                texto: 'Quantidade elevada de produtos Classe C'
+              }
+            ]
+          : []),
+
+        ...(Number(indicadoresFinanceirosRow.produtos_promocao || 0) > 0
+          ? [
+              {
+                tipo: 'info',
+                texto: `${Number(indicadoresFinanceirosRow.produtos_promocao)} produto(s) em promoção ativa`
+              }
+            ]
+          : [])
+      ],
+
       top_produtos: topProdutosResult.rows.map((row) => ({
         nome: row.nome,
         quantidade: Number(row.quantidade || 0)
