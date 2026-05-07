@@ -4417,6 +4417,7 @@ app.get('/dashboard', auth, async (req, res) => {
 
     const topProdutosParams = [];
     const estoqueBaixoParams = [];
+    const indicadoresFinanceirosParams = [];
 
     let topProdutosJoinAndWhere = `
   FROM venda_itens vi
@@ -4455,7 +4456,8 @@ app.get('/dashboard', auth, async (req, res) => {
       produtosResult,
       clientesResult,
       topProdutosResult,
-      estoqueBaixoResult
+      estoqueBaixoResult,
+      indicadoresFinanceirosResult
     ] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total), 0) AS faturamento FROM vendas ${vendasWhere}`,
@@ -4506,6 +4508,28 @@ app.get('/dashboard', auth, async (req, res) => {
     AND estoque_minimo > 0
   `,
         estoqueBaixoParams
+      ),
+
+      pool.query(
+        `
+  SELECT
+    COALESCE(SUM(estoque * custo_medio), 0) AS estoque_investido,
+    COALESCE(SUM(estoque * lucro_unitario), 0) AS lucro_potencial,
+    COALESCE(AVG(margem_lucro), 0) AS margem_media,
+    COUNT(*) FILTER (
+      WHERE promocao_ativa = TRUE
+    ) AS produtos_promocao,
+    COUNT(*) FILTER (
+      WHERE lucro_unitario < 0
+    ) AS produtos_prejuizo
+  FROM produtos
+  WHERE 1=1
+  ${adicionarFiltroEmpresaSaaS({
+    params: indicadoresFinanceirosParams,
+    empresaResolvida
+  })}
+  `,
+        indicadoresFinanceirosParams
       )
     ]);
 
@@ -4515,6 +4539,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const pagarRow = pagarResult.rows[0];
     const produtosRow = produtosResult.rows[0];
     const clientesRow = clientesResult.rows[0];
+    const indicadoresFinanceirosRow = indicadoresFinanceirosResult.rows[0];
 
     const alertas = [];
     if (Number(estoqueBaixoResult.rows[0].total || 0) > 0) {
@@ -4554,6 +4579,15 @@ app.get('/dashboard', auth, async (req, res) => {
       total_produtos: Number(produtosRow.total_produtos || 0),
       total_compras: Number(comprasRow.total_compras || 0),
       total_compras_valor: Number(comprasRow.total_compras_valor || 0),
+      estoque_investido: Number(indicadoresFinanceirosRow.estoque_investido || 0),
+
+      lucro_potencial: Number(indicadoresFinanceirosRow.lucro_potencial || 0),
+
+      margem_media: Number(indicadoresFinanceirosRow.margem_media || 0),
+
+      produtos_promocao: Number(indicadoresFinanceirosRow.produtos_promocao || 0),
+
+      produtos_prejuizo: Number(indicadoresFinanceirosRow.produtos_prejuizo || 0),
       top_produtos: topProdutosResult.rows.map((row) => ({
         nome: row.nome,
         quantidade: Number(row.quantidade || 0)
