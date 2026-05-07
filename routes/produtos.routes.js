@@ -35,6 +35,12 @@ module.exports = ({
       empresa_id: row.empresa_id ? Number(row.empresa_id) : null,
       preco: Number(row.preco || 0),
       custo: Number(row.custo || 0),
+      custo_unitario: Number(row.custo_unitario || row.custo || 0),
+      custo_medio: Number(row.custo_medio || row.custo || 0),
+      lucro_unitario: Number(row.lucro_unitario || 0),
+      margem_lucro: Number(row.margem_lucro || 0),
+      preco_promocional: Number(row.preco_promocional || 0),
+      promocao_ativa: Boolean(row.promocao_ativa),
       estoque: Number(row.estoque || 0),
       estoque_minimo: Number(row.estoque_minimo || 0),
       alerta_estoque: Boolean(row.alerta_estoque)
@@ -45,8 +51,21 @@ module.exports = ({
 
   router.post('/', auth, async (req, res) => {
     try {
-      const { empresa, nome, preco, custo, estoque, estoque_minimo, codigo_barras, categoria } =
-        req.body;
+      const {
+        empresa,
+        nome,
+        preco,
+        custo,
+        custo_unitario,
+        custo_medio,
+        preco_promocional,
+        promocao_ativa,
+        estoque,
+        estoque_minimo,
+        codigo_barras,
+        categoria
+      } = req.body;
+      req.body;
 
       if (!nome) {
         return erro(res, 400, 'Preencha os campos obrigatórios do produto');
@@ -67,17 +86,30 @@ module.exports = ({
         return erro(res, 403, limitePlano.mensagem);
       }
 
+      const precoFinal = normalizarDecimal(preco);
+      const custoBase = normalizarDecimal(custo_unitario || custo);
+      const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
+      const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
+      const margemLucro =
+        custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
+
       const result = await pool.query(
         `INSERT INTO produtos
-        (empresa, empresa_id, nome, preco, custo, estoque, estoque_minimo, codigo_barras, categoria, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+        (empresa, empresa_id, nome, preco, custo, custo_unitario, custo_medio, lucro_unitario, margem_lucro, preco_promocional, promocao_ativa, estoque, estoque_minimo, codigo_barras, categoria, criado_em, atualizado_em)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
         RETURNING id`,
         [
           empresaResolvida.nome,
           empresaResolvida.id,
           nome,
-          normalizarDecimal(preco),
-          normalizarDecimal(custo),
+          precoFinal,
+          custoBase,
+          custoBase,
+          custoMedioFinal,
+          lucroUnitario,
+          margemLucro,
+          normalizarDecimal(preco_promocional),
+          Boolean(promocao_ativa),
           normalizarInt(estoque),
           normalizarInt(estoque_minimo),
           codigo_barras || '',
@@ -240,8 +272,21 @@ ${adicionarFiltroEmpresaSaaS({
     try {
       const id = Number(req.params.id);
 
-      const { empresa, nome, preco, custo, estoque, estoque_minimo, codigo_barras, categoria } =
-        req.body;
+      const {
+        empresa,
+        nome,
+        preco,
+        custo,
+        custo_unitario,
+        custo_medio,
+        preco_promocional,
+        promocao_ativa,
+        estoque,
+        estoque_minimo,
+        codigo_barras,
+        categoria
+      } = req.body;
+      req.body;
 
       if (!id) {
         return erro(res, 400, 'Produto inválido');
@@ -267,6 +312,14 @@ ${adicionarFiltroEmpresaSaaS({
       }
 
       const atual = atualResult.rows[0];
+
+      const precoFinal = normalizarDecimal(preco);
+      const custoBase = normalizarDecimal(custo_unitario || custo || atual.custo || 0);
+      const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
+      const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
+      const margemLucro =
+        custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
+
       const estoqueAtual = normalizarInt(atual.estoque);
       const estoqueNovo = normalizarInt(estoque);
       const diferenca = estoqueNovo - estoqueAtual;
@@ -274,18 +327,30 @@ ${adicionarFiltroEmpresaSaaS({
       await pool.query(
         `UPDATE produtos
         SET nome = $1,
-            preco = $2,
-            custo = $3,
-            estoque = $4,
-            estoque_minimo = $5,
-            codigo_barras = $6,
-            categoria = $7,
-            atualizado_em = NOW()
-        WHERE id = $8 AND empresa_id = $9`,
+          preco = $2,
+          custo = $3,
+          custo_unitario = $4,
+          custo_medio = $5,
+          lucro_unitario = $6,
+          margem_lucro = $7,
+          preco_promocional = $8,
+          promocao_ativa = $9,
+          estoque = $10,
+          estoque_minimo = $11,
+          codigo_barras = $12,
+          categoria = $13,
+          atualizado_em = NOW()
+        WHERE id = $14 AND empresa_id = $15`,
         [
           nome,
-          normalizarDecimal(preco),
-          normalizarDecimal(custo),
+          precoFinal,
+          custoBase,
+          custoBase,
+          custoMedioFinal,
+          lucroUnitario,
+          margemLucro,
+          normalizarDecimal(preco_promocional),
+          Boolean(promocao_ativa),
           estoqueNovo,
           normalizarInt(estoque_minimo),
           codigo_barras || '',
@@ -320,8 +385,14 @@ ${adicionarFiltroEmpresaSaaS({
         dados_anteriores: atual,
         dados_novos: {
           nome,
-          preco,
-          custo,
+          preco: precoFinal,
+          custo: custoBase,
+          custo_unitario: custoBase,
+          custo_medio: custoMedioFinal,
+          lucro_unitario: lucroUnitario,
+          margem_lucro: margemLucro,
+          preco_promocional: normalizarDecimal(preco_promocional),
+          promocao_ativa: Boolean(promocao_ativa),
           estoque: estoqueNovo,
           estoque_minimo,
           codigo_barras,

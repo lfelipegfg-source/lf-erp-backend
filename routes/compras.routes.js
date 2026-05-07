@@ -138,7 +138,23 @@ module.exports = function ({
         }
 
         const produto = produtoResult.rows[0];
-        const novoEstoque = normalizarInt(produto.estoque) + quantidade;
+
+        const estoqueAtual = normalizarInt(produto.estoque);
+        const novoEstoque = estoqueAtual + quantidade;
+
+        const custoAtual = normalizarDecimal(produto.custo_medio || produto.custo || 0);
+        const valorEstoqueAtual = Number((estoqueAtual * custoAtual).toFixed(2));
+        const valorNovaCompra = Number((quantidade * custoUnitario).toFixed(2));
+
+        const novoCustoMedio =
+          novoEstoque > 0
+            ? Number(((valorEstoqueAtual + valorNovaCompra) / novoEstoque).toFixed(2))
+            : custoUnitario;
+
+        const precoProduto = normalizarDecimal(produto.preco || 0);
+        const lucroUnitario = Number((precoProduto - novoCustoMedio).toFixed(2));
+        const margemLucro =
+          novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
 
         await client.query(
           `INSERT INTO compra_itens
@@ -167,11 +183,24 @@ module.exports = function ({
 
         await client.query(
           `UPDATE produtos
-           SET estoque = $1,
-               custo = $2,
-               atualizado_em = NOW()
-           WHERE id = $3 AND empresa_id = $4`,
-          [novoEstoque, custoUnitario, produto.id, empresaResolvida.id]
+          SET estoque = $1,
+              custo = $2,
+              custo_unitario = $3,
+              custo_medio = $4,
+              lucro_unitario = $5,
+              margem_lucro = $6,
+              atualizado_em = NOW()
+          WHERE id = $7 AND empresa_id = $8`,
+          [
+            novoEstoque,
+            custoUnitario,
+            custoUnitario,
+            novoCustoMedio,
+            lucroUnitario,
+            margemLucro,
+            produto.id,
+            empresaResolvida.id
+          ]
         );
 
         if (typeof registrarMovimentacaoEstoque === 'function') {
