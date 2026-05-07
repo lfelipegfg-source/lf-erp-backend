@@ -4418,6 +4418,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const topProdutosParams = [];
     const estoqueBaixoParams = [];
     const indicadoresFinanceirosParams = [];
+    const abcParams = [];
 
     let topProdutosJoinAndWhere = `
   FROM venda_itens vi
@@ -4457,7 +4458,8 @@ app.get('/dashboard', auth, async (req, res) => {
       clientesResult,
       topProdutosResult,
       estoqueBaixoResult,
-      indicadoresFinanceirosResult
+      indicadoresFinanceirosResult,
+      abcResult
     ] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total), 0) AS faturamento FROM vendas ${vendasWhere}`,
@@ -4530,6 +4532,55 @@ app.get('/dashboard', auth, async (req, res) => {
   })}
   `,
         indicadoresFinanceirosParams
+      ),
+      pool.query(
+        `
+  WITH base AS (
+    SELECT
+      id,
+      nome,
+      COALESCE(lucro_unitario, 0) * COALESCE(estoque, 0) AS lucro_total
+    FROM produtos
+    WHERE 1=1
+    ${adicionarFiltroEmpresaSaaS({
+      params: abcParams,
+      empresaResolvida
+    })}
+  ),
+  ordenado AS (
+    SELECT
+      *,
+      SUM(lucro_total) OVER () AS lucro_geral
+    FROM base
+  ),
+  acumulado AS (
+    SELECT
+      *,
+      CASE
+        WHEN lucro_geral <= 0 THEN 0
+        ELSE (
+          SUM(lucro_total) OVER (
+            ORDER BY lucro_total DESC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) / lucro_geral
+        ) * 100
+      END AS acumulado_percentual
+    FROM ordenado
+  )
+  SELECT
+    COUNT(*) FILTER (
+      WHERE acumulado_percentual <= 80
+    ) AS classe_a,
+    COUNT(*) FILTER (
+      WHERE acumulado_percentual > 80
+      AND acumulado_percentual <= 95
+    ) AS classe_b,
+    COUNT(*) FILTER (
+      WHERE acumulado_percentual > 95
+    ) AS classe_c
+  FROM acumulado
+  `,
+        abcParams
       )
     ]);
 
@@ -4540,6 +4591,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const produtosRow = produtosResult.rows[0];
     const clientesRow = clientesResult.rows[0];
     const indicadoresFinanceirosRow = indicadoresFinanceirosResult.rows[0];
+    const abcRow = abcResult.rows[0];
 
     const alertas = [];
     if (Number(estoqueBaixoResult.rows[0].total || 0) > 0) {
@@ -4588,6 +4640,11 @@ app.get('/dashboard', auth, async (req, res) => {
       produtos_promocao: Number(indicadoresFinanceirosRow.produtos_promocao || 0),
 
       produtos_prejuizo: Number(indicadoresFinanceirosRow.produtos_prejuizo || 0),
+      classe_a: Number(abcRow.classe_a || 0),
+
+      classe_b: Number(abcRow.classe_b || 0),
+
+      classe_c: Number(abcRow.classe_c || 0),
       top_produtos: topProdutosResult.rows.map((row) => ({
         nome: row.nome,
         quantidade: Number(row.quantidade || 0)
