@@ -704,5 +704,136 @@ module.exports = function ({
     }
   });
 
+  router.get('/financeiro/lucratividade/:empresa', auth, async (req, res) => {
+    try {
+      const empresa = req.params.empresa;
+
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+
+      if (!empresaResolvida) {
+        return erro(res, 403, 'Sem acesso');
+      }
+
+      const { dataInicial, dataFinal } = obterPeriodo(req);
+
+      const params = [];
+
+      let where = `
+      WHERE 1=1
+      ${adicionarFiltroEmpresaSaaS({
+        alias: 'vi',
+        params,
+        empresaResolvida
+      })}
+    `;
+
+      where += adicionarFiltroPeriodo({
+        campo: 'v.data',
+        params,
+        dataInicial,
+        dataFinal,
+        castDate: false
+      });
+
+      const result = await pool.query(
+        `
+      SELECT
+        vi.produto_id,
+        vi.produto_nome,
+
+        COALESCE(SUM(vi.quantidade), 0) AS quantidade_vendida,
+
+        COALESCE(SUM(vi.total), 0) AS faturamento_total,
+
+        COALESCE(AVG(p.custo_medio), 0) AS custo_medio,
+
+        COALESCE(AVG(p.lucro_unitario), 0) AS lucro_unitario,
+
+        COALESCE(AVG(p.margem_lucro), 0) AS margem_lucro,
+
+        COALESCE(SUM(
+          vi.quantidade * p.custo_medio
+        ), 0) AS custo_total,
+
+        COALESCE(SUM(
+          vi.quantidade * p.lucro_unitario
+        ), 0) AS lucro_total,
+
+        COALESCE(MAX(p.estoque), 0) AS estoque_atual,
+
+        COALESCE(MAX(
+          p.estoque * p.custo_medio
+        ), 0) AS estoque_investido,
+
+        COALESCE(MAX(
+          p.estoque * p.lucro_unitario
+        ), 0) AS lucro_potencial
+
+      FROM venda_itens vi
+
+      INNER JOIN vendas v
+        ON v.id = vi.venda_id
+        AND (
+          v.empresa_id = vi.empresa_id
+          OR (
+            vi.empresa_id IS NULL
+            AND v.empresa = vi.empresa
+          )
+        )
+
+      LEFT JOIN produtos p
+        ON p.id = vi.produto_id
+        AND (
+          p.empresa_id = vi.empresa_id
+          OR (
+            p.empresa_id IS NULL
+            AND p.empresa = vi.empresa
+          )
+        )
+
+      ${where}
+
+      GROUP BY
+        vi.produto_id,
+        vi.produto_nome
+
+      ORDER BY lucro_total DESC, faturamento_total DESC
+      `,
+        params
+      );
+
+      return res.json(
+        result.rows.map((row) => ({
+          produto_id: row.produto_id,
+          produto_nome: row.produto_nome,
+
+          quantidade_vendida: Number(row.quantidade_vendida || 0),
+
+          faturamento_total: Number(row.faturamento_total || 0),
+
+          custo_medio: Number(row.custo_medio || 0),
+
+          lucro_unitario: Number(row.lucro_unitario || 0),
+
+          margem_lucro: Number(row.margem_lucro || 0),
+
+          custo_total: Number(row.custo_total || 0),
+
+          lucro_total: Number(row.lucro_total || 0),
+
+          estoque_atual: Number(row.estoque_atual || 0),
+
+          estoque_investido: Number(row.estoque_investido || 0),
+
+          lucro_potencial: Number(row.lucro_potencial || 0)
+        }))
+      );
+    } catch (error) {
+      console.error('Erro real ao gerar relatório de lucratividade:', error);
+
+      return erro(res, 500, 'Erro ao gerar relatório de lucratividade');
+    }
+  });
+
   return router;
 };
