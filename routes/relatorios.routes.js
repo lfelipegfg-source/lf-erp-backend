@@ -766,8 +766,16 @@ module.exports = function ({
         ), 0) AS estoque_investido,
 
         COALESCE(MAX(
-          p.estoque * p.lucro_unitario
-        ), 0) AS lucro_potencial
+  p.estoque * p.lucro_unitario
+), 0) AS lucro_potencial,
+
+COALESCE(MAX(p.estoque), 0) AS estoque_parado,
+
+COALESCE(MAX(
+  p.estoque * p.custo_medio
+), 0) AS capital_parado,
+
+MAX(v.data) AS ultima_venda
 
       FROM venda_itens vi
 
@@ -825,7 +833,13 @@ module.exports = function ({
 
           estoque_investido: Number(row.estoque_investido || 0),
 
-          lucro_potencial: Number(row.lucro_potencial || 0)
+          lucro_potencial: Number(row.lucro_potencial || 0),
+
+          estoque_parado: Number(row.estoque_parado || 0),
+
+          capital_parado: Number(row.capital_parado || 0),
+
+          ultima_venda: row.ultima_venda || null
         }))
       );
     } catch (error) {
