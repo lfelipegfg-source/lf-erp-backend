@@ -3111,6 +3111,128 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
   }
 });
 
+// ================= CRIAÇÃO MANUAL DE CONTA A RECEBER =================
+app.post('/contas-receber/manual', auth, async (req, res) => {
+  try {
+    const {
+      empresa,
+      cliente_id,
+      cliente_nome,
+      descricao,
+      valor,
+      data_vencimento,
+      observacao,
+      forma_pagamento
+    } = req.body;
+
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+
+    if (!empresaResolvida) {
+      return res.status(403).send('Sem acesso');
+    }
+
+    const valorFinal = normalizarDecimal(valor);
+
+    if (valorFinal <= 0) {
+      return res.status(400).send('Valor inválido');
+    }
+
+    const dataVencimento = normalizarDataISO(data_vencimento) || hoje();
+
+    let nomeCliente = String(cliente_nome || '').trim();
+
+    if (cliente_id) {
+      const clienteResult = await pool.query(
+        `
+        SELECT nome
+        FROM clientes
+        WHERE id = $1
+          AND empresa = $2
+        LIMIT 1
+        `,
+        [cliente_id, empresaResolvida.nome]
+      );
+
+      if (clienteResult.rowCount > 0) {
+        nomeCliente = clienteResult.rows[0].nome;
+      }
+    }
+
+    const insertResult = await pool.query(
+      `
+      INSERT INTO contas_receber (
+        empresa,
+        empresa_id,
+        cliente_id,
+        cliente_nome,
+        descricao,
+        observacao,
+        valor,
+        valor_original,
+        valor_atualizado,
+        forma_pagamento,
+        status,
+        parcela,
+        total_parcelas,
+        data_vencimento,
+        criado_em,
+        atualizado_em
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        'pendente',
+        1,
+        1,
+        $11,
+        NOW(),
+        NOW()
+      )
+      RETURNING *
+      `,
+      [
+        empresaResolvida.nome,
+        empresaResolvida.id,
+        cliente_id || null,
+        nomeCliente || 'Cliente avulso',
+        descricao || 'Conta manual',
+        observacao || null,
+        valorFinal,
+        valorFinal,
+        valorFinal,
+        forma_pagamento || 'promissoria',
+        dataVencimento
+      ]
+    );
+
+    const conta = insertResult.rows[0];
+
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'criacao',
+      entidade: 'contas_receber',
+      entidade_id: conta.id,
+      descricao: `Criação manual da conta a receber #${conta.id}`,
+      valor: valorFinal,
+      usuario_id: req.user?.id
+    });
+
+    res.json({
+      sucesso: true,
+      mensagem: 'Conta manual cadastrada com sucesso',
+      conta: {
+        ...conta,
+        valor: Number(conta.valor || 0),
+        valor_original: Number(conta.valor_original || 0),
+        valor_atualizado: Number(conta.valor_atualizado || 0)
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao criar conta manual:', error);
+    res.status(500).send('Erro ao criar conta manual');
+  }
+});
+
 // ================= CONTAS A PAGAR =================
 app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
   try {
