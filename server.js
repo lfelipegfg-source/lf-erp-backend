@@ -3077,7 +3077,7 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
 
     const pagamentoTotal = valorPago >= valorAtual;
-    const novoValor = pagamentoTotal ? 0 : Number((valorAtual - valorPago).toFixed(2));
+    const novoValor = pagamentoTotal ? valorAtual : Number((valorAtual - valorPago).toFixed(2));
 
     const novoStatus = pagamentoTotal ? 'pago' : 'parcial';
 
@@ -3105,6 +3105,37 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       valor: valorPago,
       usuario_id: req.user?.id
     });
+
+    if (!pagamentoTotal) {
+      await pool.query(
+        `
+    INSERT INTO lancamentos_financeiros (
+      empresa,
+      empresa_id,
+      tipo,
+      descricao,
+      valor,
+      status,
+      vencimento,
+      pagamento_data,
+      observacao,
+      criado_em,
+      atualizado_em
+    )
+    VALUES (
+      $1, $2, 'receita', $3, $4, 'pago', $5, $5, $6, NOW(), NOW()
+    )
+    `,
+        [
+          empresaResolvida.nome,
+          empresaResolvida.id,
+          `Recebimento parcial da conta #${id}`,
+          valorPago,
+          dataPagamento,
+          `Baixa parcial registrada automaticamente. Saldo restante: ${novoValor}`
+        ]
+      );
+    }
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
 
