@@ -3108,21 +3108,33 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       await client.query(
         `
         INSERT INTO lancamentos_financeiros (
-          empresa,
-          empresa_id,
-          tipo,
-          descricao,
-          valor,
-          status,
-          vencimento,
-          pagamento_data,
-          observacao,
-          criado_em,
-          atualizado_em
-        )
-        VALUES (
-          $1, $2, 'receita', $3, $4, 'pago', $5, $5, $6, NOW(), NOW()
-        )
+  empresa,
+  empresa_id,
+  tipo,
+  categoria,
+  descricao,
+  valor,
+  status,
+  vencimento,
+  pagamento_data,
+  observacao,
+  criado_em,
+  atualizado_em
+)
+VALUES (
+  $1,
+  $2,
+  'receita',
+  'contas_receber',
+  $3,
+  $4,
+  'pago',
+  $5,
+  $5,
+  $6,
+  NOW(),
+  NOW()
+)
         `,
         [
           empresaResolvida.nome,
