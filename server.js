@@ -2947,6 +2947,100 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
   }
 });
 
+// ================= HISTÓRICO FINANCEIRO DO CLIENTE =================
+app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) => {
+  try {
+    const clienteId = Number(req.params.clienteId);
+
+    if (!clienteId) {
+      return res.status(400).send('Cliente inválido');
+    }
+
+    const clienteResult = await pool.query(
+      `
+      SELECT *
+      FROM clientes
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [clienteId]
+    );
+
+    if (clienteResult.rowCount === 0) {
+      return res.status(404).send('Cliente não encontrado');
+    }
+
+    const cliente = clienteResult.rows[0];
+
+    const empresaResolvida = await validarAcessoEmpresa(req, cliente.empresa);
+
+    if (!empresaResolvida) {
+      return res.status(403).send('Sem acesso');
+    }
+
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+
+    const contasResult = await pool.query(
+      `
+      SELECT
+        *,
+        CASE
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN data_vencimento IS NOT NULL
+            AND data_vencimento < $3 THEN 'atrasado'
+          ELSE 'pendente'
+        END AS status_exibicao
+      FROM contas_receber
+      WHERE cliente_id = $1
+        AND empresa = $2
+      ORDER BY id DESC
+      `,
+      [clienteId, empresaResolvida.nome, hoje()]
+    );
+
+    const contas = contasResult.rows.map((conta) => ({
+      ...conta,
+      valor: Number(conta.valor || 0),
+      status: conta.status_exibicao
+    }));
+
+    const resumo = contas.reduce(
+      (acc, conta) => {
+        acc.total += conta.valor;
+
+        if (conta.status === 'pago') {
+          acc.total_pago += conta.valor;
+        } else if (conta.status === 'atrasado') {
+          acc.total_atrasado += conta.valor;
+        } else {
+          acc.total_pendente += conta.valor;
+        }
+
+        return acc;
+      },
+      {
+        total: 0,
+        total_pago: 0,
+        total_pendente: 0,
+        total_atrasado: 0
+      }
+    );
+
+    res.json({
+      cliente: {
+        id: cliente.id,
+        nome: cliente.nome,
+        telefone: cliente.telefone || null
+      },
+      resumo,
+      contas
+    });
+  } catch (error) {
+    console.error('Erro ao buscar histórico do cliente:', error);
+    res.status(500).send('Erro ao buscar histórico do cliente');
+  }
+});
+
 app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
