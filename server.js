@@ -3161,45 +3161,37 @@ app.post('/contas-receber/manual', auth, async (req, res) => {
     const insertResult = await pool.query(
       `
       INSERT INTO contas_receber (
-        empresa,
-        empresa_id,
-        cliente_id,
-        cliente_nome,
-        descricao,
-        observacao,
-        valor,
-        valor_original,
-        valor_atualizado,
-        forma_pagamento,
-        status,
-        parcela,
-        total_parcelas,
-        data_vencimento,
-        criado_em,
-        atualizado_em
-      )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-        'pendente',
-        1,
-        1,
-        $11,
-        NOW(),
-        NOW()
-      )
-      RETURNING *
+  empresa,
+  empresa_id,
+  cliente_id,
+  cliente_nome,
+  observacao,
+  valor,
+  status,
+  parcela,
+  total_parcelas,
+  data_vencimento,
+  criado_em,
+  atualizado_em
+)
+VALUES (
+  $1,$2,$3,$4,$5,$6,
+  'pendente',
+  1,
+  1,
+  $7,
+  NOW(),
+  NOW()
+)
+RETURNING *
       `,
       [
         empresaResolvida.nome,
         empresaResolvida.id,
         cliente_id || null,
         nomeCliente || 'Cliente avulso',
-        descricao || 'Conta manual',
-        observacao || null,
+        observacao || descricao || 'Promissória antiga cadastrada manualmente',
         valorFinal,
-        valorFinal,
-        valorFinal,
-        forma_pagamento || 'promissoria',
         dataVencimento
       ]
     );
