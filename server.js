@@ -3062,27 +3062,47 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       return res.status(400).send('Esta conta já está paga');
     }
 
+    const valorAtual = normalizarDecimal(conta.valor || 0);
+    const valorPagoInformado = normalizarDecimal(req.body?.valor_pago || 0);
+    const valorPago = valorPagoInformado > 0 ? valorPagoInformado : valorAtual;
+
+    if (valorPago <= 0) {
+      return res.status(400).send('Valor de pagamento inválido');
+    }
+
+    if (valorPago > valorAtual) {
+      return res.status(400).send('Valor pago não pode ser maior que o saldo da conta');
+    }
+
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
+
+    const pagamentoTotal = valorPago >= valorAtual;
+    const novoValor = pagamentoTotal ? 0 : Number((valorAtual - valorPago).toFixed(2));
+
+    const novoStatus = pagamentoTotal ? 'pago' : 'parcial';
 
     await pool.query(
       `
       UPDATE contas_receber
-      SET status = 'pago',
-          data_pagamento = $1,
+      SET status = $1,
+          valor = $2,
+          data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
-      WHERE id = $2
+      WHERE id = $4
       `,
-      [dataPagamento, id]
+      [novoStatus, novoValor, dataPagamento, id]
     );
 
     await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
       empresa_id: empresaResolvida.id,
-      tipo: 'baixa',
+      tipo: pagamentoTotal ? 'baixa' : 'baixa_parcial',
       entidade: 'contas_receber',
       entidade_id: id,
-      descricao: `Baixa da conta a receber #${id}`,
-      valor: req.body?.valor_pago || conta.valor || 0,
+      descricao: pagamentoTotal
+        ? `Baixa total da conta a receber #${id}`
+        : `Baixa parcial da conta a receber #${id}`,
+      valor: valorPago,
       usuario_id: req.user?.id
     });
 
@@ -3094,6 +3114,7 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
         *,
         CASE
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
           WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
@@ -3107,7 +3128,9 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
 
     res.json({
       sucesso: true,
-      mensagem: 'Conta baixada com sucesso',
+      mensagem: pagamentoTotal
+        ? 'Conta baixada com sucesso'
+        : 'Baixa parcial registrada com sucesso',
       conta: {
         ...contaAtualizada,
         valor: Number(contaAtualizada.valor || 0),
