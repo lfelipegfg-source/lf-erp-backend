@@ -3042,12 +3042,20 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
 });
 
 app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1`, [id]);
+    await client.query('BEGIN');
+
+    const contaResult = await client.query(
+      `SELECT * FROM contas_receber WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
 
     if (contaResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).send('Conta não encontrada');
     }
 
@@ -3055,10 +3063,12 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
 
     if (!empresaResolvida) {
+      await client.query('ROLLBACK');
       return res.status(403).send('Sem acesso');
     }
 
     if (String(conta.status || '').toLowerCase() === 'pago') {
+      await client.query('ROLLBACK');
       return res.status(400).send('Esta conta já está paga');
     }
 
@@ -3067,10 +3077,12 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
     const valorPago = valorPagoInformado > 0 ? valorPagoInformado : valorAtual;
 
     if (valorPago <= 0) {
+      await client.query('ROLLBACK');
       return res.status(400).send('Valor de pagamento inválido');
     }
 
     if (valorPago > valorAtual) {
+      await client.query('ROLLBACK');
       return res.status(400).send('Valor pago não pode ser maior que o saldo da conta');
     }
 
@@ -3078,10 +3090,9 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
 
     const pagamentoTotal = valorPago >= valorAtual;
     const novoValor = pagamentoTotal ? valorAtual : Number((valorAtual - valorPago).toFixed(2));
-
     const novoStatus = pagamentoTotal ? 'pago' : 'parcial';
 
-    await pool.query(
+    await client.query(
       `
       UPDATE contas_receber
       SET status = $1,
@@ -3092,6 +3103,37 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       `,
       [novoStatus, novoValor, dataPagamento, id]
     );
+
+    if (!pagamentoTotal) {
+      await client.query(
+        `
+        INSERT INTO lancamentos_financeiros (
+          empresa,
+          empresa_id,
+          tipo,
+          descricao,
+          valor,
+          status,
+          vencimento,
+          pagamento_data,
+          observacao,
+          criado_em,
+          atualizado_em
+        )
+        VALUES (
+          $1, $2, 'receita', $3, $4, 'pago', $5, $5, $6, NOW(), NOW()
+        )
+        `,
+        [
+          empresaResolvida.nome,
+          empresaResolvida.id,
+          `Recebimento parcial da conta #${id}`,
+          valorPago,
+          dataPagamento,
+          `Baixa parcial registrada automaticamente. Saldo restante: ${novoValor}`
+        ]
+      );
+    }
 
     await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
@@ -3106,36 +3148,7 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       usuario_id: req.user?.id
     });
 
-    if (!pagamentoTotal) {
-      await pool.query(
-        `
-    INSERT INTO lancamentos_financeiros (
-      empresa,
-      empresa_id,
-      tipo,
-      descricao,
-      valor,
-      status,
-      vencimento,
-      pagamento_data,
-      observacao,
-      criado_em,
-      atualizado_em
-    )
-    VALUES (
-      $1, $2, 'receita', $3, $4, 'pago', $5, $5, $6, NOW(), NOW()
-    )
-    `,
-        [
-          empresaResolvida.nome,
-          empresaResolvida.id,
-          `Recebimento parcial da conta #${id}`,
-          valorPago,
-          dataPagamento,
-          `Baixa parcial registrada automaticamente. Saldo restante: ${novoValor}`
-        ]
-      );
-    }
+    await client.query('COMMIT');
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
 
@@ -3171,8 +3184,11 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
       }
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Erro ao baixar conta:', error);
     res.status(500).send('Erro ao baixar conta');
+  } finally {
+    client.release();
   }
 });
 
@@ -4605,6 +4621,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const pagarParams = [];
     const clientesParams = [];
     const produtosParams = [];
+    const lancamentosParams = [];
 
     let vendasWhere = `
   WHERE 1=1
@@ -4636,6 +4653,13 @@ app.get('/dashboard', auth, async (req, res) => {
     let produtosWhere = `
   WHERE 1=1
   ${adicionarFiltroEmpresaSaaS({ params: produtosParams, empresaResolvida })}
+`;
+
+    let lancamentosWhere = `
+  WHERE 1=1
+  ${adicionarFiltroEmpresaSaaS({ params: lancamentosParams, empresaResolvida })}
+  AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+  AND pagamento_data IS NOT NULL
 `;
 
     vendasWhere += adicionarFiltroPeriodo({
@@ -4675,6 +4699,14 @@ app.get('/dashboard', auth, async (req, res) => {
       params: clientesParams,
       dataInicial,
       dataFinal
+    });
+
+    lancamentosWhere += adicionarFiltroPeriodo({
+      campo: 'pagamento_data',
+      params: lancamentosParams,
+      dataInicial,
+      dataFinal,
+      castDate: false
     });
 
     const topProdutosParams = [];
@@ -4721,7 +4753,8 @@ app.get('/dashboard', auth, async (req, res) => {
       topProdutosResult,
       estoqueBaixoResult,
       indicadoresFinanceirosResult,
-      abcResult
+      abcResult,
+      lancamentosFinanceirosResult
     ] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total), 0) AS faturamento FROM vendas ${vendasWhere}`,
@@ -4843,6 +4876,19 @@ app.get('/dashboard', auth, async (req, res) => {
   FROM acumulado
   `,
         abcParams
+      ),
+
+      ,
+      pool.query(
+        `
+  SELECT
+    tipo,
+    COALESCE(SUM(valor), 0) AS total
+  FROM lancamentos_financeiros
+  ${lancamentosWhere}
+  GROUP BY tipo
+  `,
+        lancamentosParams
       )
     ]);
 
@@ -4854,6 +4900,18 @@ app.get('/dashboard', auth, async (req, res) => {
     const clientesRow = clientesResult.rows[0];
     const indicadoresFinanceirosRow = indicadoresFinanceirosResult.rows[0];
     const abcRow = abcResult.rows[0];
+    const lancamentosFinanceirosResumo = lancamentosFinanceirosResult.rows.reduce(
+      (acc, row) => {
+        const tipo = String(row.tipo || '').toLowerCase();
+        const valor = Number(row.total || 0);
+
+        if (tipo === 'receita') acc.receitas += valor;
+        if (tipo === 'despesa') acc.despesas += valor;
+
+        return acc;
+      },
+      { receitas: 0, despesas: 0 }
+    );
 
     const alertas = [];
     if (Number(estoqueBaixoResult.rows[0].total || 0) > 0) {
@@ -4885,6 +4943,14 @@ app.get('/dashboard', auth, async (req, res) => {
 
     res.json({
       faturamento: Number(vendasRow.faturamento || 0),
+      receitas_realizadas: Number(lancamentosFinanceirosResumo.receitas || 0),
+      despesas_realizadas: Number(lancamentosFinanceirosResumo.despesas || 0),
+      saldo_financeiro_realizado: Number(
+        (
+          Number(lancamentosFinanceirosResumo.receitas || 0) -
+          Number(lancamentosFinanceirosResumo.despesas || 0)
+        ).toFixed(2)
+      ),
       vendas: Number(vendasRow.total_vendas || 0),
       contas_receber: Number(receberRow.contas_receber || 0),
       contas_pagar: Number(pagarRow.contas_pagar || 0),
