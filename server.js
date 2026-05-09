@@ -2763,6 +2763,21 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
     sql += ` ORDER BY cr.id DESC`;
 
     const result = await pool.query(sql, params);
+    const recebidosParciaisResult = await pool.query(
+      `
+  SELECT COALESCE(SUM(valor), 0) AS total
+  FROM lancamentos_financeiros
+  WHERE (
+    empresa = $1
+    OR empresa_id = $2
+  )
+    AND LOWER(COALESCE(tipo, '')) = 'receita'
+    AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+    AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
+    AND pagamento_data IS NOT NULL
+  `,
+      [empresaResolvida.nome, empresaResolvida.id]
+    );
 
     const contas = result.rows.map((row) => ({
       ...row,
@@ -2798,6 +2813,7 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
         total_pago: 0,
         total_pendente: 0,
         total_atrasado: 0,
+        total_recebido_parcial: Number(recebidosParciaisResult.rows[0].total || 0),
         qtd_pago: 0,
         qtd_pendente: 0,
         qtd_atrasado: 0
@@ -4261,7 +4277,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
 
     const paramsReceber = [empresaResolvida.nome];
     const paramsPagar = [empresaResolvida.nome];
-    const paramsLanc = [empresaResolvida.nome];
+    const paramsLanc = [empresaResolvida.nome, empresaResolvida.id];
     const paramsInvest = [empresaResolvida.nome];
     const paramsVendas = [empresaResolvida.nome];
     const paramsCompras = [empresaResolvida.nome];
@@ -4279,10 +4295,13 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     `;
 
     let whereLanc = `
-      WHERE empresa = $1
-        AND LOWER(COALESCE(status, 'pendente')) = 'pago'
-        AND pagamento_data IS NOT NULL
-    `;
+  WHERE (
+    empresa = $1
+    OR empresa_id = $2
+  )
+    AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+    AND pagamento_data IS NOT NULL
+`;
 
     let whereInvest = `
       WHERE empresa = $1
@@ -4637,7 +4656,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const pagarParams = [];
     const clientesParams = [];
     const produtosParams = [];
-    const lancamentosParams = [];
+    const lancamentosParams = [empresaResolvida.nome, empresaResolvida.id];
 
     let vendasWhere = `
   WHERE 1=1
@@ -4672,8 +4691,10 @@ app.get('/dashboard', auth, async (req, res) => {
 `;
 
     let lancamentosWhere = `
-  WHERE 1=1
-  ${adicionarFiltroEmpresaSaaS({ params: lancamentosParams, empresaResolvida })}
+  WHERE (
+    empresa = $1
+    OR empresa_id = $2
+  )
   AND LOWER(COALESCE(status, 'pendente')) = 'pago'
   AND pagamento_data IS NOT NULL
 `;
