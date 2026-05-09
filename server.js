@@ -3307,6 +3307,76 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
   }
 });
 
+app.delete('/contas-receber/:id', auth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const contaResult = await pool.query(
+      `
+      SELECT *
+      FROM contas_receber
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (contaResult.rowCount === 0) {
+      return res.status(404).send('Conta não encontrada');
+    }
+
+    const conta = contaResult.rows[0];
+
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+
+    if (!empresaResolvida) {
+      return res.status(403).send('Sem acesso');
+    }
+
+    // 🔒 impedir apagar contas reais de venda
+    if (conta.venda_id) {
+      return res.status(400).send('Contas originadas de venda não podem ser excluídas');
+    }
+
+    // 🔒 impedir apagar conta parcialmente recebida
+    if (String(conta.status || '').toLowerCase() === 'parcial') {
+      return res.status(400).send('Conta parcialmente recebida não pode ser excluída');
+    }
+
+    // 🔒 impedir apagar conta paga
+    if (String(conta.status || '').toLowerCase() === 'pago') {
+      return res.status(400).send('Conta paga não pode ser excluída');
+    }
+
+    await pool.query(
+      `
+      DELETE FROM contas_receber
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'exclusao',
+      entidade: 'contas_receber',
+      entidade_id: id,
+      descricao: `Exclusão da conta manual #${id}`,
+      valor: conta.valor || 0,
+      usuario_id: req.user?.id
+    });
+
+    res.json({
+      sucesso: true,
+      mensagem: 'Conta manual excluída com sucesso'
+    });
+  } catch (error) {
+    console.error('Erro ao excluir conta manual:', error);
+    res.status(500).send('Erro ao excluir conta manual');
+  }
+});
+
 // ================= CRIAÇÃO MANUAL DE CONTA A RECEBER =================
 app.post('/contas-receber/manual', auth, async (req, res) => {
   try {
