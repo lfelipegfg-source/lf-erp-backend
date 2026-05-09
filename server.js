@@ -2770,16 +2770,22 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
     const result = await pool.query(sql, params);
     const recebidosParciaisResult = await pool.query(
       `
-  SELECT COALESCE(SUM(valor), 0) AS total
-  FROM lancamentos_financeiros
+  SELECT COALESCE(SUM(lf.valor), 0) AS total
+  FROM lancamentos_financeiros lf
   WHERE (
-    empresa = $1
-    OR empresa_id = $2
+    lf.empresa = $1
+    OR lf.empresa_id = $2
   )
-    AND LOWER(COALESCE(tipo, '')) = 'receita'
-    AND LOWER(COALESCE(status, 'pendente')) = 'pago'
-    AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
-    AND pagamento_data IS NOT NULL
+    AND LOWER(COALESCE(lf.tipo, '')) = 'receita'
+    AND LOWER(COALESCE(lf.status, 'pendente')) = 'pago'
+    AND LOWER(COALESCE(lf.categoria, '')) = 'contas_receber'
+    AND lf.pagamento_data IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM contas_receber cr
+      WHERE cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER
+        AND cr.empresa = lf.empresa
+    )
   `,
       [empresaResolvida.nome, empresaResolvida.id]
     );
@@ -3524,7 +3530,29 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
 
     // 🔒 impedir apagar conta parcialmente recebida
     if (String(conta.status || '').toLowerCase() === 'parcial') {
-      return res.status(400).send('Conta parcialmente recebida não pode ser excluída');
+      const recebimentosAtivosResult = await pool.query(
+        `
+    SELECT COUNT(*) AS total
+    FROM lancamentos_financeiros
+    WHERE (
+      empresa = $1
+      OR empresa_id = $2
+    )
+      AND LOWER(COALESCE(tipo, '')) = 'receita'
+      AND LOWER(COALESCE(status, '')) = 'pago'
+      AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
+      AND descricao = $3
+    `,
+        [empresaResolvida.nome, empresaResolvida.id, `Recebimento parcial da conta #${id}`]
+      );
+
+      if (Number(recebimentosAtivosResult.rows[0].total || 0) > 0) {
+        return res
+          .status(400)
+          .send(
+            'Conta parcialmente recebida possui recebimentos ativos. Estorne os recebimentos antes de excluir.'
+          );
+      }
     }
 
     // 🔒 impedir apagar conta paga
