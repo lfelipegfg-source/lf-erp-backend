@@ -2698,6 +2698,7 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
         v.pagamento AS venda_pagamento,
         CASE
           WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial' THEN 'parcial'
           WHEN cr.data_vencimento IS NOT NULL AND cr.data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
@@ -2779,6 +2780,9 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
         if (conta.status === 'pago') {
           acc.total_pago += conta.valor;
           acc.qtd_pago++;
+        } else if (conta.status === 'parcial') {
+          acc.total_pendente += conta.valor;
+          acc.qtd_pendente++;
         } else if (conta.status === 'atrasado') {
           acc.total_atrasado += conta.valor;
           acc.qtd_atrasado++;
