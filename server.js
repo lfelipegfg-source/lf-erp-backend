@@ -3224,6 +3224,61 @@ VALUES (
   }
 });
 
+app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`, [
+      id
+    ]);
+
+    if (contaResult.rowCount === 0) {
+      return res.status(404).send('Conta não encontrada');
+    }
+
+    const conta = contaResult.rows[0];
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+
+    if (!empresaResolvida) {
+      return res.status(403).send('Sem acesso');
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        descricao,
+        valor,
+        pagamento_data,
+        observacao,
+        criado_em
+      FROM lancamentos_financeiros
+      WHERE (
+        empresa = $1
+        OR empresa_id = $2
+      )
+        AND LOWER(COALESCE(tipo, '')) = 'receita'
+        AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
+        AND LOWER(COALESCE(status, '')) = 'pago'
+        AND descricao = $3
+      ORDER BY pagamento_data DESC, id DESC
+      `,
+      [empresaResolvida.nome, empresaResolvida.id, `Recebimento parcial da conta #${id}`]
+    );
+
+    res.json({
+      conta_id: id,
+      recebimentos: result.rows.map((item) => ({
+        ...item,
+        valor: Number(item.valor || 0)
+      }))
+    });
+  } catch (error) {
+    console.error('Erro ao buscar recebimentos parciais:', error);
+    res.status(500).send('Erro ao buscar recebimentos parciais');
+  }
+});
+
 app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -3304,6 +3359,130 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
   } catch (error) {
     console.error('Erro ao estornar baixa de conta a receber:', error);
     res.status(500).send('Erro ao estornar baixa de conta a receber');
+  }
+});
+
+app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const lancamentoId = Number(req.params.lancamentoId);
+
+    await client.query('BEGIN');
+
+    const lancamentoResult = await client.query(
+      `
+      SELECT *
+      FROM lancamentos_financeiros
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [lancamentoId]
+    );
+
+    if (lancamentoResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).send('Recebimento parcial não encontrado');
+    }
+
+    const lancamento = lancamentoResult.rows[0];
+
+    if (String(lancamento.status || '').toLowerCase() !== 'pago') {
+      await client.query('ROLLBACK');
+      return res.status(400).send('Este recebimento parcial já foi estornado');
+    }
+
+    const match = String(lancamento.descricao || '').match(/conta #(\d+)/i);
+
+    if (!match) {
+      await client.query('ROLLBACK');
+      return res.status(400).send('Não foi possível identificar a conta vinculada');
+    }
+
+    const contaId = Number(match[1]);
+
+    const contaResult = await client.query(
+      `
+      SELECT *
+      FROM contas_receber
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [contaId]
+    );
+
+    if (contaResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).send('Conta vinculada não encontrada');
+    }
+
+    const conta = contaResult.rows[0];
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+
+    if (!empresaResolvida) {
+      await client.query('ROLLBACK');
+      return res.status(403).send('Sem acesso');
+    }
+
+    const valorEstorno = normalizarDecimal(lancamento.valor || 0);
+    const valorAtualConta = normalizarDecimal(conta.valor || 0);
+    const novoValorConta = Number((valorAtualConta + valorEstorno).toFixed(2));
+
+    const novoStatus =
+      conta.data_vencimento &&
+      new Date(`${String(conta.data_vencimento).slice(0, 10)}T00:00:00`) <
+        new Date(`${hoje()}T00:00:00`)
+        ? 'atrasado'
+        : 'pendente';
+
+    await client.query(
+      `
+      UPDATE contas_receber
+      SET valor = $1,
+          status = $2,
+          atualizado_em = NOW()
+      WHERE id = $3
+      `,
+      [novoValorConta, novoStatus, contaId]
+    );
+
+    await client.query(
+      `
+      UPDATE lancamentos_financeiros
+      SET status = 'estornado',
+          observacao = COALESCE(observacao, '') || ' | Estornado em ' || NOW(),
+          atualizado_em = NOW()
+      WHERE id = $1
+      `,
+      [lancamentoId]
+    );
+
+    await client.query('COMMIT');
+
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'estorno_baixa_parcial',
+      entidade: 'lancamentos_financeiros',
+      entidade_id: lancamentoId,
+      descricao: `Estorno do recebimento parcial #${lancamentoId} da conta #${contaId}`,
+      valor: valorEstorno,
+      usuario_id: req.user?.id
+    });
+
+    res.json({
+      sucesso: true,
+      mensagem: 'Recebimento parcial estornado com sucesso',
+      conta_id: contaId,
+      valor_estornado: valorEstorno,
+      novo_saldo: novoValorConta
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erro ao estornar recebimento parcial:', error);
+    res.status(500).send('Erro ao estornar recebimento parcial');
+  } finally {
+    client.release();
   }
 });
 
