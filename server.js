@@ -4890,7 +4890,6 @@ app.get('/dashboard', auth, async (req, res) => {
         abcParams
       ),
 
-      ,
       pool.query(
         `
   SELECT
