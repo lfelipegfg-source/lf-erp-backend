@@ -3017,6 +3017,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
         *,
         CASE
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
           WHEN data_vencimento IS NOT NULL
             AND data_vencimento < $3 THEN 'atrasado'
           ELSE 'pendente'
@@ -3035,12 +3036,38 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       status: conta.status_exibicao
     }));
 
+    const recebimentosParciaisResult = await pool.query(
+      `
+  SELECT COALESCE(SUM(lf.valor), 0) AS total
+  FROM lancamentos_financeiros lf
+  WHERE (
+    lf.empresa = $1
+    OR lf.empresa_id = $2
+  )
+    AND LOWER(COALESCE(lf.tipo, '')) = 'receita'
+    AND LOWER(COALESCE(lf.status, '')) = 'pago'
+    AND LOWER(COALESCE(lf.categoria, '')) = 'contas_receber'
+    AND lf.pagamento_data IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM contas_receber cr
+      WHERE cr.cliente_id = $3
+        AND cr.empresa = $1
+        AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER
+    )
+  `,
+      [empresaResolvida.nome, empresaResolvida.id, clienteId]
+    );
+
     const resumo = contas.reduce(
       (acc, conta) => {
         acc.total += conta.valor;
 
         if (conta.status === 'pago') {
           acc.total_pago += conta.valor;
+        } else if (conta.status === 'parcial') {
+          acc.total_parcial += conta.valor;
+          acc.total_pendente += conta.valor;
         } else if (conta.status === 'atrasado') {
           acc.total_atrasado += conta.valor;
         } else {
@@ -3053,7 +3080,9 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
         total: 0,
         total_pago: 0,
         total_pendente: 0,
-        total_atrasado: 0
+        total_atrasado: 0,
+        total_parcial: 0,
+        total_recebido_parcial: Number(recebimentosParciaisResult.rows[0].total || 0)
       }
     );
 
