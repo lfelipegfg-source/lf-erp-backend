@@ -2703,8 +2703,17 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
         v.pagamento AS venda_pagamento,
         CASE
           WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'pago' THEN 'pago'
-          WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial' THEN 'parcial'
-          WHEN cr.data_vencimento IS NOT NULL AND cr.data_vencimento < $2 THEN 'atrasado'
+          WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial'
+  AND cr.data_vencimento IS NOT NULL
+  AND cr.data_vencimento < $2
+THEN 'parcial_atrasado'
+
+WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial'
+THEN 'parcial'
+
+WHEN cr.data_vencimento IS NOT NULL
+  AND cr.data_vencimento < $2
+THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
       FROM contas_receber cr
@@ -2847,9 +2856,22 @@ app.get('/contas-receber/detalhe/:id', auth, async (req, res) => {
         SELECT
           cr.*,
           CASE
-            WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'pago' THEN 'pago'
-            WHEN cr.data_vencimento IS NOT NULL AND cr.data_vencimento < $2 THEN 'atrasado'
-            ELSE 'pendente'
+            WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'pago'
+THEN 'pago'
+
+WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial'
+  AND cr.data_vencimento IS NOT NULL
+  AND cr.data_vencimento < $2
+THEN 'parcial_atrasado'
+
+WHEN LOWER(COALESCE(cr.status, 'pendente')) = 'parcial'
+THEN 'parcial'
+
+WHEN cr.data_vencimento IS NOT NULL
+  AND cr.data_vencimento < $2
+THEN 'atrasado'
+
+ELSE 'pendente'
           END AS status_exibicao
         FROM contas_receber cr
         WHERE cr.id = $1
@@ -3017,9 +3039,17 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
         *,
         CASE
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
-          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
-          WHEN data_vencimento IS NOT NULL
-            AND data_vencimento < $3 THEN 'atrasado'
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
+  AND data_vencimento IS NOT NULL
+  AND data_vencimento < $3
+THEN 'parcial_atrasado'
+
+WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
+THEN 'parcial'
+
+WHEN data_vencimento IS NOT NULL
+  AND data_vencimento < $3
+THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
       FROM contas_receber
