@@ -2818,6 +2818,9 @@ THEN 'atrasado'
         } else if (conta.status === 'parcial') {
           acc.total_pendente += conta.valor;
           acc.qtd_pendente++;
+        } else if (conta.status === 'parcial_atrasado') {
+          acc.total_atrasado += conta.valor;
+          acc.qtd_atrasado++;
         } else if (conta.status === 'atrasado') {
           acc.total_atrasado += conta.valor;
           acc.qtd_atrasado++;
@@ -3098,6 +3101,9 @@ THEN 'atrasado'
         } else if (conta.status === 'parcial') {
           acc.total_parcial += conta.valor;
           acc.total_pendente += conta.valor;
+        } else if (conta.status === 'parcial_atrasado') {
+          acc.total_parcial += conta.valor;
+          acc.total_atrasado += conta.valor;
         } else if (conta.status === 'atrasado') {
           acc.total_atrasado += conta.valor;
         } else {
@@ -3260,8 +3266,12 @@ VALUES (
         *,
         CASE
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
-          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
-          WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
+         WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
+  AND data_vencimento IS NOT NULL
+  AND data_vencimento < $2
+THEN 'parcial_atrasado'
+WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
+WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
       FROM contas_receber
