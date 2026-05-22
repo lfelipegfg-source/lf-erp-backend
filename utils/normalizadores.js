@@ -36,11 +36,47 @@ function normalizarDataISO(valor) {
   return d.toISOString().slice(0, 10);
 }
 
+// Valida itens de venda: produto_id e quantidade obrigatórios e positivos
+function validarItensVenda(itens) {
+  if (!Array.isArray(itens) || itens.length === 0) return false;
+
+  for (const item of itens) {
+    const produtoId = Number(item.produto_id);
+    const quantidade = normalizarInt(item.quantidade);
+    if (!produtoId || quantidade <= 0) return false;
+  }
+
+  return true;
+}
+
+// Valida itens de compra e retorna o total calculado (null se inválido)
+function validarECalcularTotalItens(itens) {
+  if (!Array.isArray(itens) || itens.length === 0) return null;
+
+  let total = 0;
+
+  for (const item of itens) {
+    const produtoId = Number(item.produto_id);
+    const quantidade = normalizarInt(item.quantidade);
+    const custoUnitario = normalizarDecimal(
+      item.custo_unitario || item.preco_unitario || item.custo
+    );
+
+    if (!produtoId || quantidade <= 0 || custoUnitario < 0) return null;
+
+    total = Number((total + Number((quantidade * custoUnitario).toFixed(2))).toFixed(2));
+  }
+
+  return total;
+}
+
 module.exports = {
   hoje,
   agoraISO,
   normalizarDecimal,
   normalizarInt,
   addDias,
-  normalizarDataISO
+  normalizarDataISO,
+  validarItensVenda,
+  validarECalcularTotalItens
 };

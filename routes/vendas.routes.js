@@ -14,7 +14,8 @@ module.exports = ({
   obterPeriodo,
   adicionarFiltroEmpresaSaaS,
   adicionarFiltroPeriodo,
-  registrarAuditoria
+  registrarAuditoria,
+  validarItensVenda
 }) => {
   const router = require('express').Router();
 
@@ -192,13 +193,13 @@ module.exports = ({
     itens,
     usuarioId
   }) {
+    if (!validarItensVenda(itens)) {
+      throw new Error('Itens da venda inválidos');
+    }
+
     for (const item of itens) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
-
-      if (!produtoId || quantidade <= 0) {
-        throw new Error('Itens da venda inválidos');
-      }
 
       const produtoResult = await client.query(
         `

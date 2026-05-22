@@ -6,7 +6,8 @@ const {
   normalizarInt,
   normalizarDataISO,
   hoje,
-  addDias
+  addDias,
+  validarECalcularTotalItens
 } = require('../utils/normalizadores');
 
 module.exports = function ({
@@ -76,22 +77,11 @@ module.exports = function ({
 
       const fornecedor = fornecedorResult.rows[0];
 
-      let totalCalculado = 0;
+      const totalCalculado = validarECalcularTotalItens(itens);
 
-      for (const item of itens) {
-        const produtoId = Number(item.produto_id);
-        const quantidade = normalizarInt(item.quantidade);
-        const custoUnitario = normalizarDecimal(
-          item.custo_unitario || item.preco_unitario || item.custo
-        );
-        const subtotal = Number((quantidade * custoUnitario).toFixed(2));
-
-        if (!produtoId || quantidade <= 0 || custoUnitario < 0) {
-          await client.query('ROLLBACK');
-          return erro(res, 400, 'Itens da compra inválidos');
-        }
-
-        totalCalculado = Number((totalCalculado + subtotal).toFixed(2));
+      if (totalCalculado === null) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'Itens da compra inválidos');
       }
 
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();

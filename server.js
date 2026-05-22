@@ -62,6 +62,13 @@ app.use((req, res, next) => {
 });
 
 const SECRET = process.env.JWT_SECRET;
+
+// Helper global de resposta de erro JSON — substitui res.status(x).send('texto')
+function jsonErro(res, status, mensagem, codigo = null) {
+  const body = { sucesso: false, erro: mensagem };
+  if (codigo) body.codigo = codigo;
+  return res.status(status).json(body);
+}
 const PORT = process.env.PORT || 3001;
 
 if (!SECRET) {
@@ -153,7 +160,8 @@ app.use(
     obterPeriodo,
     adicionarFiltroEmpresaSaaS,
     adicionarFiltroPeriodo,
-    registrarAuditoria
+    registrarAuditoria,
+    validarItensVenda
   })
 );
 
@@ -271,6 +279,14 @@ async function registrarLogFinanceiro({
 function normalizarInt(valor) {
   const numero = parseInt(valor, 10);
   return Number.isFinite(numero) ? numero : 0;
+}
+
+function validarItensVenda(itens) {
+  if (!Array.isArray(itens) || itens.length === 0) return false;
+  for (const item of itens) {
+    if (!Number(item.produto_id) || normalizarInt(item.quantidade) <= 0) return false;
+  }
+  return true;
 }
 
 function addDias(dataBase, dias) {
@@ -1663,7 +1679,7 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     const { usuario, senha } = req.body;
 
     if (!usuario || !senha) {
-      return res.status(400).send('Informe usuário e senha');
+      return jsonErro(res, 400, 'Informe usuário e senha.');
     }
 
     const result = await pool.query(
@@ -1684,29 +1700,29 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(401).send('Usuário ou senha inválidos');
+      return jsonErro(res, 401, 'Usuário ou senha inválidos.', 'CREDENCIAIS_INVALIDAS');
     }
 
     const user = result.rows[0];
 
     if (user.bloqueada) {
-      return res.status(403).send('Empresa bloqueada. Entre em contato com o suporte.');
+      return jsonErro(res, 403, 'Empresa bloqueada. Entre em contato com o suporte.', 'EMPRESA_BLOQUEADA');
     }
 
     if (user.assinatura_status === 'inativo' || user.assinatura_status === 'cancelado') {
-      return res.status(403).send('Assinatura inativa. Regularize o acesso para continuar.');
+      return jsonErro(res, 403, 'Assinatura inativa. Regularize o acesso para continuar.', 'ASSINATURA_INATIVA');
     }
 
     if (user.assinatura_status === 'trial' && user.trial_fim) {
       if (String(user.trial_fim) < hoje()) {
-        return res.status(403).send('Período de teste expirado. Escolha um plano para continuar.');
+        return jsonErro(res, 403, 'Período de teste expirado. Escolha um plano para continuar.', 'TRIAL_EXPIRADO');
       }
     }
 
     const senhaOk = await validarSenhaUsuario(senha, user);
 
     if (!senhaOk) {
-      return res.status(401).send('Usuário ou senha inválidos');
+      return jsonErro(res, 401, 'Usuário ou senha inválidos.', 'CREDENCIAIS_INVALIDAS');
     }
 
     const nomeCompleto = user.nome_completo || user.usuario;
