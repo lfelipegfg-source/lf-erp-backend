@@ -627,7 +627,7 @@ function auth(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(403).send('Sem acesso');
+    return res.status(403).json({ sucesso: false, erro: 'Sem acesso', codigo: 'SEM_TOKEN' });
   }
 
   let token = authHeader;
@@ -637,7 +637,7 @@ function auth(req, res, next) {
   }
 
   if (!token) {
-    return res.status(403).send('Token inválido');
+    return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
   }
 
   try {
@@ -649,22 +649,22 @@ function auth(req, res, next) {
     req.empresa_nome = decoded.empresa_nome || decoded.empresa || null;
 
     if (!req.user?.id || !req.user?.tipo) {
-      return res.status(403).send('Token inválido');
+      return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
     }
 
     if (req.user.tipo !== 'admin' && !req.empresa_id) {
-      return res.status(403).send('Empresa não identificada no token');
+      return res.status(403).json({ sucesso: false, erro: 'Empresa não identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
     }
 
     next();
   } catch (error) {
-    return res.status(403).send('Token inválido');
+    return res.status(403).json({ sucesso: false, erro: 'Token inválido ou expirado', codigo: 'TOKEN_EXPIRADO' });
   }
 }
 
 function apenasAdmin(req, res, next) {
   if (req.user.tipo !== 'admin') {
-    return res.status(403).send('Apenas admin pode acessar');
+    return res.status(403).json({ sucesso: false, erro: 'Apenas admin pode acessar', codigo: 'SEM_PERMISSAO' });
   }
   next();
 }
@@ -764,6 +764,14 @@ async function atualizarStatusContasReceberPorEmpresa(empresa) {
   const client = await pool.connect();
   try {
     const dataHoje = hoje();
+
+    const configResult = await client.query(
+      `SELECT taxa_multa, taxa_juros_dia FROM configuracoes WHERE empresa = $1 LIMIT 1`,
+      [empresa]
+    );
+    const taxaMulta = Number(configResult.rows[0]?.taxa_multa ?? 0.02);
+    const taxaJurosDia = Number(configResult.rows[0]?.taxa_juros_dia ?? 0.00033);
+
     await client.query('BEGIN');
 
     await client.query(
@@ -771,13 +779,13 @@ async function atualizarStatusContasReceberPorEmpresa(empresa) {
       UPDATE contas_receber
       SET status = 'atrasado',
           dias_atraso = GREATEST(($2::date - data_vencimento::date), 0),
-          multa = ROUND((valor * 0.02)::numeric, 2),
-          juros = ROUND((valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))::numeric, 2),
+          multa = ROUND((valor * $3)::numeric, 2),
+          juros = ROUND((valor * $4 * GREATEST(($2::date - data_vencimento::date), 0))::numeric, 2),
           valor_atualizado = ROUND(
             (
               valor
-              + (valor * 0.02)
-              + (valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))
+              + (valor * $3)
+              + (valor * $4 * GREATEST(($2::date - data_vencimento::date), 0))
             )::numeric,
             2
           ),
@@ -787,7 +795,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa) {
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $2
       `,
-      [empresa, dataHoje]
+      [empresa, dataHoje, taxaMulta, taxaJurosDia]
     );
 
     await client.query(
@@ -1463,6 +1471,8 @@ async function initDb() {
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS taxa_multa NUMERIC(8,4) NOT NULL DEFAULT 0.02;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS taxa_juros_dia NUMERIC(8,6) NOT NULL DEFAULT 0.00033;
   `);
 
   // ================= EMPRESA PADRÃO =================
@@ -2830,9 +2840,22 @@ THEN 'atrasado'
       castDate: false
     });
 
-    sql += ` ORDER BY cr.id DESC`;
+    const pagina = normalizarInt(req.query.page || 0);
+    const limite = Math.min(normalizarInt(req.query.limit || 100), 500);
 
-    const result = await pool.query(sql, params);
+    let sqlPaginado = sql + ` ORDER BY cr.id DESC`;
+
+    if (pagina > 0) {
+      const offset = (pagina - 1) * limite;
+      sqlPaginado += ` LIMIT $${idx} OFFSET $${idx + 1}`;
+      params.push(limite, offset);
+    }
+
+    const [result, countResult] = await Promise.all([
+      pool.query(sqlPaginado, params),
+      pagina > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_receber cr WHERE cr.empresa = $1`, [empresaResolvida.nome]) : Promise.resolve(null)
+    ]);
+
     const recebidosParciaisResult = await pool.query(
       `
   SELECT COALESCE(SUM(lf.valor), 0) AS total
@@ -2899,7 +2922,18 @@ THEN 'atrasado'
       }
     );
 
-    res.json({ contas, resumo });
+    const totalRegistros = countResult ? Number(countResult.rows[0].total || 0) : contas.length;
+    const resposta = { contas, resumo };
+    if (pagina > 0) {
+      resposta.paginacao = {
+        pagina,
+        limite,
+        total: totalRegistros,
+        total_paginas: Math.ceil(totalRegistros / limite)
+      };
+    }
+
+    res.json(resposta);
   } catch (error) {
     console.error('Erro ao buscar contas a receber:', error);
     res.status(500).send('Erro ao buscar contas a receber');
@@ -3943,9 +3977,23 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
       castDate: false
     });
 
-    sql += ` ORDER BY cp.id DESC`;
+    const paginaCP = normalizarInt(req.query.page || 0);
+    const limiteCP = Math.min(normalizarInt(req.query.limit || 100), 500);
 
-    const result = await pool.query(sql, params);
+    let sqlPaginadoCP = sql + ` ORDER BY cp.id DESC`;
+
+    if (paginaCP > 0) {
+      const offsetCP = (paginaCP - 1) * limiteCP;
+      sqlPaginadoCP += ` LIMIT $${idx} OFFSET $${idx + 1}`;
+      params.push(limiteCP, offsetCP);
+    }
+
+    const [resultCP, countResultCP] = await Promise.all([
+      pool.query(sqlPaginadoCP, params),
+      paginaCP > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_pagar cp WHERE cp.empresa = $1`, [empresaResolvida.nome]) : Promise.resolve(null)
+    ]);
+
+    const result = resultCP;
 
     const contas = result.rows.map((row) => ({
       ...row,
@@ -3984,7 +4032,18 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
       }
     );
 
-    res.json({ contas, resumo });
+    const totalRegistrosCP = countResultCP ? Number(countResultCP.rows[0].total || 0) : contas.length;
+    const respostaCP = { contas, resumo };
+    if (paginaCP > 0) {
+      respostaCP.paginacao = {
+        pagina: paginaCP,
+        limite: limiteCP,
+        total: totalRegistrosCP,
+        total_paginas: Math.ceil(totalRegistrosCP / limiteCP)
+      };
+    }
+
+    res.json(respostaCP);
   } catch (error) {
     console.error('Erro ao buscar contas a pagar:', error);
     res.status(500).send('Erro ao buscar contas a pagar');
@@ -5506,19 +5565,27 @@ app.get('/configuracoes/:empresa', auth, async (req, res) => {
 // SALVAR CONFIGURAÇÕES
 app.put('/configuracoes', auth, async (req, res) => {
   try {
-    const { empresa, nome_empresa } = req.body;
+    const { empresa, nome_empresa, taxa_multa, taxa_juros_dia } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
       return res.status(403).send('Sem acesso');
     }
 
+    const taxaMultaFinal =
+      taxa_multa !== undefined ? Number(taxa_multa) : null;
+    const taxaJurosDiaFinal =
+      taxa_juros_dia !== undefined ? Number(taxa_juros_dia) : null;
+
     await pool.query(
       `
         UPDATE configuracoes
-        SET nome_empresa = $1
+        SET nome_empresa = $1,
+            taxa_multa = COALESCE($3, taxa_multa),
+            taxa_juros_dia = COALESCE($4, taxa_juros_dia),
+            atualizado_em = NOW()
         WHERE empresa = $2
         `,
-      [nome_empresa, empresa]
+      [nome_empresa, empresa, taxaMultaFinal, taxaJurosDiaFinal]
     );
 
     res.sendStatus(200);
