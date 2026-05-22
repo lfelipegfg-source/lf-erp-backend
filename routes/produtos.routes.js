@@ -434,6 +434,12 @@ ${adicionarFiltroEmpresaSaaS({
         return erro(res, 404, 'Produto não encontrado');
       }
 
+      const produto = produtoResult.rows[0];
+
+      if (normalizarInt(produto.estoque) > 0) {
+        return erro(res, 400, `Produto possui ${produto.estoque} unidade(s) em estoque. Zere o estoque antes de excluir.`);
+      }
+
       const vendaItemResult = await pool.query(
         `SELECT COUNT(*) AS total
    FROM venda_itens

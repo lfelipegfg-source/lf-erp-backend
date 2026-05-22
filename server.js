@@ -34,6 +34,16 @@ function loginRateLimiter(req, res, next) {
 
   next();
 }
+
+setInterval(() => {
+  const agora = Date.now();
+  for (const [ip, entrada] of loginAttempts) {
+    if (agora - entrada.inicio > LOGIN_JANELA_MS) {
+      loginAttempts.delete(ip);
+    }
+  }
+}, LOGIN_JANELA_MS).unref();
+
 const financeiroRoutes = require('./routes/financeiro.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
 const comprasRoutes = require('./routes/compras.routes');
@@ -1598,9 +1608,13 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_contas_receber_cliente ON contas_receber (cliente_id);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_vencimento ON contas_receber (empresa, data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_empresa_id ON contas_receber (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_cr_empresa_id_status ON contas_receber (empresa_id, status);
+    CREATE INDEX IF NOT EXISTS idx_cr_empresa_id_vencimento ON contas_receber (empresa_id, data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_fornecedor ON contas_pagar (fornecedor_id);
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento ON contas_pagar (empresa, data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_empresa_id ON contas_pagar (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_cp_empresa_id_status ON contas_pagar (empresa_id, status);
+    CREATE INDEX IF NOT EXISTS idx_cp_empresa_id_vencimento ON contas_pagar (empresa_id, data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_compra_itens_produto ON compra_itens (produto_id);
     CREATE INDEX IF NOT EXISTS idx_venda_itens_produto ON venda_itens (produto_id);
     CREATE INDEX IF NOT EXISTS idx_mov_estoque_data ON movimentacoes_estoque (produto_id, data_movimentacao);
@@ -1646,7 +1660,7 @@ app.get('/', (req, res) => {
 app.post('/reset-dados', auth, async (req, res) => {
   try {
     if (req.user.tipo !== 'admin') {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     await pool.query(`
@@ -1669,7 +1683,7 @@ app.post('/reset-dados', auth, async (req, res) => {
     res.send('Dados resetados com sucesso');
   } catch (error) {
     console.error('Erro no reset:', error);
-    res.status(500).send('Erro ao resetar dados');
+    jsonErro(res, 500, 'Erro ao resetar dados');
   }
 });
 
@@ -1768,7 +1782,7 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao fazer login:', error);
-    res.status(500).send('Erro ao fazer login');
+    jsonErro(res, 500, 'Erro ao fazer login');
   }
 });
 
@@ -1794,7 +1808,7 @@ app.get('/me', auth, async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).send('Usuário não encontrado');
+      return jsonErro(res, 404, 'Usuário não encontrado');
     }
 
     const user = result.rows[0];
@@ -1814,7 +1828,7 @@ app.get('/me', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao validar sessão:', error);
-    res.status(500).send('Erro ao validar sessão');
+    jsonErro(res, 500, 'Erro ao validar sessão');
   }
 });
 
@@ -1826,7 +1840,7 @@ app.get('/empresa/status', auth, async (req, res) => {
     );
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -1858,7 +1872,7 @@ app.get('/empresa/status', auth, async (req, res) => {
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).send('Empresa não encontrada');
+      return jsonErro(res, 404, 'Empresa não encontrada');
     }
 
     const empresa = result.rows[0];
@@ -1942,7 +1956,7 @@ app.get('/empresa/status', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao carregar status da empresa:', error);
-    res.status(500).send('Erro ao carregar status da empresa');
+    jsonErro(res, 500, 'Erro ao carregar status da empresa');
   }
 });
 
@@ -1954,13 +1968,13 @@ app.get('/usuarios/:empresa', auth, async (req, res) => {
     const empresa = req.params.empresa;
 
     if (!podeGerenciarUsuarios(req)) {
-      return res.status(403).send('Sem permissão para acessar usuários');
+      return jsonErro(res, 403, 'Sem permissão para acessar usuários');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -1983,7 +1997,7 @@ app.get('/usuarios/:empresa', auth, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao listar usuários:', error);
-    res.status(500).send('Erro ao listar usuários');
+    jsonErro(res, 500, 'Erro ao listar usuários');
   }
 });
 
@@ -1993,17 +2007,17 @@ app.post('/usuarios', auth, async (req, res) => {
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
 
     if (!podeGerenciarUsuarios(req)) {
-      return res.status(403).send('Sem permissão para cadastrar usuários');
+      return jsonErro(res, 403, 'Sem permissão para cadastrar usuários');
     }
 
     if (!nome || !usuario || !senha || !tipo) {
-      return res.status(400).send('Dados obrigatórios');
+      return jsonErro(res, 400, 'Dados obrigatórios');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const limitePlano = await validarLimitePlano({
@@ -2012,7 +2026,7 @@ app.post('/usuarios', auth, async (req, res) => {
     });
 
     if (!limitePlano.permitido) {
-      return res.status(403).send(limitePlano.mensagem);
+      return jsonErro(res, 403, limitePlano.mensagem);
     }
 
     const usuarioExiste = await pool.query(`SELECT id FROM usuarios WHERE usuario = $1`, [
@@ -2020,7 +2034,7 @@ app.post('/usuarios', auth, async (req, res) => {
     ]);
 
     if (usuarioExiste.rowCount > 0) {
-      return res.status(400).send('Usuário já existe');
+      return jsonErro(res, 400, 'Usuário já existe');
     }
 
     const senhaHash = await bcrypt.hash(senha.trim(), 10);
@@ -2045,7 +2059,7 @@ app.post('/usuarios', auth, async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Erro ao criar usuário:', error);
-    res.status(500).send('Erro ao criar usuário');
+    jsonErro(res, 500, 'Erro ao criar usuário');
   }
 });
 
@@ -2056,17 +2070,17 @@ app.put('/usuarios/:id', auth, async (req, res) => {
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
 
     if (!podeGerenciarUsuarios(req)) {
-      return res.status(403).send('Sem permissão para editar usuários');
+      return jsonErro(res, 403, 'Sem permissão para editar usuários');
     }
 
     if (!nome || !usuario || !tipo) {
-      return res.status(400).send('Dados obrigatórios');
+      return jsonErro(res, 400, 'Dados obrigatórios');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const atualResult = await pool.query(`SELECT * FROM usuarios WHERE id = $1 AND empresa = $2`, [
@@ -2075,7 +2089,7 @@ app.put('/usuarios/:id', auth, async (req, res) => {
     ]);
 
     if (atualResult.rowCount === 0) {
-      return res.status(404).send('Usuário não encontrado');
+      return jsonErro(res, 404, 'Usuário não encontrado');
     }
 
     const usuarioDuplicado = await pool.query(
@@ -2084,7 +2098,7 @@ app.put('/usuarios/:id', auth, async (req, res) => {
     );
 
     if (usuarioDuplicado.rowCount > 0) {
-      return res.status(400).send('Já existe outro usuário com esse login');
+      return jsonErro(res, 400, 'Já existe outro usuário com esse login');
     }
 
     if (senha && senha.trim()) {
@@ -2116,10 +2130,10 @@ app.put('/usuarios/:id', auth, async (req, res) => {
       );
     }
 
-    res.sendStatus(200);
+    res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao atualizar usuário:', error);
-    res.status(500).send('Erro ao atualizar usuário');
+    jsonErro(res, 500, 'Erro ao atualizar usuário');
   }
 });
 
@@ -2131,15 +2145,15 @@ app.delete('/usuarios/:id', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!podeGerenciarUsuarios(req)) {
-      return res.status(403).send('Sem permissão para excluir usuários');
+      return jsonErro(res, 403, 'Sem permissão para excluir usuários');
     }
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (req.user.id === id) {
-      return res.status(400).send('Você não pode excluir o próprio usuário');
+      return jsonErro(res, 400, 'Você não pode excluir o próprio usuário');
     }
 
     const existe = await pool.query(`SELECT id FROM usuarios WHERE id = $1 AND empresa = $2`, [
@@ -2148,7 +2162,7 @@ app.delete('/usuarios/:id', auth, async (req, res) => {
     ]);
 
     if (existe.rowCount === 0) {
-      return res.status(404).send('Usuário não encontrado');
+      return jsonErro(res, 404, 'Usuário não encontrado');
     }
 
     await pool.query(`DELETE FROM usuarios WHERE id = $1 AND empresa = $2`, [
@@ -2156,10 +2170,10 @@ app.delete('/usuarios/:id', auth, async (req, res) => {
       empresaResolvida.nome
     ]);
 
-    res.sendStatus(200);
+    res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao excluir usuário:', error);
-    res.status(500).send('Erro ao excluir usuário');
+    jsonErro(res, 500, 'Erro ao excluir usuário');
   }
 });
 
@@ -2168,7 +2182,7 @@ app.post('/compras', auth, async (req, res) => {
   const client = await pool.connect();
   try {
     if (!podeGerenciarCompras(req)) {
-      return res.status(403).send('Sem permissão para compras');
+      return jsonErro(res, 403, 'Sem permissão para compras');
     }
 
     const {
@@ -2184,13 +2198,13 @@ app.post('/compras', auth, async (req, res) => {
     } = req.body;
 
     if (!fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
-      return res.status(400).send('Dados da compra incompletos');
+      return jsonErro(res, 400, 'Dados da compra incompletos');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await client.query('BEGIN');
@@ -2202,7 +2216,7 @@ app.post('/compras', auth, async (req, res) => {
 
     if (fornecedorResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).send('Fornecedor não encontrado');
+      return jsonErro(res, 404, 'Fornecedor não encontrado');
     }
 
     const fornecedor = fornecedorResult.rows[0];
@@ -2219,7 +2233,7 @@ app.post('/compras', auth, async (req, res) => {
 
       if (!produtoId || quantidade <= 0 || custoUnitario < 0) {
         await client.query('ROLLBACK');
-        return res.status(400).send('Itens da compra inválidos');
+        return jsonErro(res, 400, 'Itens da compra inválidos');
       }
 
       totalCalculado = Number((totalCalculado + subtotal).toFixed(2));
@@ -2270,7 +2284,7 @@ app.post('/compras', auth, async (req, res) => {
 
       if (produtoResult.rowCount === 0) {
         await client.query('ROLLBACK');
-        return res.status(404).send(`Produto ${produtoId} não encontrado`);
+        return jsonErro(res, 404, `Produto ${produtoId} não encontrado`);
       }
 
       const produto = produtoResult.rows[0];
@@ -2375,7 +2389,7 @@ app.post('/compras', auth, async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erro real ao cadastrar compra:', error);
-    res.status(500).send('Erro ao cadastrar compra');
+    jsonErro(res, 500, 'Erro ao cadastrar compra');
   } finally {
     client.release();
   }
@@ -2387,7 +2401,7 @@ app.get('/compras/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const busca = (req.query.busca || '').trim().toLowerCase();
@@ -2441,7 +2455,7 @@ app.get('/compras/:empresa', auth, async (req, res) => {
       }))
     );
   } catch (error) {
-    res.status(500).send('Erro ao buscar compras');
+    jsonErro(res, 500, 'Erro ao buscar compras');
   }
 });
 
@@ -2450,20 +2464,20 @@ app.delete('/compras/:id', auth, async (req, res) => {
   const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
   if (!empresaResolvida) {
-    return res.status(403).send('Sem acesso');
+    return jsonErro(res, 403, 'Sem acesso');
   }
 
   const client = await pool.connect();
 
   try {
     if (!podeGerenciarCompras(req)) {
-      return res.status(403).send('Sem permissão para excluir compras');
+      return jsonErro(res, 403, 'Sem permissão para excluir compras');
     }
 
     const id = Number(req.params.id);
 
     if (!id) {
-      return res.status(400).send('Compra inválida');
+      return jsonErro(res, 400, 'Compra inválida');
     }
 
     await client.query('BEGIN');
@@ -2479,7 +2493,7 @@ app.delete('/compras/:id', auth, async (req, res) => {
 
     if (compraResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).send('Compra não encontrada');
+      return jsonErro(res, 404, 'Compra não encontrada');
     }
 
     const itensResult = await client.query(
@@ -2563,7 +2577,7 @@ app.delete('/compras/:id', auth, async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erro real ao excluir compra:', error);
-    res.status(500).send('Erro ao excluir compra');
+    jsonErro(res, 500, 'Erro ao excluir compra');
   } finally {
     client.release();
   }
@@ -2586,14 +2600,14 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
     );
 
     if (compraResult.rowCount === 0) {
-      return res.status(404).send('Compra não encontrada');
+      return jsonErro(res, 404, 'Compra não encontrada');
     }
 
     const compra = compraResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, compra.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const itensResult = await pool.query(
@@ -2625,7 +2639,7 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro real ao buscar compra:', error);
-    res.status(500).send('Erro ao buscar compra');
+    jsonErro(res, 500, 'Erro ao buscar compra');
   }
 });
 
@@ -2636,7 +2650,7 @@ app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
     const empresaFinal = await obterNomeEmpresaAcesso(req, empresa);
 
     if (!empresaFinal) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -2659,7 +2673,7 @@ app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
       produtos_alerta: Number(result.rows[0].produtos_alerta || 0)
     });
   } catch (error) {
-    res.status(500).send('Erro ao buscar resumo de estoque');
+    jsonErro(res, 500, 'Erro ao buscar resumo de estoque');
   }
 });
 
@@ -2667,7 +2681,7 @@ app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -2694,7 +2708,7 @@ app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
       }))
     );
   } catch (error) {
-    res.status(500).send('Erro ao buscar resumo de compras por fornecedor');
+    jsonErro(res, 500, 'Erro ao buscar resumo de compras por fornecedor');
   }
 });
 
@@ -2702,7 +2716,7 @@ app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -2727,7 +2741,7 @@ app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
       }))
     );
   } catch (error) {
-    res.status(500).send('Erro ao buscar resumo de vendas por cliente');
+    jsonErro(res, 500, 'Erro ao buscar resumo de vendas por cliente');
   }
 });
 
@@ -2737,7 +2751,7 @@ app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
     const empresa = req.params.empresa;
 
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -2755,7 +2769,7 @@ app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao buscar clientes de contas a receber:', error);
-    res.status(500).send('Erro ao buscar clientes');
+    jsonErro(res, 500, 'Erro ao buscar clientes');
   }
 });
 
@@ -2765,7 +2779,7 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
@@ -2952,7 +2966,7 @@ THEN 'atrasado'
     res.json(resposta);
   } catch (error) {
     console.error('Erro ao buscar contas a receber:', error);
-    res.status(500).send('Erro ao buscar contas a receber');
+    jsonErro(res, 500, 'Erro ao buscar contas a receber');
   }
 });
 
@@ -2990,13 +3004,13 @@ ELSE 'pendente'
     );
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
 
     if (!validarEmpresa(req, conta.empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     res.json({
@@ -3008,7 +3022,7 @@ ELSE 'pendente'
     });
   } catch (error) {
     console.error('Erro ao buscar detalhe da conta:', error);
-    res.status(500).send('Erro ao buscar detalhe da conta');
+    jsonErro(res, 500, 'Erro ao buscar detalhe da conta');
   }
 });
 
@@ -3021,17 +3035,17 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
     ]);
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
 
     if (!validarEmpresa(req, conta.empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (!conta.venda_id) {
-      return res.status(404).send('Esta conta não possui venda de origem');
+      return jsonErro(res, 404, 'Esta conta não possui venda de origem');
     }
 
     const vendaResult = await pool.query(
@@ -3045,7 +3059,7 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
     );
 
     if (vendaResult.rowCount === 0) {
-      return res.status(404).send('Venda de origem não encontrada');
+      return jsonErro(res, 404, 'Venda de origem não encontrada');
     }
 
     const itensResult = await pool.query(
@@ -3105,7 +3119,7 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar origem da venda:', error);
-    res.status(500).send('Erro ao buscar origem da venda');
+    jsonErro(res, 500, 'Erro ao buscar origem da venda');
   }
 });
 
@@ -3115,7 +3129,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
     const clienteId = Number(req.params.clienteId);
 
     if (!clienteId) {
-      return res.status(400).send('Cliente inválido');
+      return jsonErro(res, 400, 'Cliente inválido');
     }
 
     const clienteResult = await pool.query(
@@ -3129,7 +3143,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
     );
 
     if (clienteResult.rowCount === 0) {
-      return res.status(404).send('Cliente não encontrado');
+      return jsonErro(res, 404, 'Cliente não encontrado');
     }
 
     const cliente = clienteResult.rows[0];
@@ -3137,7 +3151,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
     const empresaResolvida = await validarAcessoEmpresa(req, cliente.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
@@ -3239,7 +3253,7 @@ THEN 'atrasado'
     });
   } catch (error) {
     console.error('Erro ao buscar histórico do cliente:', error);
-    res.status(500).send('Erro ao buscar histórico do cliente');
+    jsonErro(res, 500, 'Erro ao buscar histórico do cliente');
   }
 });
 
@@ -3258,7 +3272,7 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
 
     if (contaResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
@@ -3266,12 +3280,12 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
 
     if (!empresaResolvida) {
       await client.query('ROLLBACK');
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (String(conta.status || '').toLowerCase() === 'pago') {
       await client.query('ROLLBACK');
-      return res.status(400).send('Esta conta já está paga');
+      return jsonErro(res, 400, 'Esta conta já está paga');
     }
 
     const valorAtual = normalizarDecimal(conta.valor || 0);
@@ -3280,12 +3294,12 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
 
     if (valorPago <= 0) {
       await client.query('ROLLBACK');
-      return res.status(400).send('Valor de pagamento inválido');
+      return jsonErro(res, 400, 'Valor de pagamento inválido');
     }
 
     if (valorPago > valorAtual) {
       await client.query('ROLLBACK');
-      return res.status(400).send('Valor pago não pode ser maior que o saldo da conta');
+      return jsonErro(res, 400, 'Valor pago não pode ser maior que o saldo da conta');
     }
 
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
@@ -3404,7 +3418,7 @@ WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erro ao baixar conta:', error);
-    res.status(500).send('Erro ao baixar conta');
+    jsonErro(res, 500, 'Erro ao baixar conta');
   } finally {
     client.release();
   }
@@ -3419,14 +3433,14 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
     ]);
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -3461,7 +3475,7 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar recebimentos parciais:', error);
-    res.status(500).send('Erro ao buscar recebimentos parciais');
+    jsonErro(res, 500, 'Erro ao buscar recebimentos parciais');
   }
 });
 
@@ -3472,18 +3486,18 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
     const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1`, [id]);
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (String(conta.status || '').toLowerCase() !== 'pago') {
-      return res.status(400).send('Esta conta não está paga');
+      return jsonErro(res, 400, 'Esta conta não está paga');
     }
 
     const novoStatus =
@@ -3544,7 +3558,7 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao estornar baixa de conta a receber:', error);
-    res.status(500).send('Erro ao estornar baixa de conta a receber');
+    jsonErro(res, 500, 'Erro ao estornar baixa de conta a receber');
   }
 });
 
@@ -3568,21 +3582,21 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res
 
     if (lancamentoResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).send('Recebimento parcial não encontrado');
+      return jsonErro(res, 404, 'Recebimento parcial não encontrado');
     }
 
     const lancamento = lancamentoResult.rows[0];
 
     if (String(lancamento.status || '').toLowerCase() !== 'pago') {
       await client.query('ROLLBACK');
-      return res.status(400).send('Este recebimento parcial já foi estornado');
+      return jsonErro(res, 400, 'Este recebimento parcial já foi estornado');
     }
 
     const match = String(lancamento.descricao || '').match(/conta #(\d+)/i);
 
     if (!match) {
       await client.query('ROLLBACK');
-      return res.status(400).send('Não foi possível identificar a conta vinculada');
+      return jsonErro(res, 400, 'Não foi possível identificar a conta vinculada');
     }
 
     const contaId = Number(match[1]);
@@ -3599,7 +3613,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res
 
     if (contaResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).send('Conta vinculada não encontrada');
+      return jsonErro(res, 404, 'Conta vinculada não encontrada');
     }
 
     const conta = contaResult.rows[0];
@@ -3607,7 +3621,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res
 
     if (!empresaResolvida) {
       await client.query('ROLLBACK');
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const valorEstorno = normalizarDecimal(lancamento.valor || 0);
@@ -3666,7 +3680,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erro ao estornar recebimento parcial:', error);
-    res.status(500).send('Erro ao estornar recebimento parcial');
+    jsonErro(res, 500, 'Erro ao estornar recebimento parcial');
   } finally {
     client.release();
   }
@@ -3687,7 +3701,7 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
     );
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
@@ -3695,12 +3709,12 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     // 🔒 impedir apagar contas reais de venda
     if (conta.venda_id) {
-      return res.status(400).send('Contas originadas de venda não podem ser excluídas');
+      return jsonErro(res, 400, 'Contas originadas de venda não podem ser excluídas');
     }
 
     // 🔒 impedir apagar conta parcialmente recebida
@@ -3722,17 +3736,13 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
       );
 
       if (Number(recebimentosAtivosResult.rows[0].total || 0) > 0) {
-        return res
-          .status(400)
-          .send(
-            'Conta parcialmente recebida possui recebimentos ativos. Estorne os recebimentos antes de excluir.'
-          );
+        return jsonErro(res, 400, 'Conta parcialmente recebida possui recebimentos ativos. Estorne os recebimentos antes de excluir.');
       }
     }
 
     // 🔒 impedir apagar conta paga
     if (String(conta.status || '').toLowerCase() === 'pago') {
-      return res.status(400).send('Conta paga não pode ser excluída');
+      return jsonErro(res, 400, 'Conta paga não pode ser excluída');
     }
 
     await pool.query(
@@ -3760,7 +3770,7 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao excluir conta manual:', error);
-    res.status(500).send('Erro ao excluir conta manual');
+    jsonErro(res, 500, 'Erro ao excluir conta manual');
   }
 });
 
@@ -3781,13 +3791,13 @@ app.post('/contas-receber/manual', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const valorFinal = normalizarDecimal(valor);
 
     if (valorFinal <= 0) {
-      return res.status(400).send('Valor inválido');
+      return jsonErro(res, 400, 'Valor inválido');
     }
 
     const dataVencimento = normalizarDataISO(data_vencimento) || hoje();
@@ -3874,7 +3884,7 @@ RETURNING *
     });
   } catch (error) {
     console.error('Erro ao criar conta manual:', error);
-    res.status(500).send('Erro ao criar conta manual');
+    jsonErro(res, 500, 'Erro ao criar conta manual');
   }
 });
 
@@ -3884,7 +3894,7 @@ app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
     const empresa = req.params.empresa;
 
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -3902,7 +3912,7 @@ app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao buscar fornecedores de contas a pagar:', error);
-    res.status(500).send('Erro ao buscar fornecedores');
+    jsonErro(res, 500, 'Erro ao buscar fornecedores');
   }
 });
 
@@ -3912,7 +3922,7 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
@@ -4062,7 +4072,7 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
     res.json(respostaCP);
   } catch (error) {
     console.error('Erro ao buscar contas a pagar:', error);
-    res.status(500).send('Erro ao buscar contas a pagar');
+    jsonErro(res, 500, 'Erro ao buscar contas a pagar');
   }
 });
 
@@ -4087,13 +4097,13 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
     );
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
 
     if (!validarEmpresa(req, conta.empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     res.json({
@@ -4105,7 +4115,7 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar detalhe da conta a pagar:', error);
-    res.status(500).send('Erro ao buscar detalhe da conta');
+    jsonErro(res, 500, 'Erro ao buscar detalhe da conta');
   }
 });
 
@@ -4116,17 +4126,17 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
     const contaResult = await pool.query(`SELECT * FROM contas_pagar WHERE id = $1 LIMIT 1`, [id]);
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
 
     if (!validarEmpresa(req, conta.empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (!conta.compra_id) {
-      return res.status(404).send('Esta conta não possui compra de origem');
+      return jsonErro(res, 404, 'Esta conta não possui compra de origem');
     }
 
     const compraResult = await pool.query(
@@ -4145,7 +4155,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
     );
 
     if (compraResult.rowCount === 0) {
-      return res.status(404).send('Compra de origem não encontrada');
+      return jsonErro(res, 404, 'Compra de origem não encontrada');
     }
 
     const itensResult = await pool.query(
@@ -4194,34 +4204,44 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar origem da compra:', error);
-    res.status(500).send('Erro ao buscar origem da compra');
+    jsonErro(res, 500, 'Erro ao buscar origem da compra');
   }
 });
 
 app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_pagar WHERE id = $1`, [id]);
+    await client.query('BEGIN');
+
+    const contaResult = await client.query(
+      `SELECT * FROM contas_pagar WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
 
     if (contaResult.rowCount === 0) {
-      return res.status(404).send('Conta não encontrada');
+      await client.query('ROLLBACK');
+      return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      await client.query('ROLLBACK');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (String(conta.status || '').toLowerCase() === 'pago') {
-      return res.status(400).send('Esta conta já está paga');
+      await client.query('ROLLBACK');
+      return jsonErro(res, 400, 'Esta conta já está paga');
     }
 
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
 
-    await pool.query(
+    await client.query(
       `
       UPDATE contas_pagar
       SET status = 'pago',
@@ -4231,6 +4251,8 @@ app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
       `,
       [dataPagamento, id]
     );
+
+    await client.query('COMMIT');
 
     await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
 
@@ -4263,8 +4285,11 @@ app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
       }
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Erro ao pagar conta:', error);
-    res.status(500).send('Erro ao pagar conta');
+    jsonErro(res, 500, 'Erro ao pagar conta');
+  } finally {
+    client.release();
   }
 });
 
@@ -4272,7 +4297,7 @@ app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
 app.post('/financeiro/lancamentos', auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     const {
@@ -4292,22 +4317,22 @@ app.post('/financeiro/lancamentos', auth, async (req, res) => {
     } = req.body;
 
     if (!tipo || !categoria || !descricao) {
-      return res.status(400).send('Preencha os campos obrigatórios do lançamento');
+      return jsonErro(res, 400, 'Preencha os campos obrigatórios do lançamento');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (!['receita', 'despesa'].includes(String(tipo).toLowerCase())) {
-      return res.status(400).send('Tipo de lançamento inválido');
+      return jsonErro(res, 400, 'Tipo de lançamento inválido');
     }
 
     const valorFinal = normalizarDecimal(valor);
     if (valorFinal <= 0) {
-      return res.status(400).send('Valor inválido');
+      return jsonErro(res, 400, 'Valor inválido');
     }
 
     const result = await pool.query(
@@ -4360,7 +4385,7 @@ app.post('/financeiro/lancamentos', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao cadastrar lançamento financeiro:', error);
-    res.status(500).send('Erro ao cadastrar lançamento financeiro');
+    jsonErro(res, 500, 'Erro ao cadastrar lançamento financeiro');
   }
 });
 
@@ -4370,7 +4395,7 @@ app.get('/financeiro/lancamentos/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const tipo = (req.query.tipo || '').trim().toLowerCase();
@@ -4442,7 +4467,7 @@ app.get('/financeiro/lancamentos/:empresa', auth, async (req, res) => {
     );
   } catch (error) {
     console.error('Erro ao buscar lançamentos financeiros:', error);
-    res.status(500).send('Erro ao buscar lançamentos financeiros');
+    jsonErro(res, 500, 'Erro ao buscar lançamentos financeiros');
   }
 });
 
@@ -4453,14 +4478,14 @@ app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
     const result = await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id]);
 
     if (result.rowCount === 0) {
-      return res.status(404).send('Lançamento não encontrado');
+      return jsonErro(res, 404, 'Lançamento não encontrado');
     }
 
     const item = result.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, item.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     res.json({
@@ -4470,14 +4495,14 @@ app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar detalhe do lançamento:', error);
-    res.status(500).send('Erro ao buscar detalhe do lançamento');
+    jsonErro(res, 500, 'Erro ao buscar detalhe do lançamento');
   }
 });
 
 app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     const id = Number(req.params.id);
@@ -4487,14 +4512,14 @@ app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
     ]);
 
     if (atualResult.rowCount === 0) {
-      return res.status(404).send('Lançamento não encontrado');
+      return jsonErro(res, 404, 'Lançamento não encontrado');
     }
 
     const atual = atualResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const {
@@ -4512,16 +4537,16 @@ app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
     } = req.body;
 
     if (!tipo || !categoria || !descricao) {
-      return res.status(400).send('Preencha os campos obrigatórios do lançamento');
+      return jsonErro(res, 400, 'Preencha os campos obrigatórios do lançamento');
     }
 
     if (!['receita', 'despesa'].includes(String(tipo).toLowerCase())) {
-      return res.status(400).send('Tipo de lançamento inválido');
+      return jsonErro(res, 400, 'Tipo de lançamento inválido');
     }
 
     const valorFinal = normalizarDecimal(valor);
     if (valorFinal <= 0) {
-      return res.status(400).send('Valor inválido');
+      return jsonErro(res, 400, 'Valor inválido');
     }
 
     await pool.query(
@@ -4560,14 +4585,14 @@ app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao atualizar lançamento financeiro:', error);
-    res.status(500).send('Erro ao atualizar lançamento financeiro');
+    jsonErro(res, 500, 'Erro ao atualizar lançamento financeiro');
   }
 });
 
 app.post('/financeiro/lancamentos/pagar/:id', auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     const id = Number(req.params.id);
@@ -4577,14 +4602,14 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, async (req, res) => {
     ]);
 
     if (atualResult.rowCount === 0) {
-      return res.status(404).send('Lançamento não encontrado');
+      return jsonErro(res, 404, 'Lançamento não encontrado');
     }
 
     const atual = atualResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await pool.query(
@@ -4601,14 +4626,14 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, async (req, res) => {
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao pagar lançamento financeiro:', error);
-    res.status(500).send('Erro ao pagar lançamento financeiro');
+    jsonErro(res, 500, 'Erro ao pagar lançamento financeiro');
   }
 });
 
 app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     const id = Number(req.params.id);
@@ -4618,14 +4643,14 @@ app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
     ]);
 
     if (atualResult.rowCount === 0) {
-      return res.status(404).send('Lançamento não encontrado');
+      return jsonErro(res, 404, 'Lançamento não encontrado');
     }
 
     const atual = atualResult.rows[0];
     const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await pool.query(`DELETE FROM lancamentos_financeiros WHERE id = $1`, [id]);
@@ -4633,7 +4658,7 @@ app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao excluir lançamento financeiro:', error);
-    res.status(500).send('Erro ao excluir lançamento financeiro');
+    jsonErro(res, 500, 'Erro ao excluir lançamento financeiro');
   }
 });
 
@@ -4641,18 +4666,18 @@ app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
 app.post('/investimentos', auth, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
-      return res.status(403).send('Sem permissão');
+      return jsonErro(res, 403, 'Sem permissão');
     }
 
     const { empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao } =
       req.body;
 
     if (!empresa || !tipo_investimento || !descricao || !data) {
-      return res.status(400).send('Dados do investimento incompletos');
+      return jsonErro(res, 400, 'Dados do investimento incompletos');
     }
 
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
@@ -4680,7 +4705,7 @@ app.post('/investimentos', auth, async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).send('Erro ao cadastrar investimento');
+    jsonErro(res, 500, 'Erro ao cadastrar investimento');
   }
 });
 
@@ -4690,7 +4715,7 @@ app.get('/investimentos/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const tipo = (req.query.tipo_investimento || '').trim();
@@ -4738,7 +4763,7 @@ app.get('/investimentos/:empresa', auth, async (req, res) => {
       }))
     );
   } catch (error) {
-    res.status(500).send('Erro ao buscar investimentos');
+    jsonErro(res, 500, 'Erro ao buscar investimentos');
   }
 });
 
@@ -4749,7 +4774,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
@@ -5097,7 +5122,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao calcular fluxo de caixa:', error);
-    res.status(500).send('Erro ao calcular fluxo de caixa');
+    jsonErro(res, 500, 'Erro ao calcular fluxo de caixa');
   }
 });
 
@@ -5113,7 +5138,7 @@ app.get('/debug/vendas-colunas', auth, async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Erro ao listar colunas de vendas:', error);
-    res.status(500).send('Erro ao listar colunas de vendas');
+    jsonErro(res, 500, 'Erro ao listar colunas de vendas');
   }
 });
 
@@ -5124,7 +5149,7 @@ app.get('/dashboard', auth, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, empresaInformada);
 
     if (!empresaResolvida) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
@@ -5538,7 +5563,7 @@ app.get('/dashboard', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro real ao carregar dashboard:', error);
-    res.status(500).send('Erro ao carregar dashboard');
+    jsonErro(res, 500, 'Erro ao carregar dashboard');
   }
 });
 
@@ -5550,7 +5575,7 @@ app.get('/configuracoes/:empresa', auth, async (req, res) => {
     const empresa = req.params.empresa;
 
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(`SELECT * FROM configuracoes WHERE empresa = $1 LIMIT 1`, [
@@ -5574,7 +5599,7 @@ app.get('/configuracoes/:empresa', auth, async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Erro ao buscar configurações:', error);
-    res.status(500).send('Erro ao buscar configurações');
+    jsonErro(res, 500, 'Erro ao buscar configurações');
   }
 });
 
@@ -5584,7 +5609,7 @@ app.put('/configuracoes', auth, async (req, res) => {
     const { empresa, nome_empresa, taxa_multa, taxa_juros_dia } = req.body;
 
     if (!validarEmpresa(req, empresa)) {
-      return res.status(403).send('Sem acesso');
+      return jsonErro(res, 403, 'Sem acesso');
     }
 
     const taxaMultaFinal =
@@ -5604,10 +5629,10 @@ app.put('/configuracoes', auth, async (req, res) => {
       [nome_empresa, empresa, taxaMultaFinal, taxaJurosDiaFinal]
     );
 
-    res.sendStatus(200);
+    res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao salvar configurações:', error);
-    res.status(500).send('Erro ao salvar configurações');
+    jsonErro(res, 500, 'Erro ao salvar configurações');
   }
 });
 

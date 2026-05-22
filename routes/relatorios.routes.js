@@ -745,11 +745,11 @@ module.exports = function ({
 
         COALESCE(SUM(vi.total), 0) AS faturamento_total,
 
-        COALESCE(AVG(p.custo_medio), 0) AS custo_medio,
+        COALESCE(MAX(p.custo_medio), 0) AS custo_medio,
 
-        COALESCE(AVG(p.lucro_unitario), 0) AS lucro_unitario,
+        COALESCE(MAX(p.lucro_unitario), 0) AS lucro_unitario,
 
-        COALESCE(AVG(p.margem_lucro), 0) AS margem_lucro,
+        COALESCE(MAX(p.margem_lucro), 0) AS margem_lucro,
 
         COALESCE(SUM(
           vi.quantidade * p.custo_medio
