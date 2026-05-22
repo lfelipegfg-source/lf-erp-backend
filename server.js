@@ -5,6 +5,35 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+
+// Rate limiter em memória para o endpoint /login
+const loginAttempts = new Map();
+const LOGIN_MAX_TENTATIVAS = 10;
+const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
+
+function loginRateLimiter(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const agora = Date.now();
+  const entrada = loginAttempts.get(ip) || { count: 0, inicio: agora };
+
+  if (agora - entrada.inicio > LOGIN_JANELA_MS) {
+    entrada.count = 0;
+    entrada.inicio = agora;
+  }
+
+  entrada.count += 1;
+  loginAttempts.set(ip, entrada);
+
+  if (entrada.count > LOGIN_MAX_TENTATIVAS) {
+    const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entrada.inicio)) / 60000);
+    return res.status(429).json({
+      sucesso: false,
+      erro: `Muitas tentativas de login. Tente novamente em ${restante} minuto(s).`
+    });
+  }
+
+  next();
+}
 const financeiroRoutes = require('./routes/financeiro.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
 const comprasRoutes = require('./routes/compras.routes');
@@ -732,45 +761,58 @@ async function registrarAuditoria({
 }
 
 async function atualizarStatusContasReceberPorEmpresa(empresa) {
-  await pool.query(
-    `
-    UPDATE contas_receber
-    SET status = 'atrasado',
-        dias_atraso = GREATEST(($2::date - data_vencimento::date), 0),
-        multa = ROUND((valor * 0.02)::numeric, 2),
-        juros = ROUND((valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))::numeric, 2),
-        valor_atualizado = ROUND(
-          (
-            valor
-            + (valor * 0.02)
-            + (valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))
-          )::numeric,
-          2
-        ),
-        atualizado_em = NOW()
-    WHERE empresa = $1
-      AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
-      AND data_vencimento IS NOT NULL
-      AND data_vencimento < $2
-    `,
-    [empresa, hoje()]
-  );
+  const client = await pool.connect();
+  try {
+    const dataHoje = hoje();
+    await client.query('BEGIN');
 
-  await pool.query(
-    `
-    UPDATE contas_receber
-    SET dias_atraso = 0,
-        multa = 0,
-        juros = 0,
-        valor_atualizado = valor,
-        atualizado_em = NOW()
-    WHERE empresa = $1
-      AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
-      AND data_vencimento IS NOT NULL
-      AND data_vencimento >= $2
-    `,
-    [empresa, hoje()]
-  );
+    await client.query(
+      `
+      UPDATE contas_receber
+      SET status = 'atrasado',
+          dias_atraso = GREATEST(($2::date - data_vencimento::date), 0),
+          multa = ROUND((valor * 0.02)::numeric, 2),
+          juros = ROUND((valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))::numeric, 2),
+          valor_atualizado = ROUND(
+            (
+              valor
+              + (valor * 0.02)
+              + (valor * 0.00033 * GREATEST(($2::date - data_vencimento::date), 0))
+            )::numeric,
+            2
+          ),
+          atualizado_em = NOW()
+      WHERE empresa = $1
+        AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
+        AND data_vencimento IS NOT NULL
+        AND data_vencimento < $2
+      `,
+      [empresa, dataHoje]
+    );
+
+    await client.query(
+      `
+      UPDATE contas_receber
+      SET dias_atraso = 0,
+          multa = 0,
+          juros = 0,
+          valor_atualizado = valor,
+          atualizado_em = NOW()
+      WHERE empresa = $1
+        AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
+        AND data_vencimento IS NOT NULL
+        AND data_vencimento >= $2
+      `,
+      [empresa, dataHoje]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function atualizarStatusContasReceberGlobal() {
@@ -827,6 +869,7 @@ async function criarParcelasContasReceber({
 }) {
   const parcelas = normalizarInt(quantidade_parcelas);
   const valorTotal = normalizarDecimal(total);
+  const primeiroVencimento = data_primeiro_vencimento || hoje();
 
   if (parcelas <= 0) return [];
 
@@ -845,8 +888,8 @@ async function criarParcelasContasReceber({
 
     const vencimento =
       i === 1
-        ? data_primeiro_vencimento
-        : addDias(data_primeiro_vencimento, (i - 1) * normalizarInt(intervalo_dias || 30));
+        ? primeiroVencimento
+        : addDias(primeiroVencimento, (i - 1) * normalizarInt(intervalo_dias || 30));
 
     const result = await client.query(
       `INSERT INTO contas_receber
@@ -1525,6 +1568,19 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_status ON contas_pagar (empresa, status);
     CREATE INDEX IF NOT EXISTS idx_configuracoes_empresa ON configuracoes (empresa);
     CREATE INDEX IF NOT EXISTS idx_configuracoes_empresa_id ON configuracoes (empresa_id);
+
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_cliente ON contas_receber (cliente_id);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_vencimento ON contas_receber (empresa, data_vencimento);
+    CREATE INDEX IF NOT EXISTS idx_contas_receber_empresa_id ON contas_receber (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_contas_pagar_fornecedor ON contas_pagar (fornecedor_id);
+    CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento ON contas_pagar (empresa, data_vencimento);
+    CREATE INDEX IF NOT EXISTS idx_contas_pagar_empresa_id ON contas_pagar (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_compra_itens_produto ON compra_itens (produto_id);
+    CREATE INDEX IF NOT EXISTS idx_venda_itens_produto ON venda_itens (produto_id);
+    CREATE INDEX IF NOT EXISTS idx_mov_estoque_data ON movimentacoes_estoque (produto_id, data_movimentacao);
+    CREATE INDEX IF NOT EXISTS idx_produtos_empresa_id ON produtos (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_vendas_empresa_id ON vendas (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_vendas_cliente ON vendas (cliente_id);
   `);
 
   // ================= USUÁRIO ADMIN PADRÃO =================
@@ -1592,7 +1648,7 @@ app.post('/reset-dados', auth, async (req, res) => {
 });
 
 // ================= AUTH =================
-app.post('/login', async (req, res) => {
+app.post('/login', loginRateLimiter, async (req, res) => {
   try {
     const { usuario, senha } = req.body;
 

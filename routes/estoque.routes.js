@@ -47,6 +47,17 @@ module.exports = ({
       const tipo = (req.query.tipo || '').trim();
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
+      const params = [];
+      let idx = 1;
+
+      const filtroEmpresa = adicionarFiltroEmpresaSaaS({
+        alias: 'm',
+        params,
+        empresaResolvida
+      });
+
+      idx = params.length + 1;
+
       let sql = `
         SELECT
           m.*,
@@ -62,15 +73,8 @@ module.exports = ({
     )
   )
         WHERE 1=1
-${adicionarFiltroEmpresaSaaS({
-  alias: 'm',
-  params,
-  empresaResolvida
-})}
+${filtroEmpresa}
       `;
-
-      const params = [];
-      let idx = 1;
 
       if (produtoId > 0) {
         sql += ` AND m.produto_id = $${idx} `;

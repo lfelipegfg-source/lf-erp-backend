@@ -292,7 +292,7 @@ module.exports = function ({
               parcelasFinal,
               valorParcela,
               vencimento,
-              pagamentoNormalizado || pagamento,
+              pagamentoNormalizado,
               observacao || '',
               req.user.id
             ]
