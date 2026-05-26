@@ -32,8 +32,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 

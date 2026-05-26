@@ -32,8 +32,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -318,8 +318,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -566,7 +566,7 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const status = (req.query.status || '').trim().toLowerCase();
       const busca = (req.query.busca || '').trim().toLowerCase();
@@ -639,7 +639,7 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const status = (req.query.status || '').trim().toLowerCase();
       const busca = (req.query.busca || '').trim().toLowerCase();

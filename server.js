@@ -54,8 +54,11 @@ const clientesRoutes = require('./routes/clientes.routes');
 const fornecedoresRoutes = require('./routes/fornecedores.routes');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : '*';
+app.use(cors({ origin: allowedOrigins }));
+app.use(express.json({ limit: '1mb' }));
 
 app.use((req, res, next) => {
   const inicio = Date.now();
@@ -267,7 +270,7 @@ async function registrarLogFinanceiro({
   valor,
   usuario_id
 }) {
-  await pool.query(
+  pool.query(
     `
     INSERT INTO financeiro_logs
     (empresa, empresa_id, tipo, entidade, entidade_id, descricao, valor, usuario_id, criado_em)
@@ -283,7 +286,7 @@ async function registrarLogFinanceiro({
       Number(valor || 0),
       usuario_id || null
     ]
-  );
+  ).catch((err) => console.error('[log_financeiro]', err));
 }
 
 function normalizarInt(valor) {
@@ -486,7 +489,15 @@ function podeGerenciarVendas(req) {
   );
 }
 
+const _planoCache = new Map();
+const PLANO_CACHE_TTL_MS = 60_000;
+
 async function obterPlanoEmpresa(empresaId, empresaNome) {
+  const cacheKey = empresaId ? `id:${empresaId}` : `nome:${empresaNome}`;
+  const agora = Date.now();
+  const cached = _planoCache.get(cacheKey);
+  if (cached && agora - cached.ts < PLANO_CACHE_TTL_MS) return cached.data;
+
   const result = await pool.query(
     `
     SELECT
@@ -504,8 +515,14 @@ async function obterPlanoEmpresa(empresaId, empresaNome) {
     [empresaId || 0, empresaNome || '']
   );
 
-  if (result.rowCount === 0) return null;
-  return result.rows[0];
+  if (result.rowCount === 0) {
+    _planoCache.delete(cacheKey);
+    return null;
+  }
+
+  const data = result.rows[0];
+  _planoCache.set(cacheKey, { ts: agora, data });
+  return data;
 }
 
 async function validarLimitePlano({ empresaResolvida, recurso }) {
@@ -565,8 +582,8 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
   }
 
   const totalResult = await pool.query(
-    `SELECT COUNT(*) AS total FROM ${config.tabela} WHERE empresa = $1`,
-    [empresaResolvida.nome]
+    `SELECT COUNT(*) AS total FROM ${config.tabela} WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
+    [empresaResolvida.id, empresaResolvida.nome]
   );
 
   const totalAtual = Number(totalResult.rows[0].total || 0);
@@ -601,11 +618,11 @@ async function validarLimiteVendasMes(empresaResolvida) {
     `
     SELECT COUNT(*) AS total
     FROM vendas
-    WHERE empresa = $1
-      AND data >= $2
-      AND data <= $3
+    WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+      AND data >= $3
+      AND data <= $4
     `,
-    [empresaResolvida.nome, inicioMes, hojeData]
+    [empresaResolvida.id, empresaResolvida.nome, inicioMes, hojeData]
   );
 
   const totalAtual = Number(totalResult.rows[0].total || 0);
@@ -753,7 +770,7 @@ async function registrarAuditoria({
 }) {
   const executor = client || pool;
 
-  await executor.query(
+  const query = executor.query(
     `INSERT INTO logs_auditoria
     (
       empresa,
@@ -784,19 +801,45 @@ async function registrarAuditoria({
       req?.headers?.['user-agent'] || null
     ]
   );
+
+  if (client) {
+    await query;
+  } else {
+    query.catch((err) => console.error('[auditoria]', err));
+  }
 }
 
-async function atualizarStatusContasReceberPorEmpresa(empresa) {
+const _statusThrottleReceber = new Map();
+const _statusThrottlePagar = new Map();
+const STATUS_THROTTLE_MS = 60_000;
+
+const _configCache = new Map();
+const CONFIG_CACHE_TTL_MS = 60_000;
+
+async function obterConfigEmpresa(empresa) {
+  const agora = Date.now();
+  const cached = _configCache.get(empresa);
+  if (cached && agora - cached.ts < CONFIG_CACHE_TTL_MS) return cached.data;
+  const result = await pool.query(
+    `SELECT taxa_multa, taxa_juros_dia FROM configuracoes WHERE empresa = $1 LIMIT 1`,
+    [empresa]
+  );
+  const data = result.rows[0] || {};
+  _configCache.set(empresa, { ts: agora, data });
+  return data;
+}
+
+async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null) {
+  const agora = Date.now();
+  if (_statusThrottleReceber.has(empresa) && agora - _statusThrottleReceber.get(empresa) < STATUS_THROTTLE_MS) return;
+  _statusThrottleReceber.set(empresa, agora);
   const client = await pool.connect();
   try {
     const dataHoje = hoje();
 
-    const configResult = await client.query(
-      `SELECT taxa_multa, taxa_juros_dia FROM configuracoes WHERE empresa = $1 LIMIT 1`,
-      [empresa]
-    );
-    const taxaMulta = Number(configResult.rows[0]?.taxa_multa ?? 0.02);
-    const taxaJurosDia = Number(configResult.rows[0]?.taxa_juros_dia ?? 0.00033);
+    const config = await obterConfigEmpresa(empresa);
+    const taxaMulta = Number(config?.taxa_multa ?? 0.02);
+    const taxaJurosDia = Number(config?.taxa_juros_dia ?? 0.00033);
 
     await client.query('BEGIN');
 
@@ -816,12 +859,12 @@ async function atualizarStatusContasReceberPorEmpresa(empresa) {
             2
           ),
           atualizado_em = NOW()
-      WHERE empresa = $1
+      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $5))
         AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $2
       `,
-      [empresa, dataHoje, taxaMulta, taxaJurosDia]
+      [empresa, dataHoje, taxaMulta, taxaJurosDia, empresaId]
     );
 
     await client.query(
@@ -832,12 +875,12 @@ async function atualizarStatusContasReceberPorEmpresa(empresa) {
           juros = 0,
           valor_atualizado = valor,
           atualizado_em = NOW()
-      WHERE empresa = $1
+      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
         AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
         AND data_vencimento IS NOT NULL
         AND data_vencimento >= $2
       `,
-      [empresa, dataHoje]
+      [empresa, dataHoje, empresaId]
     );
 
     await client.query('COMMIT');
@@ -861,16 +904,19 @@ async function atualizarStatusContasReceberGlobal() {
   );
 }
 
-async function atualizarStatusContasPagarPorEmpresa(empresa) {
+async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
+  const agora = Date.now();
+  if (_statusThrottlePagar.has(empresa) && agora - _statusThrottlePagar.get(empresa) < STATUS_THROTTLE_MS) return;
+  _statusThrottlePagar.set(empresa, agora);
   await pool.query(
     `UPDATE contas_pagar
       SET status = 'atrasado',
           atualizado_em = NOW()
-      WHERE empresa = $1
+      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
         AND status = 'pendente'
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $2`,
-    [empresa, hoje()]
+    [empresa, hoje(), empresaId]
   );
 }
 
@@ -1501,6 +1547,11 @@ async function initDb() {
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS taxa_juros_dia NUMERIC(8,6) NOT NULL DEFAULT 0.00033;
   `);
 
+  await pool.query(`
+    ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
+    ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_receber_id INTEGER;
+  `);
+
   // ================= EMPRESA PADRÃO =================
   const empresaSaaSResult = await pool.query(`SELECT id FROM empresas WHERE nome = $1 LIMIT 1`, [
     'LF ERP'
@@ -1597,6 +1648,8 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_mov_estoque_produto ON movimentacoes_estoque (produto_id);
     CREATE INDEX IF NOT EXISTS idx_lancamentos_empresa ON lancamentos_financeiros (empresa);
     CREATE INDEX IF NOT EXISTS idx_lancamentos_empresa_status ON lancamentos_financeiros (empresa, status);
+    CREATE INDEX IF NOT EXISTS idx_lancamentos_empresa_id ON lancamentos_financeiros (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_lancamentos_conta_receber_id ON lancamentos_financeiros (conta_receber_id);
     CREATE INDEX IF NOT EXISTS idx_investimentos_empresa ON investimentos (empresa);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_empresa ON contas_receber (empresa);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_status ON contas_receber (empresa, status);
@@ -1879,27 +1932,27 @@ app.get('/empresa/status', auth, async (req, res) => {
 
     const [usuariosResult, produtosResult, clientesResult, fornecedoresResult, vendasMesResult] =
       await Promise.all([
-        pool.query(`SELECT COUNT(*) AS total FROM usuarios WHERE empresa = $1`, [
-          empresaResolvida.nome
+        pool.query(`SELECT COUNT(*) AS total FROM usuarios WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`, [
+          empresaResolvida.id, empresaResolvida.nome
         ]),
-        pool.query(`SELECT COUNT(*) AS total FROM produtos WHERE empresa = $1`, [
-          empresaResolvida.nome
+        pool.query(`SELECT COUNT(*) AS total FROM produtos WHERE deletado_em IS NULL AND (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`, [
+          empresaResolvida.id, empresaResolvida.nome
         ]),
-        pool.query(`SELECT COUNT(*) AS total FROM clientes WHERE empresa = $1`, [
-          empresaResolvida.nome
+        pool.query(`SELECT COUNT(*) AS total FROM clientes WHERE deletado_em IS NULL AND (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`, [
+          empresaResolvida.id, empresaResolvida.nome
         ]),
-        pool.query(`SELECT COUNT(*) AS total FROM fornecedores WHERE empresa = $1`, [
-          empresaResolvida.nome
+        pool.query(`SELECT COUNT(*) AS total FROM fornecedores WHERE deletado_em IS NULL AND (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`, [
+          empresaResolvida.id, empresaResolvida.nome
         ]),
         pool.query(
           `
         SELECT COUNT(*) AS total
         FROM vendas
-        WHERE empresa = $1
-          AND data >= $2
-          AND data <= $3
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+          AND data >= $3
+          AND data <= $4
         `,
-          [empresaResolvida.nome, hoje().slice(0, 8) + '01', hoje()]
+          [empresaResolvida.id, empresaResolvida.nome, hoje().slice(0, 8) + '01', hoje()]
         )
       ]);
 
@@ -2178,222 +2231,6 @@ app.delete('/usuarios/:id', auth, async (req, res) => {
 });
 
 // ================= COMPRAS =================
-app.post('/compras', auth, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    if (!podeGerenciarCompras(req)) {
-      return jsonErro(res, 403, 'Sem permissão para compras');
-    }
-
-    const {
-      empresa,
-      empresa_id,
-      fornecedor_id,
-      data,
-      pagamento,
-      parcelas,
-      observacao,
-      primeiro_vencimento,
-      itens
-    } = req.body;
-
-    if (!fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
-      return jsonErro(res, 400, 'Dados da compra incompletos');
-    }
-
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    await client.query('BEGIN');
-
-    const fornecedorResult = await client.query(
-      `SELECT * FROM fornecedores WHERE id = $1 AND empresa = $2`,
-      [fornecedor_id, empresaResolvida.nome]
-    );
-
-    if (fornecedorResult.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return jsonErro(res, 404, 'Fornecedor não encontrado');
-    }
-
-    const fornecedor = fornecedorResult.rows[0];
-
-    let totalCalculado = 0;
-
-    for (const item of itens) {
-      const produtoId = Number(item.produto_id);
-      const quantidade = normalizarInt(item.quantidade);
-      const custoUnitario = normalizarDecimal(
-        item.custo_unitario || item.preco_unitario || item.custo
-      );
-      const subtotal = Number((quantidade * custoUnitario).toFixed(2));
-
-      if (!produtoId || quantidade <= 0 || custoUnitario < 0) {
-        await client.query('ROLLBACK');
-        return jsonErro(res, 400, 'Itens da compra inválidos');
-      }
-
-      totalCalculado = Number((totalCalculado + subtotal).toFixed(2));
-    }
-
-    const geraContaPagar =
-      pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria';
-    const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;
-    const pagamentoNormalizado = String(pagamento || 'dinheiro').toLowerCase();
-    const compraResult = await client.query(
-      `INSERT INTO compras
-        (empresa, fornecedor_id, data, total, observacao, gerar_conta_pagar, pagamento, status, criado_por, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'finalizada', $8, NOW(), NOW())
-        RETURNING *`,
-      [
-        empresaResolvida.nome,
-        fornecedor_id,
-        data,
-        totalCalculado,
-        observacao || '',
-        geraContaPagar,
-        pagamentoNormalizado,
-        req.user.id
-      ]
-    );
-
-    const compra = compraResult.rows[0];
-
-    await client.query(
-      `UPDATE compras
-        SET empresa_id = $1
-        WHERE id = $2`,
-      [empresaResolvida.id, compra.id]
-    );
-
-    for (const item of itens) {
-      const produtoId = Number(item.produto_id);
-      const quantidade = normalizarInt(item.quantidade);
-      const custoUnitario = normalizarDecimal(
-        item.custo_unitario || item.preco_unitario || item.custo
-      );
-      const subtotal = Number((quantidade * custoUnitario).toFixed(2));
-
-      const produtoResult = await client.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa = $2`,
-        [produtoId, empresaResolvida.nome]
-      );
-
-      if (produtoResult.rowCount === 0) {
-        await client.query('ROLLBACK');
-        return jsonErro(res, 404, `Produto ${produtoId} não encontrado`);
-      }
-
-      const produto = produtoResult.rows[0];
-      const novoEstoque = normalizarInt(produto.estoque) + quantidade;
-
-      await client.query(
-        `INSERT INTO compra_itens
-          (compra_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
-          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [compra.id, produto.id, produto.nome, quantidade, custoUnitario, subtotal]
-      );
-
-      await client.query(
-        `UPDATE produtos
-          SET estoque = $1,
-              custo = $2,
-              atualizado_em = NOW()
-          WHERE id = $3 AND empresa = $4`,
-        [novoEstoque, custoUnitario, produto.id, empresaResolvida.nome]
-      );
-
-      await registrarMovimentacaoEstoque({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        produto_id: produto.id,
-        tipo: 'entrada_compra',
-        quantidade,
-        observacao: `Entrada por compra #${compra.id}`,
-        referencia_tipo: 'compra',
-        referencia_id: compra.id,
-        usuario_id: req.user.id,
-        client
-      });
-    }
-
-    if (geraContaPagar) {
-      const dataPrimeiroVencimento = normalizarDataISO(primeiro_vencimento || data) || data;
-      const intervaloDias = 30;
-      const valorBase = Math.floor((totalCalculado / parcelasFinal) * 100) / 100;
-      let acumulado = 0;
-
-      for (let i = 1; i <= parcelasFinal; i++) {
-        let valorParcela = valorBase;
-
-        if (i === parcelasFinal) {
-          valorParcela = Number((totalCalculado - acumulado).toFixed(2));
-        }
-
-        acumulado = Number((acumulado + valorParcela).toFixed(2));
-
-        const vencimento =
-          i === 1
-            ? dataPrimeiroVencimento
-            : addDias(dataPrimeiroVencimento, (i - 1) * intervaloDias);
-
-        await client.query(
-          `INSERT INTO contas_pagar
-            (
-              empresa,
-              fornecedor_id,
-              fornecedor_nome,
-              compra_id,
-              descricao,
-              parcela,
-              total_parcelas,
-              valor,
-              data_vencimento,
-              data_pagamento,
-              status,
-              forma_pagamento,
-              observacao,
-              criado_por,
-              criado_em,
-              atualizado_em
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, 'pendente', $10, $11, $12, NOW(), NOW())`,
-          [
-            empresaResolvida.nome,
-            fornecedor.id,
-            fornecedor.nome,
-            compra.id,
-            `Parcela ${i}/${parcelasFinal} - Compra #${compra.id}`,
-            i,
-            parcelasFinal,
-            valorParcela,
-            vencimento,
-            pagamento,
-            observacao || '',
-            req.user.id
-          ]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
-
-    res.json({
-      sucesso: true,
-      compra_id: compra.id
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Erro real ao cadastrar compra:', error);
-    jsonErro(res, 500, 'Erro ao cadastrar compra');
-  } finally {
-    client.release();
-  }
-});
 
 app.get('/compras/:empresa', auth, async (req, res) => {
   try {
@@ -2408,16 +2245,17 @@ app.get('/compras/:empresa', auth, async (req, res) => {
     const fornecedorId = normalizarInt(req.query.fornecedor_id || 0);
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
+    const params = [];
     let sql = `
         SELECT
           c.*,
           f.nome AS fornecedor_nome
         FROM compras c
         LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
-        WHERE c.empresa = $1
+        WHERE 1=1
       `;
-    const params = [empresaResolvida.nome];
-    let idx = 2;
+    sql += adicionarFiltroEmpresaSaaS({ alias: 'c', params, empresaResolvida });
+    let idx = params.length + 1;
 
     if (fornecedorId > 0) {
       sql += ` AND c.fornecedor_id = $${idx} `;
@@ -2571,7 +2409,7 @@ app.delete('/compras/:id', auth, async (req, res) => {
     );
 
     await client.query('COMMIT');
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -2647,11 +2485,14 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
 app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
-    const empresaFinal = await obterNomeEmpresaAcesso(req, empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
-    if (!empresaFinal) {
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
+
+    const params = [];
+    const filtro = adicionarFiltroEmpresaSaaS({ params, empresaResolvida });
 
     const result = await pool.query(
       `
@@ -2661,9 +2502,10 @@ app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
           COALESCE(SUM(estoque * custo), 0) AS valor_total_estoque,
           COALESCE(SUM(CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN 1 ELSE 0 END), 0) AS produtos_alerta
         FROM produtos
-        WHERE empresa = $1
+        WHERE deletado_em IS NULL
+        ${filtro}
         `,
-      [empresaFinal]
+      params
     );
 
     res.json({
@@ -2680,7 +2522,8 @@ app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
 app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
-    if (!validarEmpresa(req, empresa)) {
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -2692,12 +2535,12 @@ app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
           COUNT(c.id) AS total_compras,
           COALESCE(SUM(c.total), 0) AS valor_total
         FROM fornecedores f
-        LEFT JOIN compras c ON c.fornecedor_id = f.id AND c.empresa = f.empresa
-        WHERE f.empresa = $1
+        LEFT JOIN compras c ON c.fornecedor_id = f.id AND (c.empresa_id = f.empresa_id OR c.empresa = f.empresa)
+        WHERE (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
         GROUP BY f.id, f.nome
         ORDER BY valor_total DESC, f.nome ASC
         `,
-      [empresa]
+      [empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json(
@@ -2715,7 +2558,8 @@ app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
 app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
-    if (!validarEmpresa(req, empresa)) {
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -2726,11 +2570,11 @@ app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
           COUNT(*) AS total_vendas,
           COALESCE(SUM(total), 0) AS valor_total
         FROM vendas
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
         GROUP BY COALESCE(cliente_nome, 'Sem cliente')
         ORDER BY valor_total DESC, cliente ASC
         `,
-      [empresa]
+      [empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json(
@@ -2749,8 +2593,9 @@ app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
 app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
-    if (!validarEmpresa(req, empresa)) {
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -2760,10 +2605,11 @@ app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
           id,
           nome
         FROM clientes
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+          AND deletado_em IS NULL
         ORDER BY nome ASC
         `,
-      [empresa]
+      [empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json(result.rows);
@@ -2782,7 +2628,7 @@ app.get('/contas-receber/:empresa', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const status = (req.query.status || '').trim().toLowerCase();
     const cliente = (req.query.cliente || '').trim().toLowerCase();
@@ -2817,10 +2663,11 @@ THEN 'atrasado'
         ON v.id = cr.venda_id
        AND v.empresa = cr.empresa
       WHERE cr.empresa = $1
+        AND (cr.empresa_id IS NULL OR cr.empresa_id = $3)
     `;
 
-    const params = [empresaResolvida.nome, hoje()];
-    let idx = 3;
+    const params = [empresaResolvida.nome, hoje(), empresaResolvida.id];
+    let idx = 4;
 
     if (status === 'pago') {
       sql += ` AND LOWER(COALESCE(cr.status, 'pendente')) = 'pago' `;
@@ -2883,7 +2730,7 @@ THEN 'atrasado'
 
     const [result, countResult] = await Promise.all([
       pool.query(sqlPaginado, params),
-      pagina > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_receber cr WHERE cr.empresa = $1`, [empresaResolvida.nome]) : Promise.resolve(null)
+      pagina > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_receber cr WHERE cr.empresa = $1 AND (cr.empresa_id IS NULL OR cr.empresa_id = $2)`, [empresaResolvida.nome, empresaResolvida.id]) : Promise.resolve(null)
     ]);
 
     const recebidosParciaisResult = await pool.query(
@@ -2901,7 +2748,10 @@ THEN 'atrasado'
     AND EXISTS (
       SELECT 1
       FROM contas_receber cr
-      WHERE cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER
+      WHERE (
+        (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
+        OR (lf.conta_receber_id IS NULL AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER)
+      )
         AND cr.empresa = lf.empresa
     )
   `,
@@ -3154,7 +3004,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const contasResult = await pool.query(
       `
@@ -3206,7 +3056,10 @@ THEN 'atrasado'
       FROM contas_receber cr
       WHERE cr.cliente_id = $3
         AND cr.empresa = $1
-        AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER
+        AND (
+          (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
+          OR (lf.conta_receber_id IS NULL AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER)
+        )
     )
   `,
       [empresaResolvida.nome, empresaResolvida.id, clienteId]
@@ -3334,6 +3187,7 @@ app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
   vencimento,
   pagamento_data,
   observacao,
+  conta_receber_id,
   criado_em,
   atualizado_em
 )
@@ -3348,6 +3202,7 @@ VALUES (
   $5,
   $5,
   $6,
+  $7,
   NOW(),
   NOW()
 )
@@ -3358,7 +3213,8 @@ VALUES (
           `Recebimento parcial da conta #${id}`,
           valorPago,
           dataPagamento,
-          `Baixa parcial registrada automaticamente. Saldo restante: ${novoValor}`
+          `Baixa parcial registrada automaticamente. Saldo restante: ${novoValor}`,
+          id
         ]
       );
     }
@@ -3378,7 +3234,7 @@ VALUES (
 
     await client.query('COMMIT');
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -3529,7 +3385,7 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
       usuario_id: req.user?.id
     });
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -3892,8 +3748,9 @@ RETURNING *
 app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
-    if (!validarEmpresa(req, empresa)) {
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -3903,10 +3760,11 @@ app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
           id,
           nome
         FROM fornecedores
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+          AND deletado_em IS NULL
         ORDER BY nome ASC
         `,
-      [empresa]
+      [empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json(result.rows);
@@ -3925,7 +3783,7 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const status = (req.query.status || '').trim().toLowerCase();
     const fornecedor = (req.query.fornecedor || '').trim().toLowerCase();
@@ -3949,10 +3807,11 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
         ON c.id = cp.compra_id
        AND c.empresa = cp.empresa
       WHERE cp.empresa = $1
+        AND (cp.empresa_id IS NULL OR cp.empresa_id = $3)
     `;
 
-    const params = [empresaResolvida.nome, hoje()];
-    let idx = 3;
+    const params = [empresaResolvida.nome, hoje(), empresaResolvida.id];
+    let idx = 4;
 
     if (status === 'pago') {
       sql += ` AND LOWER(COALESCE(cp.status, 'pendente')) = 'pago' `;
@@ -4016,7 +3875,7 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
 
     const [resultCP, countResultCP] = await Promise.all([
       pool.query(sqlPaginadoCP, params),
-      paginaCP > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_pagar cp WHERE cp.empresa = $1`, [empresaResolvida.nome]) : Promise.resolve(null)
+      paginaCP > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_pagar cp WHERE cp.empresa = $1 AND (cp.empresa_id IS NULL OR cp.empresa_id = $2)`, [empresaResolvida.nome, empresaResolvida.id]) : Promise.resolve(null)
     ]);
 
     const result = resultCP;
@@ -4254,7 +4113,7 @@ app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
 
     await client.query('COMMIT');
 
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -4340,6 +4199,7 @@ app.post('/financeiro/lancamentos', auth, async (req, res) => {
       INSERT INTO lancamentos_financeiros
       (
         empresa,
+        empresa_id,
         tipo,
         categoria,
         descricao,
@@ -4356,11 +4216,12 @@ app.post('/financeiro/lancamentos', auth, async (req, res) => {
         atualizado_em
       )
       VALUES
-      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW())
       RETURNING *
       `,
       [
         empresaResolvida.nome,
+        empresaResolvida.id,
         String(tipo).toLowerCase(),
         categoria,
         descricao,
@@ -4408,11 +4269,11 @@ app.get('/financeiro/lancamentos/:empresa', auth, async (req, res) => {
       SELECT
         *
       FROM lancamentos_financeiros
-      WHERE empresa = $1
+      WHERE (empresa = $1 OR empresa_id = $2)
     `;
 
-    const params = [empresaResolvida.nome];
-    let idx = 2;
+    const params = [empresaResolvida.nome, empresaResolvida.id];
+    let idx = 3;
 
     if (tipo) {
       sql += ` AND LOWER(COALESCE(tipo, '')) = $${idx} `;
@@ -4722,9 +4583,10 @@ app.get('/investimentos/:empresa', auth, async (req, res) => {
     const busca = (req.query.busca || '').trim().toLowerCase();
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
-    let sql = `SELECT * FROM investimentos WHERE empresa = $1`;
-    const params = [empresaResolvida.nome];
-    let idx = 2;
+    const params = [];
+    let sql = `SELECT * FROM investimentos WHERE 1=1`;
+    sql += adicionarFiltroEmpresaSaaS({ params, empresaResolvida });
+    let idx = params.length + 1;
 
     if (tipo) {
       sql += ` AND tipo_investimento = $${idx}`;
@@ -4777,8 +4639,8 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -5152,8 +5014,8 @@ app.get('/dashboard', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -5634,6 +5496,15 @@ app.put('/configuracoes', auth, async (req, res) => {
     console.error('Erro ao salvar configurações:', error);
     jsonErro(res, 500, 'Erro ao salvar configurações');
   }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason, promise);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  process.exit(1);
 });
 
 // ================= START =================

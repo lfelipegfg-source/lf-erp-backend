@@ -422,7 +422,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       return res.json({
         sucesso: true,
@@ -675,7 +675,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       return res.json({
         sucesso: true,
@@ -886,7 +886,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         [id]
       );
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       const contasReceberResult = await pool.query(
         `
@@ -1039,7 +1039,7 @@ ORDER BY parcela ASC
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome);
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
       return res.json({
         sucesso: true,

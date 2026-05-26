@@ -318,7 +318,7 @@ module.exports = function ({
       });
 
       if (typeof atualizarStatusContasPagarPorEmpresa === 'function') {
-        await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome);
+        await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
       }
 
       return ok(res, {
