@@ -1502,6 +1502,7 @@ async function initDb() {
     ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE contas_pagar ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
+    ALTER TABLE investimentos ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
   `);
 
   await pool.query(`
@@ -1651,6 +1652,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_lancamentos_empresa_id ON lancamentos_financeiros (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_lancamentos_conta_receber_id ON lancamentos_financeiros (conta_receber_id);
     CREATE INDEX IF NOT EXISTS idx_investimentos_empresa ON investimentos (empresa);
+    CREATE INDEX IF NOT EXISTS idx_investimentos_empresa_id ON investimentos (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_empresa ON contas_receber (empresa);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_status ON contas_receber (empresa, status);
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_empresa ON contas_pagar (empresa);
@@ -2859,7 +2861,7 @@ ELSE 'pendente'
 
     const conta = contaResult.rows[0];
 
-    if (!validarEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -2890,7 +2892,7 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!validarEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -3961,7 +3963,7 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!validarEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -3990,7 +3992,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!validarEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -4537,17 +4539,19 @@ app.post('/investimentos', auth, async (req, res) => {
       return jsonErro(res, 400, 'Dados do investimento incompletos');
     }
 
-    if (!validarEmpresa(req, empresa)) {
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
     const result = await pool.query(
       `INSERT INTO investimentos
-        (empresa, tipo_investimento, descricao, valor, data, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
+        (empresa, empresa_id, tipo_investimento, descricao, valor, data, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
         RETURNING *`,
       [
-        empresa,
+        empresaResolvida.nome,
+        empresaResolvida.id,
         tipo_investimento,
         descricao,
         normalizarDecimal(valor),
@@ -4644,21 +4648,21 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
-    const paramsReceber = [empresaResolvida.nome];
-    const paramsPagar = [empresaResolvida.nome];
+    const paramsReceber = [empresaResolvida.id, empresaResolvida.nome];
+    const paramsPagar = [empresaResolvida.id, empresaResolvida.nome];
     const paramsLanc = [empresaResolvida.nome, empresaResolvida.id];
-    const paramsInvest = [empresaResolvida.nome];
-    const paramsVendas = [empresaResolvida.nome];
-    const paramsCompras = [empresaResolvida.nome];
+    const paramsInvest = [empresaResolvida.id, empresaResolvida.nome];
+    const paramsVendas = [empresaResolvida.id, empresaResolvida.nome];
+    const paramsCompras = [empresaResolvida.id, empresaResolvida.nome];
 
     let whereReceber = `
-      WHERE empresa = $1
+      WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
         AND LOWER(COALESCE(status, 'pendente')) = 'pago'
         AND data_pagamento IS NOT NULL
     `;
 
     let wherePagar = `
-      WHERE empresa = $1
+      WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
         AND LOWER(COALESCE(status, 'pendente')) = 'pago'
         AND data_pagamento IS NOT NULL
     `;
@@ -4673,11 +4677,11 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
 `;
 
     let whereInvest = `
-      WHERE empresa = $1
+      WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
     `;
 
     let whereVendas = `
-      WHERE v.empresa = $1
+      WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
         AND NOT EXISTS (
           SELECT 1 FROM contas_receber cr
           WHERE cr.venda_id = v.id
@@ -4685,13 +4689,13 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     `;
 
     let whereCompras = `
-      WHERE c.empresa = $1
+      WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
         AND LOWER(COALESCE(c.status, 'finalizada')) = 'finalizada'
         AND NOT EXISTS (
           SELECT 1
           FROM contas_pagar cp
           WHERE cp.compra_id = c.id
-            AND cp.empresa = c.empresa
+            AND (cp.empresa_id = c.empresa_id OR cp.empresa = c.empresa)
         )
     `;
 
@@ -5435,24 +5439,21 @@ app.get('/dashboard', auth, async (req, res) => {
 app.get('/configuracoes/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
-    if (!validarEmpresa(req, empresa)) {
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    const result = await pool.query(`SELECT * FROM configuracoes WHERE empresa = $1 LIMIT 1`, [
-      empresa
-    ]);
+    const result = await pool.query(
+      `SELECT * FROM configuracoes WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) LIMIT 1`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
 
     if (!result.rows.length) {
-      // cria padrão automático
       const novo = await pool.query(
-        `
-          INSERT INTO configuracoes (empresa, nome_empresa)
-          VALUES ($1, $2)
-          RETURNING *
-          `,
-        [empresa, empresa]
+        `INSERT INTO configuracoes (empresa, empresa_id, nome_empresa) VALUES ($1, $2, $3) RETURNING *`,
+        [empresaResolvida.nome, empresaResolvida.id, empresaResolvida.nome]
       );
 
       return res.json(novo.rows[0]);
@@ -5470,7 +5471,8 @@ app.put('/configuracoes', auth, async (req, res) => {
   try {
     const { empresa, nome_empresa, taxa_multa, taxa_juros_dia } = req.body;
 
-    if (!validarEmpresa(req, empresa)) {
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -5486,10 +5488,12 @@ app.put('/configuracoes', auth, async (req, res) => {
             taxa_multa = COALESCE($3, taxa_multa),
             taxa_juros_dia = COALESCE($4, taxa_juros_dia),
             atualizado_em = NOW()
-        WHERE empresa = $2
+        WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $5))
         `,
-      [nome_empresa, empresa, taxaMultaFinal, taxaJurosDiaFinal]
+      [nome_empresa, empresaResolvida.id, taxaMultaFinal, taxaJurosDiaFinal, empresaResolvida.nome]
     );
+
+    _configCache.delete(empresaResolvida.nome);
 
     res.json({ sucesso: true });
   } catch (error) {
