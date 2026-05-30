@@ -323,51 +323,51 @@ module.exports = function ({
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
-      const paramsReceber = [];
-      const paramsPagar = [];
-      const paramsLanc = [];
-      const paramsInvest = [];
-      const paramsVendas = [];
-      const paramsCompras = [];
+      const paramsReceber = [empresaResolvida.id, empresaResolvida.nome];
+      const paramsPagar = [empresaResolvida.id, empresaResolvida.nome];
+      const paramsLanc = [empresaResolvida.id, empresaResolvida.nome];
+      const paramsInvest = [empresaResolvida.id, empresaResolvida.nome];
+      const paramsVendas = [empresaResolvida.id, empresaResolvida.nome];
+      const paramsCompras = [empresaResolvida.id, empresaResolvida.nome];
 
       let whereReceber = `
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
           AND LOWER(COALESCE(status, 'pendente')) = 'pago'
           AND data_pagamento IS NOT NULL
       `;
 
       let wherePagar = `
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
           AND LOWER(COALESCE(status, 'pendente')) = 'pago'
           AND data_pagamento IS NOT NULL
       `;
 
       let whereLanc = `
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
           AND LOWER(COALESCE(status, 'pendente')) = 'pago'
           AND pagamento_data IS NOT NULL
       `;
 
-      let whereInvest = `WHERE empresa = $1`;
+      let whereInvest = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`;
 
       let whereVendas = `
-        WHERE v.empresa = $1
+        WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
           AND NOT EXISTS (
             SELECT 1
             FROM contas_receber cr
             WHERE cr.venda_id = v.id
-              AND cr.empresa = v.empresa
+              AND (cr.empresa_id = v.empresa_id OR cr.empresa = v.empresa)
           )
       `;
 
       let whereCompras = `
-        WHERE c.empresa = $1
+        WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
           AND LOWER(COALESCE(c.status, 'finalizada')) = 'finalizada'
           AND NOT EXISTS (
             SELECT 1
             FROM contas_pagar cp
             WHERE cp.compra_id = c.id
-              AND cp.empresa = c.empresa
+              AND (cp.empresa_id = c.empresa_id OR cp.empresa = c.empresa)
           )
       `;
 

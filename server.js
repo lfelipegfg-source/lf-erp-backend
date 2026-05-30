@@ -436,12 +436,6 @@ async function validarAcessoEmpresa(req, empresaInformada = null) {
   return null;
 }
 
-async function obterNomeEmpresaAcesso(req, empresaInformada = null) {
-  const empresaResolvida = await validarAcessoEmpresa(req, empresaInformada);
-  if (!empresaResolvida) return null;
-  return empresaResolvida.nome;
-}
-
 function adicionarFiltroEmpresaSaaS({ alias = '', params, empresaResolvida }) {
   const prefixo = alias ? `${alias}.` : '';
 
@@ -460,15 +454,6 @@ function adicionarFiltroEmpresaSaaS({ alias = '', params, empresaResolvida }) {
         )
       )
     `;
-}
-
-function validarEmpresa(req, empresa) {
-  // LEGADO: manter apenas para rotas antigas.
-  // Novas rotas devem usar validarAcessoEmpresa(req, empresa).
-  if (!req.user) return false;
-  if (req.user.tipo === 'admin') return true;
-
-  return Boolean(empresa && req.user.empresa && String(req.user.empresa) === String(empresa));
 }
 
 function podeGerenciarUsuarios(req) {
@@ -666,6 +651,17 @@ async function validarSenhaUsuario(senhaInformada, user) {
   return false;
 }
 
+const tokenBlacklist = new Set();
+const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
+
+setInterval(() => {
+  const limite = Date.now() - JWT_EXPIRY_MS;
+  for (const entry of tokenBlacklist) {
+    const [, ts] = entry.split('|');
+    if (Number(ts) < limite) tokenBlacklist.delete(entry);
+  }
+}, 60 * 60 * 1000).unref();
+
 function auth(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -681,6 +677,10 @@ function auth(req, res, next) {
 
   if (!token) {
     return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
+  }
+
+  if ([...tokenBlacklist].some((e) => e.startsWith(token + '|'))) {
+    return res.status(403).json({ sucesso: false, erro: 'Token revogado', codigo: 'TOKEN_REVOGADO' });
   }
 
   try {
@@ -1013,172 +1013,6 @@ async function criarParcelasContasReceber({
   }
 
   return parcelasGeradas;
-}
-
-async function montarRelatorioEstoquePorEmpresa(empresa) {
-  const estoqueBaixoParams = [];
-  const [resumoResult, produtosResult, entradasSaidasResult] = await Promise.all([
-    pool.query(
-      `
-        SELECT
-          COUNT(*) AS total_produtos,
-          COALESCE(SUM(estoque), 0) AS total_unidades,
-          COALESCE(SUM(estoque * custo), 0) AS valor_total_estoque,
-          COALESCE(SUM(CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN 1 ELSE 0 END), 0) AS produtos_alerta,
-          COALESCE(SUM(CASE WHEN estoque = 0 THEN 1 ELSE 0 END), 0) AS produtos_zerados
-        FROM produtos
-        WHERE empresa = $1
-        `,
-      [empresa]
-    ),
-    pool.query(
-      `
-        SELECT
-          id,
-          empresa,
-          nome,
-          categoria,
-          preco,
-          custo,
-          estoque,
-          estoque_minimo,
-          (estoque * custo) AS valor_estoque,
-          CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN TRUE ELSE FALSE END AS alerta_estoque
-        FROM produtos
-        WHERE empresa = $1
-        ORDER BY valor_estoque DESC, nome ASC
-        `,
-      [empresa]
-    ),
-    pool.query(
-      `
-        SELECT
-          COALESCE(SUM(CASE WHEN tipo IN ('entrada_compra', 'ajuste_entrada', 'cadastro_inicial', 'estorno_venda') THEN quantidade ELSE 0 END), 0) AS total_entradas,
-          COALESCE(SUM(CASE WHEN tipo IN ('saida_venda', 'ajuste_saida', 'perda', 'avaria') THEN quantidade ELSE 0 END), 0) AS total_saidas
-        FROM movimentacoes_estoque
-        WHERE empresa = $1
-        `,
-      [empresa]
-    )
-  ]);
-
-  const produtos = produtosResult.rows.map((p) => ({
-    ...p,
-    preco: Number(p.preco || 0),
-    custo: Number(p.custo || 0),
-    estoque: Number(p.estoque || 0),
-    estoque_minimo: Number(p.estoque_minimo || 0),
-    valor_estoque: Number(p.valor_estoque || 0),
-    alerta_estoque: Boolean(p.alerta_estoque)
-  }));
-
-  const topValorParado = [...produtos]
-    .sort((a, b) => b.valor_estoque - a.valor_estoque)
-    .slice(0, 10);
-
-  const produtosAlerta = produtos
-    .filter((p) => p.alerta_estoque)
-    .sort((a, b) => a.estoque - b.estoque);
-
-  return {
-    resumo: {
-      total_produtos: Number(resumoResult.rows[0].total_produtos || 0),
-      total_unidades: Number(resumoResult.rows[0].total_unidades || 0),
-      valor_total_estoque: Number(resumoResult.rows[0].valor_total_estoque || 0),
-      produtos_alerta: Number(resumoResult.rows[0].produtos_alerta || 0),
-      produtos_zerados: Number(resumoResult.rows[0].produtos_zerados || 0),
-      total_entradas: Number(entradasSaidasResult.rows[0].total_entradas || 0),
-      total_saidas: Number(entradasSaidasResult.rows[0].total_saidas || 0)
-    },
-    top_valor_parado: topValorParado,
-    produtos_alerta: produtosAlerta,
-    produtos
-  };
-}
-
-async function montarRelatorioPerformancePorEmpresa(empresa) {
-  const [produtosResult, vendasItensResult] = await Promise.all([
-    pool.query(
-      `
-        SELECT
-          id,
-          empresa,
-          nome,
-          categoria,
-          preco,
-          custo,
-          estoque,
-          estoque_minimo,
-          (estoque * custo) AS valor_estoque
-        FROM produtos
-        WHERE empresa = $1
-        ORDER BY nome ASC
-        `,
-      [empresa]
-    ),
-    pool.query(
-      `
-        SELECT
-          produto_id,
-          produto_nome AS produto,
-          COALESCE(SUM(quantidade), 0) AS quantidade_vendida,
-          COALESCE(SUM(total), 0) AS faturamento
-        FROM venda_itens
-        WHERE empresa = $1
-        GROUP BY produto_id, produto_nome
-        `,
-      [empresa]
-    )
-  ]);
-
-  const mapaVendas = new Map();
-  for (const row of vendasItensResult.rows) {
-    mapaVendas.set(Number(row.produto_id), {
-      quantidade_vendida: Number(row.quantidade_vendida || 0),
-      faturamento: Number(row.faturamento || 0)
-    });
-  }
-
-  const produtos = produtosResult.rows.map((p) => {
-    const vendas = mapaVendas.get(Number(p.id)) || {
-      quantidade_vendida: 0,
-      faturamento: 0
-    };
-
-    const custo = Number(p.custo || 0);
-    const lucro_bruto = Number((vendas.faturamento - vendas.quantidade_vendida * custo).toFixed(2));
-
-    return {
-      id: Number(p.id),
-      empresa: p.empresa,
-      nome: p.nome,
-      categoria: p.categoria || '',
-      preco: Number(p.preco || 0),
-      custo,
-      estoque: Number(p.estoque || 0),
-      estoque_minimo: Number(p.estoque_minimo || 0),
-      valor_estoque: Number(p.valor_estoque || 0),
-      quantidade_vendida: vendas.quantidade_vendida,
-      faturamento: vendas.faturamento,
-      lucro_bruto
-    };
-  });
-
-  const topFaturamento = [...produtos].sort((a, b) => b.faturamento - a.faturamento).slice(0, 10);
-
-  const topLucro = [...produtos].sort((a, b) => b.lucro_bruto - a.lucro_bruto).slice(0, 10);
-
-  const baixoGiro = [...produtos]
-    .filter((p) => p.estoque > 0 && p.quantidade_vendida === 0)
-    .sort((a, b) => b.valor_estoque - a.valor_estoque)
-    .slice(0, 10);
-
-  return {
-    top_faturamento: topFaturamento,
-    top_lucro: topLucro,
-    baixo_giro: baixoGiro,
-    produtos
-  };
 }
 
 async function initDb() {
@@ -1841,6 +1675,13 @@ app.post('/login', loginRateLimiter, async (req, res) => {
   }
 });
 
+app.post('/logout', auth, (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+  if (token) tokenBlacklist.add(`${token}|${Date.now()}`);
+  res.json({ sucesso: true });
+});
+
 app.get('/me', auth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -2043,10 +1884,10 @@ app.get('/usuarios/:empresa', auth, async (req, res) => {
           criado_em,
           atualizado_em
         FROM usuarios
-        WHERE empresa = $1
+        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
         ORDER BY id DESC
         `,
-      [empresaResolvida.nome]
+      [empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json(result.rows);
