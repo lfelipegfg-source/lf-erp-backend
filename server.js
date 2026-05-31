@@ -1895,17 +1895,14 @@ app.get('/me', auth, async (req, res) => {
     const result = await pool.query(
       `
         SELECT
-        u.id,
-        u.usuario,
-        u.tipo,
-        u.empresa,
-        u.empresa_id,
-        u.nome_completo,
-        u.cpf,
-        u.nascimento,
-        e.nome AS empresa_nome_real
+        u.id, u.usuario, u.tipo, u.empresa, u.empresa_id,
+        u.nome_completo, u.cpf, u.nascimento,
+        e.nome AS empresa_nome_real,
+        e.assinatura_status, e.trial_fim, e.bloqueada,
+        p.nome AS plano_nome, p.codigo AS plano_codigo
       FROM usuarios u
       LEFT JOIN empresas e ON e.id = u.empresa_id
+      LEFT JOIN planos p ON p.id = e.plano_id
       WHERE u.id = $1
       `,
       [req.user.id]
@@ -1918,6 +1915,13 @@ app.get('/me', auth, async (req, res) => {
     const user = result.rows[0];
     const nomeCompleto = user.nome_completo || user.usuario;
 
+    let dias_restantes_trial = null;
+    if (user.trial_fim && user.assinatura_status === 'trial') {
+      dias_restantes_trial = Math.ceil(
+        (new Date(`${user.trial_fim}T00:00:00`) - new Date(`${hoje()}T00:00:00`)) / 86400000
+      );
+    }
+
     res.json({
       id: user.id,
       usuario: user.usuario,
@@ -1928,7 +1932,13 @@ app.get('/me', auth, async (req, res) => {
       empresa: user.empresa_nome_real || user.empresa || null,
       empresa_id: user.empresa_id || null,
       cpf: user.cpf || '',
-      nascimento: user.nascimento || ''
+      nascimento: user.nascimento || '',
+      assinatura_status: user.assinatura_status || null,
+      trial_fim: user.trial_fim || null,
+      dias_restantes_trial,
+      plano_nome: user.plano_nome || null,
+      plano_codigo: user.plano_codigo || null,
+      bloqueada: Boolean(user.bloqueada)
     });
   } catch (error) {
     console.error('Erro ao validar sessão:', error);

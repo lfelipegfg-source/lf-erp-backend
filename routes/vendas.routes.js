@@ -438,7 +438,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     }
   });
 
-  router.put('/:id', auth, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
 
     try {
@@ -945,7 +945,7 @@ ORDER BY parcela ASC
     }
   });
 
-  router.delete('/:id', auth, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
 
     try {
