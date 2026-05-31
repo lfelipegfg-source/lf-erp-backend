@@ -11,6 +11,7 @@ const {
 
 module.exports = function ({
   auth,
+  pool,
   writeRateLimiter,
   validarAcessoEmpresa,
   podeGerenciarCompras,

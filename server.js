@@ -194,6 +194,7 @@ app.use(
   '/compras',
   comprasRoutes({
     auth,
+    pool,
     writeRateLimiter,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
