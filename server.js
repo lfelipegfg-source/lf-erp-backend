@@ -2167,9 +2167,9 @@ app.delete('/compras/:id', auth, async (req, res) => {
       `
       SELECT *
       FROM compras
-      WHERE id = $1 AND empresa = $2
+      WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id, empresaResolvida.nome]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     if (compraResult.rowCount === 0) {
@@ -2192,9 +2192,9 @@ app.delete('/compras/:id', auth, async (req, res) => {
         `
         SELECT *
         FROM produtos
-        WHERE id = $1 AND empresa = $2
+        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         `,
-        [item.produto_id, empresaResolvida.nome]
+        [item.produto_id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (produtoResult.rowCount > 0) {
@@ -2208,9 +2208,9 @@ app.delete('/compras/:id', auth, async (req, res) => {
           UPDATE produtos
           SET estoque = $1,
               atualizado_em = NOW()
-          WHERE id = $2 AND empresa = $3
+          WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
           `,
-          [novoEstoque, item.produto_id, empresaResolvida.nome]
+          [novoEstoque, item.produto_id, empresaResolvida.id, empresaResolvida.nome]
         );
       }
     }
@@ -2220,18 +2220,18 @@ app.delete('/compras/:id', auth, async (req, res) => {
       DELETE FROM movimentacoes_estoque
       WHERE referencia_tipo = 'compra'
         AND referencia_id = $1
-        AND empresa = $2
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id, empresaResolvida.nome]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query(
       `
       DELETE FROM contas_pagar
       WHERE compra_id = $1
-        AND empresa = $2
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id, empresaResolvida.nome]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query(
@@ -2246,9 +2246,9 @@ app.delete('/compras/:id', auth, async (req, res) => {
       `
       DELETE FROM compras
       WHERE id = $1
-        AND empresa = $2
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id, empresaResolvida.nome]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query('COMMIT');
@@ -2857,23 +2857,23 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
           WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
   AND data_vencimento IS NOT NULL
-  AND data_vencimento < $3
+  AND data_vencimento < $4
 THEN 'parcial_atrasado'
 
 WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
 THEN 'parcial'
 
 WHEN data_vencimento IS NOT NULL
-  AND data_vencimento < $3
+  AND data_vencimento < $4
 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
       FROM contas_receber
       WHERE cliente_id = $1
-        AND empresa = $2
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       ORDER BY id DESC
       `,
-      [clienteId, empresaResolvida.nome, hoje()]
+      [clienteId, empresaResolvida.id, empresaResolvida.nome, hoje()]
     );
 
     const contas = contasResult.rows.map((conta) => ({
@@ -3509,10 +3509,10 @@ app.post('/contas-receber/manual', auth, async (req, res) => {
         SELECT nome
         FROM clientes
         WHERE id = $1
-          AND empresa = $2
+          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         LIMIT 1
         `,
-        [cliente_id, empresaResolvida.nome]
+        [cliente_id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (clienteResult.rowCount > 0) {

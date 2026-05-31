@@ -172,9 +172,9 @@ module.exports = ({
       DELETE FROM movimentacoes_estoque
       WHERE referencia_tipo = 'venda'
         AND referencia_id = $1
-        AND empresa = $2
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [vendaId, empresaResolvida.nome]
+      [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query(
