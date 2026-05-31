@@ -1368,6 +1368,35 @@ async function initDb() {
       criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
       atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS logs_auditoria (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT,
+      empresa_id INTEGER,
+      usuario_id INTEGER,
+      usuario_nome TEXT,
+      modulo TEXT NOT NULL,
+      acao TEXT NOT NULL,
+      referencia_id INTEGER,
+      dados_anteriores JSONB,
+      dados_novos JSONB,
+      ip TEXT,
+      user_agent TEXT,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS financeiro_logs (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT,
+      empresa_id INTEGER,
+      tipo TEXT NOT NULL,
+      entidade TEXT,
+      entidade_id INTEGER,
+      descricao TEXT,
+      valor NUMERIC(12,2),
+      usuario_id INTEGER,
+      criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+    );
   `);
 
   // ================= ALTERAÇÕES / COLUNAS =================
@@ -1700,6 +1729,16 @@ app.post('/login', loginRateLimiter, async (req, res) => {
       { expiresIn: '12h' }
     );
 
+    registrarAuditoria({
+      empresa: user.empresa_nome_real || user.empresa || null,
+      empresa_id: user.empresa_id_real || user.empresa_id || null,
+      usuario_id: user.id,
+      usuario_nome: nomeCompleto,
+      modulo: 'acesso',
+      acao: 'login',
+      req
+    });
+
     res.json({
       token,
       authToken: token,
@@ -1732,6 +1771,17 @@ app.post('/logout', auth, (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
   if (token) tokenBlacklist.add(`${token}|${Date.now()}`);
+
+  registrarAuditoria({
+    empresa: req.empresa_nome || null,
+    empresa_id: req.empresa_id || null,
+    usuario_id: req.user.id,
+    usuario_nome: req.user.nome_completo || req.user.usuario,
+    modulo: 'acesso',
+    acao: 'logout',
+    req
+  });
+
   res.json({ sucesso: true });
 });
 
@@ -5438,6 +5488,62 @@ function normalizarFormaPagamentoFluxo(value) {
 }
 
 // ================= ADMIN: GESTÃO DE EMPRESAS =================
+
+app.get('/admin/empresas', auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        e.id, e.nome, e.email, e.telefone, e.cnpj,
+        e.assinatura_status, e.bloqueada, e.motivo_bloqueio,
+        e.trial_inicio, e.trial_fim, e.criado_em, e.atualizado_em,
+        p.nome AS plano_nome, p.codigo AS plano_codigo,
+        (SELECT COUNT(*) FROM usuarios u WHERE u.empresa_id = e.id) AS total_usuarios,
+        (SELECT COUNT(*) FROM vendas v WHERE v.empresa_id = e.id) AS total_vendas
+      FROM empresas e
+      LEFT JOIN planos p ON p.id = e.plano_id
+      ORDER BY e.criado_em DESC
+    `);
+
+    res.json(result.rows.map((r) => ({
+      ...r,
+      bloqueada: Boolean(r.bloqueada),
+      total_usuarios: Number(r.total_usuarios || 0),
+      total_vendas: Number(r.total_vendas || 0)
+    })));
+  } catch (error) {
+    console.error('Erro ao listar empresas:', error);
+    jsonErro(res, 500, 'Erro ao listar empresas');
+  }
+});
+
+app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return jsonErro(res, 400, 'ID inválido');
+
+    const empresaResult = await pool.query(`SELECT * FROM empresas WHERE id = $1`, [id]);
+    if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
+    const empresa = empresaResult.rows[0];
+
+    const [clientes, produtos, vendas, contasReceber] = await Promise.all([
+      pool.query(`SELECT * FROM clientes WHERE empresa_id = $1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM produtos WHERE empresa_id = $1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM vendas WHERE empresa_id = $1 ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM contas_receber WHERE empresa_id = $1 ORDER BY id`, [id])
+    ]);
+
+    res.json({
+      empresa: { id: empresa.id, nome: empresa.nome, exportado_em: new Date().toISOString() },
+      clientes: clientes.rows,
+      produtos: produtos.rows,
+      vendas: vendas.rows,
+      contas_receber: contasReceber.rows
+    });
+  } catch (error) {
+    console.error('Erro ao exportar empresa:', error);
+    jsonErro(res, 500, 'Erro ao exportar dados da empresa');
+  }
+});
 
 app.post('/admin/empresas', auth, apenasAdmin, async (req, res) => {
   try {
