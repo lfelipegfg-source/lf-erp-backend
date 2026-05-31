@@ -1685,6 +1685,11 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      registrarAuditoria({
+        empresa: null, empresa_id: null, usuario_id: null,
+        usuario_nome: usuario, modulo: 'acesso', acao: 'login_falha',
+        dados_novos: { motivo: 'usuario_nao_encontrado', usuario }, req
+      });
       return jsonErro(res, 401, 'Usuário ou senha inválidos.', 'CREDENCIAIS_INVALIDAS');
     }
 
@@ -1707,6 +1712,13 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     const senhaOk = await validarSenhaUsuario(senha, user);
 
     if (!senhaOk) {
+      registrarAuditoria({
+        empresa: user.empresa_nome_real || user.empresa || null,
+        empresa_id: user.empresa_id_real || user.empresa_id || null,
+        usuario_id: user.id, usuario_nome: user.usuario,
+        modulo: 'acesso', acao: 'login_falha',
+        dados_novos: { motivo: 'senha_incorreta' }, req
+      });
       return jsonErro(res, 401, 'Usuário ou senha inválidos.', 'CREDENCIAIS_INVALIDAS');
     }
 
@@ -5486,6 +5498,128 @@ function normalizarFormaPagamentoFluxo(value) {
 
   return mapa[forma] || 'Não informado';
 }
+
+// ================= ADMIN: LOGS DE AUDITORIA =================
+
+app.get('/admin/logs', auth, apenasAdmin, async (req, res) => {
+  try {
+    const empresa = req.query.empresa || '';
+    const modulo = req.query.modulo || '';
+    const acao = req.query.acao || '';
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    if (empresa) {
+      params.push(empresa);
+      where += ` AND (empresa = $${params.length} OR empresa_id = (SELECT id FROM empresas WHERE nome = $${params.length} LIMIT 1))`;
+    }
+    if (modulo) { params.push(modulo); where += ` AND modulo = $${params.length}`; }
+    if (acao) { params.push(acao); where += ` AND acao = $${params.length}`; }
+
+    where += adicionarFiltroPeriodo({ campo: 'criado_em', params, dataInicial, dataFinal });
+
+    const result = await pool.query(
+      `SELECT * FROM logs_auditoria ${where} ORDER BY criado_em DESC LIMIT 500`,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao buscar logs:', error);
+    jsonErro(res, 500, 'Erro ao buscar logs de auditoria');
+  }
+});
+
+// ================= ADMIN: GESTÃO DE PLANOS =================
+
+app.get('/admin/planos', auth, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM planos ORDER BY id`);
+    res.json(result.rows);
+  } catch (error) {
+    jsonErro(res, 500, 'Erro ao listar planos');
+  }
+});
+
+app.post('/admin/planos', auth, apenasAdmin, async (req, res) => {
+  try {
+    const {
+      codigo, nome, preco_mensal,
+      limite_usuarios, limite_produtos, limite_clientes,
+      limite_fornecedores, limite_vendas_mes,
+      permite_relatorios_avancados, permite_suporte_prioritario
+    } = req.body;
+
+    if (!codigo || !nome) return jsonErro(res, 400, 'Código e nome são obrigatórios');
+
+    const result = await pool.query(
+      `INSERT INTO planos
+        (codigo, nome, preco_mensal, limite_usuarios, limite_produtos, limite_clientes,
+         limite_fornecedores, limite_vendas_mes, permite_relatorios_avancados, permite_suporte_prioritario)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        codigo, nome, Number(preco_mensal || 0),
+        Number(limite_usuarios || 0), Number(limite_produtos || 0),
+        Number(limite_clientes || 0), Number(limite_fornecedores || 0),
+        Number(limite_vendas_mes || 0),
+        Boolean(permite_relatorios_avancados), Boolean(permite_suporte_prioritario)
+      ]
+    );
+
+    res.status(201).json({ sucesso: true, plano: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao criar plano:', error);
+    jsonErro(res, 500, 'Erro ao criar plano');
+  }
+});
+
+app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const {
+      nome, preco_mensal,
+      limite_usuarios, limite_produtos, limite_clientes,
+      limite_fornecedores, limite_vendas_mes,
+      permite_relatorios_avancados, permite_suporte_prioritario
+    } = req.body;
+
+    if (!id) return jsonErro(res, 400, 'ID inválido');
+
+    await pool.query(
+      `UPDATE planos SET
+        nome = COALESCE($1, nome),
+        preco_mensal = COALESCE($2, preco_mensal),
+        limite_usuarios = COALESCE($3, limite_usuarios),
+        limite_produtos = COALESCE($4, limite_produtos),
+        limite_clientes = COALESCE($5, limite_clientes),
+        limite_fornecedores = COALESCE($6, limite_fornecedores),
+        limite_vendas_mes = COALESCE($7, limite_vendas_mes),
+        permite_relatorios_avancados = COALESCE($8, permite_relatorios_avancados),
+        permite_suporte_prioritario = COALESCE($9, permite_suporte_prioritario)
+       WHERE id = $10`,
+      [
+        nome || null, preco_mensal !== undefined ? Number(preco_mensal) : null,
+        limite_usuarios !== undefined ? Number(limite_usuarios) : null,
+        limite_produtos !== undefined ? Number(limite_produtos) : null,
+        limite_clientes !== undefined ? Number(limite_clientes) : null,
+        limite_fornecedores !== undefined ? Number(limite_fornecedores) : null,
+        limite_vendas_mes !== undefined ? Number(limite_vendas_mes) : null,
+        permite_relatorios_avancados !== undefined ? Boolean(permite_relatorios_avancados) : null,
+        permite_suporte_prioritario !== undefined ? Boolean(permite_suporte_prioritario) : null,
+        id
+      ]
+    );
+
+    _planoCache.delete(`id:${id}`);
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao atualizar plano:', error);
+    jsonErro(res, 500, 'Erro ao atualizar plano');
+  }
+});
 
 // ================= ADMIN: GESTÃO DE EMPRESAS =================
 
