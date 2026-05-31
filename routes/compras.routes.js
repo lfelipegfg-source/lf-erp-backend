@@ -12,6 +12,7 @@ const {
 
 module.exports = function ({
   auth,
+  writeRateLimiter,
   validarAcessoEmpresa,
   podeGerenciarCompras,
   registrarMovimentacaoEstoque,
@@ -34,7 +35,7 @@ module.exports = function ({
     });
   }
 
-  router.post('/', auth, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
 
     try {

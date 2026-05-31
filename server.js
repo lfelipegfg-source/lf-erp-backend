@@ -192,6 +192,7 @@ app.use(
   '/compras',
   comprasRoutes({
     auth,
+    writeRateLimiter,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     podeGerenciarCompras,
@@ -205,6 +206,7 @@ app.use(
   '/vendas',
   vendasRoutes({
     auth,
+    writeRateLimiter,
     pool,
     validarAcessoEmpresa,
     podeGerenciarVendas,
@@ -1585,6 +1587,12 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_produtos_empresa_id ON produtos (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_vendas_empresa_id ON vendas (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_vendas_cliente ON vendas (cliente_id);
+    CREATE INDEX IF NOT EXISTS idx_compras_empresa_id ON compras (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_venda_itens_empresa_id ON venda_itens (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_compra_itens_empresa_id ON compra_itens (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_auditoria_empresa_id ON logs_auditoria (empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_auditoria_criado_em ON logs_auditoria (criado_em DESC);
+    CREATE INDEX IF NOT EXISTS idx_logs_auditoria_modulo_acao ON logs_auditoria (modulo, acao);
   `);
 
   // ================= USUÁRIO ADMIN PADRÃO =================
@@ -1795,6 +1803,63 @@ app.post('/logout', auth, (req, res) => {
   });
 
   res.json({ sucesso: true });
+});
+
+app.put('/me/senha', auth, async (req, res) => {
+  try {
+    const { senha_atual, nova_senha, confirmar_senha } = req.body;
+
+    if (!senha_atual || !nova_senha || !confirmar_senha) {
+      return jsonErro(res, 400, 'Informe a senha atual e a nova senha');
+    }
+
+    if (nova_senha !== confirmar_senha) {
+      return jsonErro(res, 400, 'A nova senha e a confirmação não conferem');
+    }
+
+    if (nova_senha.length < 6) {
+      return jsonErro(res, 400, 'A nova senha deve ter pelo menos 6 caracteres');
+    }
+
+    const result = await pool.query(`SELECT senha FROM usuarios WHERE id = $1`, [req.user.id]);
+    if (result.rowCount === 0) return jsonErro(res, 404, 'Usuário não encontrado');
+
+    const senhaOk = await validarSenhaUsuario(senha_atual, result.rows[0]);
+    if (!senhaOk) return jsonErro(res, 401, 'Senha atual incorreta', 'SENHA_INCORRETA');
+
+    const hash = await bcrypt.hash(nova_senha, 10);
+    await pool.query(`UPDATE usuarios SET senha = $1, atualizado_em = NOW() WHERE id = $2`, [hash, req.user.id]);
+
+    registrarAuditoria({
+      empresa: req.empresa_nome || null,
+      empresa_id: req.empresa_id || null,
+      usuario_id: req.user.id,
+      usuario_nome: req.user.nome_completo || req.user.usuario,
+      modulo: 'acesso', acao: 'troca_senha', req
+    });
+
+    res.json({ sucesso: true, mensagem: 'Senha alterada com sucesso' });
+  } catch (error) {
+    console.error('Erro ao trocar senha:', error);
+    jsonErro(res, 500, 'Erro ao alterar senha');
+  }
+});
+
+app.get('/me/historico-acesso', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT acao, ip, user_agent, criado_em
+       FROM logs_auditoria
+       WHERE usuario_id = $1 AND modulo = 'acesso'
+       ORDER BY criado_em DESC
+       LIMIT 20`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao buscar histórico:', error);
+    jsonErro(res, 500, 'Erro ao buscar histórico de acesso');
+  }
 });
 
 app.get('/me', auth, async (req, res) => {
