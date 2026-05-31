@@ -2102,7 +2102,7 @@ app.get('/usuarios/:empresa', auth, async (req, res) => {
 });
 
 // CRIAR USUÁRIO
-app.post('/usuarios', auth, async (req, res) => {
+app.post('/usuarios', auth, writeRateLimiter, async (req, res) => {
   try {
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
 
@@ -2344,7 +2344,7 @@ app.get('/compras/:empresa', auth, async (req, res) => {
   }
 });
 
-app.delete('/compras/:id', auth, async (req, res) => {
+app.delete('/compras/:id', auth, writeRateLimiter, async (req, res) => {
   const empresa = req.query.empresa || req.body.empresa || null;
   const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -3584,7 +3584,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
   }
 });
 
-app.delete('/contas-receber/:id', auth, async (req, res) => {
+app.delete('/contas-receber/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -3673,7 +3673,7 @@ app.delete('/contas-receber/:id', auth, async (req, res) => {
 });
 
 // ================= CRIAÇÃO MANUAL DE CONTA A RECEBER =================
-app.post('/contas-receber/manual', auth, async (req, res) => {
+app.post('/contas-receber/manual', auth, writeRateLimiter, async (req, res) => {
   try {
     const {
       empresa,
@@ -4533,7 +4533,7 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, async (req
   }
 });
 
-app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
+app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
