@@ -1808,6 +1808,27 @@ app.post('/logout', auth, (req, res) => {
   res.json({ sucesso: true });
 });
 
+app.put('/me/perfil', auth, async (req, res) => {
+  try {
+    const { nome_completo, cpf, nascimento } = req.body;
+
+    await pool.query(
+      `UPDATE usuarios SET
+        nome_completo = COALESCE($1, nome_completo),
+        cpf = COALESCE($2, cpf),
+        nascimento = COALESCE($3, nascimento),
+        atualizado_em = NOW()
+       WHERE id = $4`,
+      [nome_completo || null, cpf || null, nascimento || null, req.user.id]
+    );
+
+    res.json({ sucesso: true, mensagem: 'Perfil atualizado com sucesso' });
+  } catch (error) {
+    console.error('Erro ao atualizar perfil:', error);
+    jsonErro(res, 500, 'Erro ao atualizar perfil');
+  }
+});
+
 app.put('/me/senha', auth, async (req, res) => {
   try {
     const { senha_atual, nova_senha, confirmar_senha } = req.body;
@@ -3356,7 +3377,7 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
   }
 });
 
-app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
+app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -3439,7 +3460,7 @@ app.post('/contas-receber/estornar/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, async (req, res) => {
+app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -4471,7 +4492,7 @@ app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/financeiro/lancamentos/pagar/:id', auth, async (req, res) => {
+app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5834,6 +5855,45 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
   } catch (error) {
     console.error('Erro ao exportar empresa:', error);
     jsonErro(res, 500, 'Erro ao exportar dados da empresa');
+  }
+});
+
+app.get('/admin/empresas/:id', auth, apenasAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return jsonErro(res, 400, 'ID inválido');
+
+    const [empresaResult, usuariosResult, vendasResult, logsResult] = await Promise.all([
+      pool.query(
+        `SELECT e.*, p.nome AS plano_nome, p.codigo AS plano_codigo
+         FROM empresas e LEFT JOIN planos p ON p.id = e.plano_id
+         WHERE e.id = $1`, [id]
+      ),
+      pool.query(`SELECT id, usuario, tipo, nome_completo, criado_em FROM usuarios WHERE empresa_id = $1 ORDER BY criado_em DESC`, [id]),
+      pool.query(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(total), 0) AS valor_total
+         FROM vendas WHERE empresa_id = $1`, [id]
+      ),
+      pool.query(
+        `SELECT acao, usuario_nome, ip, criado_em FROM logs_auditoria
+         WHERE empresa_id = $1 ORDER BY criado_em DESC LIMIT 10`, [id]
+      )
+    ]);
+
+    if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
+
+    res.json({
+      empresa: { ...empresaResult.rows[0], bloqueada: Boolean(empresaResult.rows[0].bloqueada) },
+      usuarios: usuariosResult.rows,
+      resumo_vendas: {
+        total: Number(vendasResult.rows[0].total || 0),
+        valor_total: Number(vendasResult.rows[0].valor_total || 0)
+      },
+      ultimos_acessos: logsResult.rows
+    });
+  } catch (error) {
+    console.error('Erro ao buscar detalhe da empresa:', error);
+    jsonErro(res, 500, 'Erro ao buscar empresa');
   }
 });
 
