@@ -31,3 +31,9 @@ jobs:
             echo "Checking $f..."
             node --check "$f"
           done
+
+      - name: Run smoke tests
+        run: npm test
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
