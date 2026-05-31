@@ -816,13 +816,13 @@ const STATUS_THROTTLE_MS = 60_000;
 const _configCache = new Map();
 const CONFIG_CACHE_TTL_MS = 60_000;
 
-async function obterConfigEmpresa(empresa) {
+async function obterConfigEmpresa(empresa, empresaId = null) {
   const agora = Date.now();
   const cached = _configCache.get(empresa);
   if (cached && agora - cached.ts < CONFIG_CACHE_TTL_MS) return cached.data;
   const result = await pool.query(
-    `SELECT taxa_multa, taxa_juros_dia FROM configuracoes WHERE empresa = $1 LIMIT 1`,
-    [empresa]
+    `SELECT taxa_multa, taxa_juros_dia FROM configuracoes WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) LIMIT 1`,
+    [empresaId || 0, empresa]
   );
   const data = result.rows[0] || {};
   _configCache.set(empresa, { ts: agora, data });
@@ -837,7 +837,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
   try {
     const dataHoje = hoje();
 
-    const config = await obterConfigEmpresa(empresa);
+    const config = await obterConfigEmpresa(empresa, empresaId);
     const taxaMulta = Number(config?.taxa_multa ?? 0.02);
     const taxaJurosDia = Number(config?.taxa_juros_dia ?? 0.00033);
 
@@ -1979,10 +1979,10 @@ app.put('/usuarios/:id', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    const atualResult = await pool.query(`SELECT * FROM usuarios WHERE id = $1 AND empresa = $2`, [
-      id,
-      empresaResolvida.nome
-    ]);
+    const atualResult = await pool.query(
+      `SELECT * FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
 
     if (atualResult.rowCount === 0) {
       return jsonErro(res, 404, 'Usuário não encontrado');
@@ -2008,9 +2008,9 @@ app.put('/usuarios/:id', auth, async (req, res) => {
               senha = $3,
               tipo = $4,
               atualizado_em = NOW()
-          WHERE id = $5 AND empresa = $6
+          WHERE id = $5 AND (empresa_id = $6 OR (empresa_id IS NULL AND empresa = $7))
           `,
-        [nome.trim(), usuario.trim(), senhaHash, tipo, id, empresaResolvida.nome]
+        [nome.trim(), usuario.trim(), senhaHash, tipo, id, empresaResolvida.id, empresaResolvida.nome]
       );
     } else {
       await pool.query(
@@ -2020,9 +2020,9 @@ app.put('/usuarios/:id', auth, async (req, res) => {
               usuario = $2,
               tipo = $3,
               atualizado_em = NOW()
-          WHERE id = $4 AND empresa = $5
+          WHERE id = $4 AND (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $6))
           `,
-        [nome.trim(), usuario.trim(), tipo, id, empresaResolvida.nome]
+        [nome.trim(), usuario.trim(), tipo, id, empresaResolvida.id, empresaResolvida.nome]
       );
     }
 
@@ -2052,19 +2052,19 @@ app.delete('/usuarios/:id', auth, async (req, res) => {
       return jsonErro(res, 400, 'Você não pode excluir o próprio usuário');
     }
 
-    const existe = await pool.query(`SELECT id FROM usuarios WHERE id = $1 AND empresa = $2`, [
-      id,
-      empresaResolvida.nome
-    ]);
+    const existe = await pool.query(
+      `SELECT id FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
 
     if (existe.rowCount === 0) {
       return jsonErro(res, 404, 'Usuário não encontrado');
     }
 
-    await pool.query(`DELETE FROM usuarios WHERE id = $1 AND empresa = $2`, [
-      id,
-      empresaResolvida.nome
-    ]);
+    await pool.query(
+      `DELETE FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -2745,10 +2745,10 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
       `
         SELECT *
         FROM vendas
-        WHERE id = $1 AND empresa = $2
+        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         LIMIT 1
         `,
-      [conta.venda_id, conta.empresa]
+      [conta.venda_id, conta.empresa_id, conta.empresa]
     );
 
     if (vendaResult.rowCount === 0) {
@@ -2764,21 +2764,21 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
         FROM venda_itens vi
         LEFT JOIN produtos p
           ON p.id = vi.produto_id
-        AND p.empresa = vi.empresa
-        WHERE vi.venda_id = $1 AND vi.empresa = $2
+          AND (p.empresa_id = vi.empresa_id OR p.empresa = vi.empresa)
+        WHERE vi.venda_id = $1 AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))
         ORDER BY vi.id ASC
         `,
-      [conta.venda_id, conta.empresa]
+      [conta.venda_id, conta.empresa_id, conta.empresa]
     );
 
     const parcelasResult = await pool.query(
       `
         SELECT *
         FROM contas_receber
-        WHERE venda_id = $1 AND empresa = $2
+        WHERE venda_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         ORDER BY parcela ASC, id ASC
         `,
-      [conta.venda_id, conta.empresa]
+      [conta.venda_id, conta.empresa_id, conta.empresa]
     );
 
     res.json({
@@ -3850,10 +3850,10 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
         LEFT JOIN fornecedores f
           ON f.id = c.fornecedor_id
         AND f.empresa = c.empresa
-        WHERE c.id = $1 AND c.empresa = $2
+        WHERE c.id = $1 AND (c.empresa_id = $2 OR (c.empresa_id IS NULL AND c.empresa = $3))
         LIMIT 1
         `,
-      [conta.compra_id, conta.empresa]
+      [conta.compra_id, conta.empresa_id, conta.empresa]
     );
 
     if (compraResult.rowCount === 0) {
@@ -3874,10 +3874,10 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
       `
         SELECT *
         FROM contas_pagar
-        WHERE compra_id = $1 AND empresa = $2
+        WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         ORDER BY parcela ASC, id ASC
         `,
-      [conta.compra_id, conta.empresa]
+      [conta.compra_id, conta.empresa_id, conta.empresa]
     );
 
     res.json({
