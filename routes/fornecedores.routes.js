@@ -243,7 +243,7 @@ module.exports = function ({
       }
 
       const atualResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2`,
+        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
         [id, empresaResolvida.id]
       );
 
@@ -318,7 +318,7 @@ module.exports = function ({
       }
 
       const fornecedorResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2`,
+        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
         [id, empresaResolvida.id]
       );
 

@@ -303,7 +303,7 @@ ${adicionarFiltroEmpresaSaaS({
       }
 
       const atualResult = await pool.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2`,
+        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
         [id, empresaResolvida.id]
       );
 
@@ -426,7 +426,7 @@ ${adicionarFiltroEmpresaSaaS({
       }
 
       const produtoResult = await pool.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2`,
+        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
         [id, empresaResolvida.id]
       );
 

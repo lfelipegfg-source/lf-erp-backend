@@ -66,7 +66,7 @@ module.exports = function ({
       await client.query('BEGIN');
 
       const fornecedorResult = await client.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2`,
+        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
         [fornecedor_id, empresaResolvida.id]
       );
 
@@ -118,7 +118,7 @@ module.exports = function ({
         const subtotal = Number((quantidade * custoUnitario).toFixed(2));
 
         const produtoResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2`,
+          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
           [produtoId, empresaResolvida.id]
         );
 

@@ -318,7 +318,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 
       if (clienteIdFinal) {
         const clienteResult = await client.query(
-          `SELECT * FROM clientes WHERE id = $1 AND empresa_id = $2`,
+          `SELECT * FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
           [clienteIdFinal, empresaResolvida.id]
         );
 

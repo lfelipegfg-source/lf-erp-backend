@@ -96,26 +96,36 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000
 });
 
 app.get('/health', async (req, res) => {
+  const inicio = Date.now();
   try {
     await pool.query('SELECT 1');
+    const latencia = Date.now() - inicio;
+    const mem = process.memoryUsage();
 
     res.json({
       status: 'ok',
       sistema: 'LF ERP',
       database: 'online',
+      latencia_ms: latencia,
+      uptime_s: Math.floor(process.uptime()),
+      memoria_mb: Math.round(mem.rss / 1024 / 1024),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Erro no health check:', error);
-
     res.status(500).json({
       status: 'erro',
       sistema: 'LF ERP',
-      database: 'offline'
+      database: 'offline',
+      latencia_ms: Date.now() - inicio,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1552,6 +1562,13 @@ app.post('/reset-dados', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem permissão');
     }
 
+    const resetToken = process.env.RESET_SECRET;
+    const headerToken = req.headers['x-reset-token'];
+
+    if (!resetToken || !headerToken || headerToken !== resetToken) {
+      return jsonErro(res, 403, 'Token de reset inválido ou ausente');
+    }
+
     await pool.query(`
       TRUNCATE TABLE
         venda_itens,
@@ -1569,7 +1586,7 @@ app.post('/reset-dados', auth, async (req, res) => {
       RESTART IDENTITY CASCADE
     `);
 
-    res.send('Dados resetados com sucesso');
+    res.json({ sucesso: true, mensagem: 'Dados resetados com sucesso' });
   } catch (error) {
     console.error('Erro no reset:', error);
     jsonErro(res, 500, 'Erro ao resetar dados');
@@ -2826,12 +2843,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
     }
 
     const clienteResult = await pool.query(
-      `
-      SELECT *
-      FROM clientes
-      WHERE id = $1
-      LIMIT 1
-      `,
+      `SELECT * FROM clientes WHERE id = $1 AND deletado_em IS NULL LIMIT 1`,
       [clienteId]
     );
 
