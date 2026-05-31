@@ -1,5 +1,6 @@
 module.exports = ({
   auth,
+  writeRateLimiter,
   apenasAdmin,
   pool,
   validarAcessoEmpresa,
@@ -49,7 +50,7 @@ module.exports = ({
 
   // ================= PRODUTOS =================
 
-  router.post('/', auth, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, async (req, res) => {
     try {
       const {
         empresa,
@@ -268,7 +269,7 @@ ${adicionarFiltroEmpresaSaaS({
     }
   });
 
-  router.put('/:id', auth, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
 
@@ -410,7 +411,7 @@ ${adicionarFiltroEmpresaSaaS({
     }
   });
 
-  router.delete('/:id', auth, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresa = req.query.empresa || req.body.empresa || null;

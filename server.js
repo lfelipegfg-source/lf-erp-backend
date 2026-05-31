@@ -233,6 +233,7 @@ app.use(
   '/produtos',
   produtosRoutes({
     auth,
+    writeRateLimiter,
     apenasAdmin,
     pool,
     validarAcessoEmpresa,
@@ -252,6 +253,7 @@ app.use(
   '/estoque',
   estoqueRoutes({
     auth,
+    writeRateLimiter,
     pool,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
@@ -267,6 +269,7 @@ app.use(
   '/clientes',
   clientesRoutes({
     auth,
+    writeRateLimiter,
     apenasAdmin,
     pool,
     validarAcessoEmpresa,
@@ -282,6 +285,7 @@ app.use(
   '/fornecedores',
   fornecedoresRoutes({
     auth,
+    writeRateLimiter,
     apenasAdmin,
     pool,
     validarAcessoEmpresa,
@@ -2164,7 +2168,7 @@ app.post('/usuarios', auth, writeRateLimiter, async (req, res) => {
 });
 
 // ATUALIZAR USUÁRIO
-app.put('/usuarios/:id', auth, async (req, res) => {
+app.put('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
@@ -2238,7 +2242,7 @@ app.put('/usuarios/:id', auth, async (req, res) => {
 });
 
 // EXCLUIR USUÁRIO
-app.delete('/usuarios/:id', auth, async (req, res) => {
+app.delete('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const empresa = req.query.empresa || null;
@@ -4402,7 +4406,7 @@ app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
   }
 });
 
-app.put('/financeiro/lancamentos/:id', auth, async (req, res) => {
+app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');

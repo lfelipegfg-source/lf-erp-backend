@@ -1,5 +1,6 @@
 module.exports = ({
   auth,
+  writeRateLimiter,
   apenasAdmin,
   pool,
   validarAcessoEmpresa,
@@ -34,7 +35,7 @@ module.exports = ({
 
   // ================= CLIENTES =================
 
-  router.post('/', auth, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, async (req, res) => {
     try {
       const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
 
@@ -202,7 +203,7 @@ module.exports = ({
     }
   });
 
-  router.put('/:id', auth, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
@@ -270,7 +271,7 @@ module.exports = ({
     }
   });
 
-  router.delete('/:id', auth, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresa = req.query.empresa || req.body.empresa || null;

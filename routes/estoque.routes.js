@@ -1,5 +1,6 @@
 module.exports = ({
   auth,
+  writeRateLimiter,
   pool,
   validarAcessoEmpresa,
   adicionarFiltroEmpresaSaaS,
@@ -106,7 +107,7 @@ ${filtroEmpresa}
     }
   });
 
-  router.post('/ajuste', auth, async (req, res) => {
+  router.post('/ajuste', auth, writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
 
     try {

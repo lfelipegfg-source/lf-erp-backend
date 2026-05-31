@@ -2,6 +2,7 @@ const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils'
 
 module.exports = function ({
   auth,
+  writeRateLimiter,
   apenasAdmin,
   pool,
   validarAcessoEmpresa,
@@ -48,7 +49,7 @@ module.exports = function ({
 
   // ================= FORNECEDORES =================
 
-  router.post('/', auth, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, async (req, res) => {
     try {
       const { empresa, nome, cnpj, telefone, email, endereco, observacao } = req.body;
 
@@ -220,7 +221,7 @@ module.exports = function ({
     }
   });
 
-  router.put('/:id', auth, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
 
@@ -300,7 +301,7 @@ module.exports = function ({
     }
   });
 
-  router.delete('/:id', auth, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresa = req.query.empresa || req.body.empresa || null;
