@@ -11,6 +11,42 @@ const loginAttempts = new Map();
 const LOGIN_MAX_TENTATIVAS = 10;
 const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
 
+// Rate limiter geral para endpoints de escrita (por userId + rota)
+const writeAttempts = new Map();
+const WRITE_MAX = 30;
+const WRITE_JANELA_MS = 60 * 1000; // 1 minuto
+
+function writeRateLimiter(req, res, next) {
+  if (!req.user) return next();
+  const chave = `${req.user.id}:${req.path}`;
+  const agora = Date.now();
+  const entrada = writeAttempts.get(chave) || { count: 0, inicio: agora };
+
+  if (agora - entrada.inicio > WRITE_JANELA_MS) {
+    entrada.count = 0;
+    entrada.inicio = agora;
+  }
+
+  entrada.count += 1;
+  writeAttempts.set(chave, entrada);
+
+  if (entrada.count > WRITE_MAX) {
+    return res.status(429).json({
+      sucesso: false,
+      erro: 'Muitas requisições. Aguarde um momento e tente novamente.'
+    });
+  }
+
+  next();
+}
+
+setInterval(() => {
+  const agora = Date.now();
+  for (const [chave, entrada] of writeAttempts) {
+    if (agora - entrada.inicio > WRITE_JANELA_MS) writeAttempts.delete(chave);
+  }
+}, WRITE_JANELA_MS).unref();
+
 function loginRateLimiter(req, res, next) {
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
   const agora = Date.now();
@@ -2965,7 +3001,7 @@ THEN 'atrasado'
   }
 });
 
-app.post('/contas-receber/pagar/:id', auth, async (req, res) => {
+app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -3922,7 +3958,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
+app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -4008,7 +4044,7 @@ app.post('/contas-pagar/pagar/:id', auth, async (req, res) => {
 });
 
 // ================= LANÇAMENTOS FINANCEIROS =================
-app.post('/financeiro/lancamentos', auth, async (req, res) => {
+app.post('/financeiro/lancamentos', auth, writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -4379,7 +4415,7 @@ app.delete('/financeiro/lancamentos/:id', auth, async (req, res) => {
 });
 
 // ================= INVESTIMENTOS =================
-app.post('/investimentos', auth, async (req, res) => {
+app.post('/investimentos', auth, writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5400,3 +5436,86 @@ function normalizarFormaPagamentoFluxo(value) {
 
   return mapa[forma] || 'Não informado';
 }
+
+// ================= ADMIN: GESTÃO DE EMPRESAS =================
+
+app.post('/admin/empresas', auth, apenasAdmin, async (req, res) => {
+  try {
+    const { nome, plano_id, trial_dias = 30, email, telefone, cnpj } = req.body;
+
+    if (!nome) {
+      return jsonErro(res, 400, 'Nome da empresa é obrigatório');
+    }
+
+    const existe = await pool.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1`, [nome]);
+    if (existe.rowCount > 0) {
+      return jsonErro(res, 400, 'Já existe uma empresa com esse nome');
+    }
+
+    const trialFim = addDias(hoje(), trial_dias);
+
+    const empresaResult = await pool.query(
+      `INSERT INTO empresas
+        (nome, cnpj, telefone, email, plano_id, assinatura_status, trial_inicio, trial_fim, bloqueada, criado_em, atualizado_em)
+       VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7, false, NOW(), NOW())
+       RETURNING *`,
+      [nome, cnpj || null, telefone || null, email || null, plano_id || null, hoje(), trialFim]
+    );
+
+    const empresa = empresaResult.rows[0];
+
+    await pool.query(
+      `INSERT INTO configuracoes (empresa, empresa_id, nome_empresa, criado_em, atualizado_em)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT DO NOTHING`,
+      [empresa.nome, empresa.id, empresa.nome]
+    );
+
+    return res.status(201).json({ sucesso: true, empresa });
+  } catch (error) {
+    console.error('Erro ao criar empresa:', error);
+    jsonErro(res, 500, 'Erro ao criar empresa');
+  }
+});
+
+app.put('/admin/empresas/:id/status', auth, apenasAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { assinatura_status, bloqueada, plano_id, trial_fim, motivo_bloqueio } = req.body;
+
+    if (!id) {
+      return jsonErro(res, 400, 'ID de empresa inválido');
+    }
+
+    const empresaExiste = await pool.query(`SELECT id FROM empresas WHERE id = $1`, [id]);
+    if (empresaExiste.rowCount === 0) {
+      return jsonErro(res, 404, 'Empresa não encontrada');
+    }
+
+    await pool.query(
+      `UPDATE empresas SET
+        assinatura_status = COALESCE($1, assinatura_status),
+        bloqueada = COALESCE($2, bloqueada),
+        plano_id = COALESCE($3, plano_id),
+        trial_fim = COALESCE($4, trial_fim),
+        motivo_bloqueio = COALESCE($5, motivo_bloqueio),
+        atualizado_em = NOW()
+       WHERE id = $6`,
+      [
+        assinatura_status || null,
+        bloqueada !== undefined ? Boolean(bloqueada) : null,
+        plano_id || null,
+        trial_fim || null,
+        motivo_bloqueio || null,
+        id
+      ]
+    );
+
+    _planoCache.delete(`id:${id}`);
+
+    return res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao atualizar status da empresa:', error);
+    jsonErro(res, 500, 'Erro ao atualizar empresa');
+  }
+});
