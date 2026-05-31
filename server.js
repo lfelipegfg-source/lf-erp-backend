@@ -244,7 +244,6 @@ app.use(
     normalizarInt,
     registrarMovimentacaoEstoque,
     obterPeriodo,
-    adicionarFiltroEmpresaSaaS,
     adicionarFiltroPeriodo
   })
 );
@@ -260,7 +259,6 @@ app.use(
     normalizarInt,
     obterPeriodo,
     adicionarFiltroPeriodo,
-    adicionarFiltroEmpresaSaaS,
     registrarMovimentacaoEstoque
   })
 );

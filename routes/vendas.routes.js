@@ -20,8 +20,6 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  console.log('🔥 ROTA DE VENDAS CARREGADA COM PUT 🔥');
-
   function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
     return res.status(status).json({
       sucesso: false,

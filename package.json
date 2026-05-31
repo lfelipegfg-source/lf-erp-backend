@@ -1,6 +1,6 @@
 {
   "name": "lf-erp-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Backend do LF ERP",
   "main": "server.js",
   "type": "commonjs",
