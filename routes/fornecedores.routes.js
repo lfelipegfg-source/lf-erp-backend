@@ -1,5 +1,3 @@
-const pool = require('../db');
-
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 
 module.exports = function ({

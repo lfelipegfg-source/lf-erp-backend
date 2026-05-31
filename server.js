@@ -170,6 +170,7 @@ app.use(
   '/financeiro',
   financeiroRoutes({
     auth,
+    pool,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     atualizarStatusContasReceberPorEmpresa,
@@ -181,6 +182,7 @@ app.use(
   '/relatorios',
   relatoriosRoutes({
     auth,
+    pool,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     atualizarStatusContasReceberPorEmpresa,
@@ -5525,6 +5527,96 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
   process.exit(1);
+});
+
+// ================= ALERTAS =================
+
+app.get('/alertas/:empresa', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.params.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const dataHoje = hoje();
+
+    const [estoqueResult, receberResult, pagarResult, planoResult] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, estoque, estoque_minimo FROM produtos
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+           AND deletado_em IS NULL
+           AND estoque_minimo > 0
+           AND estoque <= estoque_minimo
+         ORDER BY estoque ASC LIMIT 10`,
+        [empresaResolvida.id, empresaResolvida.nome]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(valor_atualizado), SUM(valor)) AS valor_total
+         FROM contas_receber
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+           AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
+           AND data_vencimento IS NOT NULL AND data_vencimento < $3`,
+        [empresaResolvida.id, empresaResolvida.nome, dataHoje]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(valor), 0) AS valor_total
+         FROM contas_pagar
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+           AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
+           AND data_vencimento IS NOT NULL AND data_vencimento < $3`,
+        [empresaResolvida.id, empresaResolvida.nome, dataHoje]
+      ),
+      obterPlanoEmpresa(empresaResolvida.id, empresaResolvida.nome)
+    ]);
+
+    const alertas = [];
+
+    if (estoqueResult.rows.length > 0) {
+      alertas.push({
+        tipo: 'estoque_baixo',
+        nivel: 'warning',
+        titulo: `${estoqueResult.rows.length} produto(s) com estoque baixo`,
+        itens: estoqueResult.rows.map(p => ({ id: p.id, nome: p.nome, estoque: Number(p.estoque), minimo: Number(p.estoque_minimo) }))
+      });
+    }
+
+    const totalReceber = Number(receberResult.rows[0].total || 0);
+    if (totalReceber > 0) {
+      alertas.push({
+        tipo: 'contas_receber_vencidas',
+        nivel: 'danger',
+        titulo: `${totalReceber} conta(s) a receber vencida(s)`,
+        valor_total: Number(receberResult.rows[0].valor_total || 0)
+      });
+    }
+
+    const totalPagar = Number(pagarResult.rows[0].total || 0);
+    if (totalPagar > 0) {
+      alertas.push({
+        tipo: 'contas_pagar_vencidas',
+        nivel: 'danger',
+        titulo: `${totalPagar} conta(s) a pagar vencida(s)`,
+        valor_total: Number(pagarResult.rows[0].valor_total || 0)
+      });
+    }
+
+    if (planoResult?.assinatura_status === 'trial' && planoResult?.trial_fim) {
+      const diasRestantes = Math.ceil(
+        (new Date(`${planoResult.trial_fim}T00:00:00`) - new Date(`${dataHoje}T00:00:00`)) / 86400000
+      );
+      if (diasRestantes <= 7 && diasRestantes >= 0) {
+        alertas.push({
+          tipo: 'trial_expirando',
+          nivel: diasRestantes <= 2 ? 'danger' : 'warning',
+          titulo: diasRestantes === 0 ? 'Trial expira hoje' : `Trial expira em ${diasRestantes} dia(s)`,
+          dias_restantes: diasRestantes
+        });
+      }
+    }
+
+    res.json({ total: alertas.length, alertas });
+  } catch (error) {
+    console.error('Erro ao buscar alertas:', error);
+    jsonErro(res, 500, 'Erro ao buscar alertas');
+  }
 });
 
 // ================= START =================
