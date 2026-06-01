@@ -6,6 +6,8 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const { runMigrations } = require('./migrations/runner');
+const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
 
 // Rate limiter em memória para o endpoint /login
 const loginAttempts = new Map();
@@ -104,6 +106,9 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : '*';
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
+
+// Disponibiliza pool para middlewares via app.locals
+app.locals.pool = pool;
 
 app.use((req, res, next) => {
   const inicio = Date.now();
@@ -5709,6 +5714,7 @@ app.get('/alertas/:empresa', auth, async (req, res) => {
 async function start() {
   try {
     await initDb();
+    await runMigrations(pool);
     app.listen(PORT, () => {
       console.log(`LF ERP Backend Online 🚀 porta ${PORT}`);
     });

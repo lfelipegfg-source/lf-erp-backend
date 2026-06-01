@@ -44,7 +44,21 @@ module.exports = ({
       promocao_ativa: Boolean(row.promocao_ativa),
       estoque: Number(row.estoque || 0),
       estoque_minimo: Number(row.estoque_minimo || 0),
-      alerta_estoque: Boolean(row.alerta_estoque)
+      alerta_estoque: Boolean(row.alerta_estoque),
+      // campos fiscais e grade (F2)
+      unidade: row.unidade || 'UN',
+      origem: Number(row.origem ?? 0),
+      icms_aliquota: Number(row.icms_aliquota || 0),
+      icms_base_calculo: Number(row.icms_base_calculo || 100),
+      pis_aliquota: Number(row.pis_aliquota || 0),
+      cofins_aliquota: Number(row.cofins_aliquota || 0),
+      ipi_aliquota: Number(row.ipi_aliquota || 0),
+      peso_bruto: row.peso_bruto ? Number(row.peso_bruto) : null,
+      peso_liquido: row.peso_liquido ? Number(row.peso_liquido) : null,
+      comprimento_cm: row.comprimento_cm ? Number(row.comprimento_cm) : null,
+      largura_cm: row.largura_cm ? Number(row.largura_cm) : null,
+      altura_cm: row.altura_cm ? Number(row.altura_cm) : null,
+      tem_grade: Boolean(row.tem_grade)
     };
   }
 
@@ -64,9 +78,31 @@ module.exports = ({
         estoque,
         estoque_minimo,
         codigo_barras,
-        categoria
+        categoria,
+        // novos campos F2
+        codigo_interno,
+        gtin,
+        unidade,
+        descricao_completa,
+        peso_bruto,
+        peso_liquido,
+        comprimento_cm,
+        largura_cm,
+        altura_cm,
+        ncm,
+        cfop_padrao,
+        origem,
+        icms_cst,
+        icms_aliquota,
+        icms_base_calculo,
+        pis_cst,
+        pis_aliquota,
+        cofins_cst,
+        cofins_aliquota,
+        ipi_cst,
+        ipi_aliquota,
+        tem_grade
       } = req.body;
-      req.body;
 
       if (!nome) {
         return erro(res, 400, 'Preencha os campos obrigatórios do produto');
@@ -96,8 +132,21 @@ module.exports = ({
 
       const result = await pool.query(
         `INSERT INTO produtos
-        (empresa, empresa_id, nome, preco, custo, custo_unitario, custo_medio, lucro_unitario, margem_lucro, preco_promocional, promocao_ativa, estoque, estoque_minimo, codigo_barras, categoria, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+        (empresa, empresa_id, nome, preco, custo, custo_unitario, custo_medio, lucro_unitario, margem_lucro,
+         preco_promocional, promocao_ativa, estoque, estoque_minimo, codigo_barras, categoria,
+         codigo_interno, gtin, unidade, descricao_completa,
+         peso_bruto, peso_liquido, comprimento_cm, largura_cm, altura_cm,
+         ncm, cfop_padrao, origem,
+         icms_cst, icms_aliquota, icms_base_calculo,
+         pis_cst, pis_aliquota,
+         cofins_cst, cofins_aliquota,
+         ipi_cst, ipi_aliquota,
+         tem_grade,
+         criado_em, atualizado_em)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,
+                $28,$29,$30,$31,$32,$33,$34,$35,$36,$37,
+                NOW(), NOW())
         RETURNING id`,
         [
           empresaResolvida.nome,
@@ -114,7 +163,30 @@ module.exports = ({
           normalizarInt(estoque),
           normalizarInt(estoque_minimo),
           codigo_barras || '',
-          categoria || ''
+          categoria || '',
+          // novos F2
+          codigo_interno || null,
+          gtin || null,
+          unidade || 'UN',
+          descricao_completa || null,
+          peso_bruto ? normalizarDecimal(peso_bruto) : null,
+          peso_liquido ? normalizarDecimal(peso_liquido) : null,
+          comprimento_cm ? normalizarDecimal(comprimento_cm) : null,
+          largura_cm ? normalizarDecimal(largura_cm) : null,
+          altura_cm ? normalizarDecimal(altura_cm) : null,
+          ncm || null,
+          cfop_padrao || null,
+          origem !== undefined ? normalizarInt(origem) : 0,
+          icms_cst || null,
+          icms_aliquota ? normalizarDecimal(icms_aliquota) : 0,
+          icms_base_calculo ? normalizarDecimal(icms_base_calculo) : 100,
+          pis_cst || null,
+          pis_aliquota ? normalizarDecimal(pis_aliquota) : 0,
+          cofins_cst || null,
+          cofins_aliquota ? normalizarDecimal(cofins_aliquota) : 0,
+          ipi_cst || null,
+          ipi_aliquota ? normalizarDecimal(ipi_aliquota) : 0,
+          Boolean(tem_grade)
         ]
       );
 
