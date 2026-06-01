@@ -387,9 +387,11 @@ module.exports = function ({
           const qtdOriginal = normalizarInt(item.quantidade);
           const custoOriginal = normalizarDecimal(item.custo_unitario);
           const estoqueRevertido = Math.max(0, estoqueAtual - qtdOriginal);
-          const custoRevertido = estoqueRevertido > 0
-            ? Number(Math.max(0, (estoqueAtual * custoAtual - qtdOriginal * custoOriginal) / estoqueRevertido).toFixed(2))
-            : custoAtual;
+          const custoRevertido = (() => {
+            if (estoqueRevertido <= 0) return custoAtual;
+            const calculado = (estoqueAtual * custoAtual - qtdOriginal * custoOriginal) / estoqueRevertido;
+            return calculado > 0 ? Number(calculado.toFixed(2)) : custoAtual;
+          })();
 
           await client.query(
             `UPDATE produtos SET estoque = $1, custo_medio = $2, atualizado_em = NOW() WHERE id = $3 AND empresa_id = $4`,

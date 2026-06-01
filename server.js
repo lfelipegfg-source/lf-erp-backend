@@ -5,6 +5,7 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 // Rate limiter em memória para o endpoint /login
 const loginAttempts = new Map();
@@ -15,6 +16,8 @@ const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
 const writeAttempts = new Map();
 const WRITE_MAX = 30;
 const WRITE_JANELA_MS = 60 * 1000; // 1 minuto
+
+const WRITE_MAP_MAX = 5000;
 
 function writeRateLimiter(req, res, next) {
   if (!req.user) return next();
@@ -28,6 +31,12 @@ function writeRateLimiter(req, res, next) {
   }
 
   entrada.count += 1;
+
+  if (writeAttempts.size >= WRITE_MAP_MAX && !writeAttempts.has(chave)) {
+    // Map cheio: descarta entrada mais antiga para evitar crescimento unbounded
+    writeAttempts.delete(writeAttempts.keys().next().value);
+  }
+
   writeAttempts.set(chave, entrada);
 
   if (entrada.count > WRITE_MAX) {
@@ -440,8 +449,9 @@ async function obterEmpresaPorNome(nome) {
   return result.rows[0];
 }
 
-async function resolverEmpresaRequest(req, empresaInformada = null) {
+async function resolverEmpresaRequest(req, empresaInformada = null, empresaIdInformado = null) {
   const empresaIdInformada =
+    empresaIdInformado ||
     req.body?.empresa_id || req.query?.empresa_id || req.params?.empresa_id || null;
 
   if (empresaIdInformada) {
@@ -467,12 +477,12 @@ async function resolverEmpresaRequest(req, empresaInformada = null) {
   return null;
 }
 
-async function validarAcessoEmpresa(req, empresaInformada = null) {
+async function validarAcessoEmpresa(req, empresaInformada = null, empresaIdInformado = null) {
   if (req.user.tipo === 'admin') {
-    return await resolverEmpresaRequest(req, empresaInformada);
+    return await resolverEmpresaRequest(req, empresaInformada, empresaIdInformado);
   }
 
-  const empresaResolvida = await resolverEmpresaRequest(req, empresaInformada);
+  const empresaResolvida = await resolverEmpresaRequest(req, empresaInformada, empresaIdInformado);
 
   if (!empresaResolvida) return null;
 
@@ -687,7 +697,13 @@ async function validarSenhaUsuario(senhaInformada, user) {
     return bcrypt.compare(senhaInformada, senhaSalva);
   }
 
-  if (senhaInformada === senhaSalva) {
+  const bufA = Buffer.from(senhaInformada);
+  const bufB = Buffer.from(senhaSalva);
+  const iguais =
+    bufA.length === bufB.length &&
+    crypto.timingSafeEqual(bufA, bufB);
+
+  if (iguais) {
     const novaHash = await bcrypt.hash(senhaInformada, 10);
 
     await pool.query(
@@ -704,14 +720,13 @@ async function validarSenhaUsuario(senhaInformada, user) {
   return false;
 }
 
-const tokenBlacklist = new Set();
+const tokenBlacklist = new Map(); // token → timestamp de revogação
 const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
 
 setInterval(() => {
   const limite = Date.now() - JWT_EXPIRY_MS;
-  for (const entry of tokenBlacklist) {
-    const [, ts] = entry.split('|');
-    if (Number(ts) < limite) tokenBlacklist.delete(entry);
+  for (const [token, ts] of tokenBlacklist) {
+    if (ts < limite) tokenBlacklist.delete(token);
   }
 }, 60 * 60 * 1000).unref();
 
@@ -732,7 +747,7 @@ function auth(req, res, next) {
     return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
   }
 
-  if ([...tokenBlacklist].some((e) => e.startsWith(token + '|'))) {
+  if (tokenBlacklist.has(token)) {
     return res.status(403).json({ sucesso: false, erro: 'Token revogado', codigo: 'TOKEN_REVOGADO' });
   }
 
@@ -888,13 +903,21 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
   _statusThrottleReceber.set(empresa, agora);
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+    // pg_try_advisory_xact_lock garante exclusão entre instâncias; libera no COMMIT/ROLLBACK
+    const lockKey = Number(empresaId || 0);
+    const lock = await client.query(`SELECT pg_try_advisory_xact_lock($1, 1)`, [lockKey]);
+    if (!lock.rows[0].pg_try_advisory_xact_lock) {
+      await client.query('ROLLBACK');
+      client.release();
+      return;
+    }
+
     const dataHoje = hoje();
 
     const config = await obterConfigEmpresa(empresa, empresaId);
     const taxaMulta = Number(config?.taxa_multa ?? 0.02);
     const taxaJurosDia = Number(config?.taxa_juros_dia ?? 0.00033);
-
-    await client.query('BEGIN');
 
     await client.query(
       `
@@ -961,16 +984,32 @@ async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
   const agora = Date.now();
   if (_statusThrottlePagar.has(empresa) && agora - _statusThrottlePagar.get(empresa) < STATUS_THROTTLE_MS) return;
   _statusThrottlePagar.set(empresa, agora);
-  await pool.query(
-    `UPDATE contas_pagar
-      SET status = 'atrasado',
-          atualizado_em = NOW()
-      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
-        AND status = 'pendente'
-        AND data_vencimento IS NOT NULL
-        AND data_vencimento < $2`,
-    [empresa, hoje(), empresaId]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const lockKey = Number(empresaId || 0);
+    const lock = await client.query(`SELECT pg_try_advisory_xact_lock($1, 2)`, [lockKey]);
+    if (!lock.rows[0].pg_try_advisory_xact_lock) {
+      await client.query('ROLLBACK');
+      return;
+    }
+    await client.query(
+      `UPDATE contas_pagar
+        SET status = 'atrasado',
+            atualizado_em = NOW()
+        WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
+          AND status = 'pendente'
+          AND data_vencimento IS NOT NULL
+          AND data_vencimento < $2`,
+      [empresa, hoje(), empresaId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function atualizarStatusContasPagarGlobal() {
@@ -1795,7 +1834,7 @@ app.post('/login', loginRateLimiter, async (req, res) => {
 app.post('/logout', auth, (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
-  if (token) tokenBlacklist.add(`${token}|${Date.now()}`);
+  if (token) tokenBlacklist.set(token, Date.now());
 
   registrarAuditoria({
     empresa: req.empresa_nome || null,
@@ -2809,7 +2848,7 @@ THEN 'atrasado'
       FROM contas_receber cr
       WHERE (
         (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
-        OR (lf.conta_receber_id IS NULL AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER)
+        OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g')::INTEGER ELSE NULL END)
       )
         AND cr.empresa = lf.empresa
     )
@@ -2918,7 +2957,7 @@ ELSE 'pendente'
 
     const conta = contaResult.rows[0];
 
-    if (!await validarAcessoEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -2949,7 +2988,7 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!await validarAcessoEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -3112,7 +3151,7 @@ THEN 'atrasado'
         AND cr.empresa = $1
         AND (
           (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
-          OR (lf.conta_receber_id IS NULL AND cr.id = NULLIF(REGEXP_REPLACE(lf.descricao, '\\D', '', 'g'), '')::INTEGER)
+          OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g')::INTEGER ELSE NULL END)
         )
     )
   `,
@@ -3165,16 +3204,20 @@ THEN 'atrasado'
 });
 
 app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, async (req, res) => {
-  const client = await pool.connect();
+  const id = Number(req.params.id);
+  if (!id || isNaN(id)) return jsonErro(res, 400, 'ID inválido');
 
+  const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
 
     await client.query('BEGIN');
 
     const contaResult = await client.query(
-      `SELECT * FROM contas_receber WHERE id = $1 FOR UPDATE`,
-      [id]
+      `SELECT * FROM contas_receber
+       WHERE id = $1
+         AND (empresa_id = $2 OR empresa = $3)
+       FOR UPDATE`,
+      [id, req.empresa_id, req.empresa_nome]
     );
 
     if (contaResult.rowCount === 0) {
@@ -3183,7 +3226,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, async (req, res) =
     }
 
     const conta = contaResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       await client.query('ROLLBACK');
@@ -3347,7 +3390,7 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
     }
 
     const conta = contaResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
@@ -3400,7 +3443,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, async (req, res
     }
 
     const conta = contaResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
@@ -3473,10 +3516,11 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, async (req, res
 });
 
 app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimiter, async (req, res) => {
-  const client = await pool.connect();
+  const lancamentoId = Number(req.params.lancamentoId);
+  if (!lancamentoId || isNaN(lancamentoId)) return jsonErro(res, 400, 'ID inválido');
 
+  const client = await pool.connect();
   try {
-    const lancamentoId = Number(req.params.lancamentoId);
 
     await client.query('BEGIN');
 
@@ -3527,7 +3571,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
     }
 
     const conta = contaResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       await client.query('ROLLBACK');
@@ -3616,7 +3660,7 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
@@ -3659,8 +3703,9 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, async (req, res) => {
       `
       DELETE FROM contas_receber
       WHERE id = $1
+        AND (empresa = $2 OR empresa_id = $3)
       `,
-      [id]
+      [id, empresaResolvida.nome, empresaResolvida.id]
     );
 
     await registrarLogFinanceiro({
@@ -4015,7 +4060,7 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!await validarAcessoEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -4044,7 +4089,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
 
     const conta = contaResult.rows[0];
 
-    if (!await validarAcessoEmpresa(req, conta.empresa)) {
+    if (!await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id)) {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
@@ -4122,16 +4167,20 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
 });
 
 app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => {
-  const client = await pool.connect();
+  const id = Number(req.params.id);
+  if (!id || isNaN(id)) return jsonErro(res, 400, 'ID inválido');
 
+  const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
 
     await client.query('BEGIN');
 
     const contaResult = await client.query(
-      `SELECT * FROM contas_pagar WHERE id = $1 FOR UPDATE`,
-      [id]
+      `SELECT * FROM contas_pagar
+       WHERE id = $1
+         AND (empresa_id = $2 OR empresa = $3)
+       FOR UPDATE`,
+      [id, req.empresa_id, req.empresa_nome]
     );
 
     if (contaResult.rowCount === 0) {
@@ -4140,7 +4189,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
     }
 
     const conta = contaResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
       await client.query('ROLLBACK');
@@ -4568,7 +4617,10 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, re
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await pool.query(`DELETE FROM lancamentos_financeiros WHERE id = $1`, [id]);
+    await pool.query(
+      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa = $2 OR empresa_id = $3)`,
+      [id, empresaResolvida.nome, empresaResolvida.id]
+    );
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -5957,10 +6009,12 @@ app.put('/admin/empresas/:id/status', auth, apenasAdmin, async (req, res) => {
       return jsonErro(res, 400, 'ID de empresa inválido');
     }
 
-    const empresaExiste = await pool.query(`SELECT id FROM empresas WHERE id = $1`, [id]);
+    const empresaExiste = await pool.query(`SELECT id, nome FROM empresas WHERE id = $1`, [id]);
     if (empresaExiste.rowCount === 0) {
       return jsonErro(res, 404, 'Empresa não encontrada');
     }
+
+    const nomeEmpresa = empresaExiste.rows[0].nome;
 
     await pool.query(
       `UPDATE empresas SET
@@ -5982,6 +6036,7 @@ app.put('/admin/empresas/:id/status', auth, apenasAdmin, async (req, res) => {
     );
 
     _planoCache.delete(`id:${id}`);
+    _configCache.delete(nomeEmpresa);
 
     return res.json({ sucesso: true });
   } catch (error) {
