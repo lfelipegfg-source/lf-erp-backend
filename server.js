@@ -99,6 +99,7 @@ const produtosRoutes = require('./routes/produtos.routes');
 const estoqueRoutes = require('./routes/estoque.routes');
 const clientesRoutes = require('./routes/clientes.routes');
 const fornecedoresRoutes = require('./routes/fornecedores.routes');
+const gradesRoutes = require('./routes/grades.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -306,6 +307,19 @@ app.use(
     validarLimitePlano,
     obterPeriodo,
     adicionarFiltroPeriodo
+  })
+);
+
+app.use(
+  '/grades',
+  gradesRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal,
+    normalizarInt,
+    registrarMovimentacaoEstoque
   })
 );
 
@@ -789,6 +803,7 @@ async function registrarMovimentacaoEstoque({
   empresa,
   empresa_id,
   produto_id,
+  grade_id = null,
   tipo,
   quantidade,
   observacao,
@@ -805,6 +820,7 @@ async function registrarMovimentacaoEstoque({
         empresa,
         empresa_id,
         produto_id,
+        grade_id,
         tipo,
         quantidade,
         observacao,
@@ -813,11 +829,12 @@ async function registrarMovimentacaoEstoque({
         usuario_id,
         data_movimentacao
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
     [
       empresa,
       empresa_id || null,
       produto_id,
+      grade_id || null,
       tipo,
       quantidade,
       observacao || '',

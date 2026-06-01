@@ -108,39 +108,43 @@ module.exports = ({
     for (const item of itensResult.rows) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
+      const gradeId = item.grade_id ? Number(item.grade_id) : null;
 
       if (!produtoId || quantidade <= 0) continue;
 
-      const produtoResult = await client.query(
-        `
-        SELECT *
-        FROM produtos
-        WHERE id = $1 AND empresa_id = $2
-        LIMIT 1
-        `,
-        [produtoId, empresaResolvida.id]
-      );
+      if (gradeId) {
+        // Restaura estoque na grade específica
+        await client.query(
+          `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2`,
+          [quantidade, gradeId]
+        );
+        // Sincroniza produto-pai
+        await client.query(
+          `UPDATE produtos SET estoque = (
+             SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
+             WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true
+           ), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          [produtoId, empresaResolvida.id]
+        );
+      } else {
+        const produtoResult = await client.query(
+          `SELECT estoque FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+          [produtoId, empresaResolvida.id]
+        );
+        if (produtoResult.rowCount === 0) continue;
 
-      if (produtoResult.rowCount === 0) continue;
-
-      const produto = produtoResult.rows[0];
-      const estoqueAtual = normalizarInt(produto.estoque);
-      const novoEstoque = estoqueAtual + quantidade;
-
-      await client.query(
-        `
-        UPDATE produtos
-        SET estoque = $1,
-            atualizado_em = NOW()
-        WHERE id = $2 AND empresa_id = $3
-        `,
-        [novoEstoque, produtoId, empresaResolvida.id]
-      );
+        const estoqueAtual = normalizarInt(produtoResult.rows[0].estoque);
+        await client.query(
+          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+          [estoqueAtual + quantidade, produtoId, empresaResolvida.id]
+        );
+      }
 
       await registrarMovimentacaoEstoque({
         empresa: empresaResolvida.nome,
         empresa_id: empresaResolvida.id,
         produto_id: produtoId,
+        grade_id: gradeId,
         tipo: 'estorno_venda',
         quantidade,
         observacao: motivo || `Estorno da venda #${vendaId}`,
@@ -195,14 +199,10 @@ module.exports = ({
     for (const item of itens) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
+      const gradeId = item.grade_id ? Number(item.grade_id) : null;
 
       const produtoResult = await client.query(
-        `
-        SELECT *
-        FROM produtos
-        WHERE id = $1 AND empresa_id = $2
-        LIMIT 1
-        `,
+        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
         [produtoId, empresaResolvida.id]
       );
 
@@ -211,49 +211,87 @@ module.exports = ({
       }
 
       const produto = produtoResult.rows[0];
-      const estoqueAtual = normalizarInt(produto.estoque);
 
-      if (estoqueAtual < quantidade) {
-        throw new Error(`Estoque insuficiente para ${produto.nome}`);
+      // ── Produto com grade ──────────────────────────────────────────
+      if (produto.tem_grade) {
+        if (!gradeId) {
+          throw new Error(`Produto "${produto.nome}" possui grade. Selecione a variação (tamanho/cor).`);
+        }
+
+        const gradeResult = await client.query(
+          `SELECT * FROM produto_grades WHERE id = $1 AND produto_id = $2 AND empresa_id = $3 AND ativo = true`,
+          [gradeId, produtoId, empresaResolvida.id]
+        );
+
+        if (gradeResult.rowCount === 0) {
+          throw new Error(`Grade não encontrada para o produto "${produto.nome}"`);
+        }
+
+        const grade = gradeResult.rows[0];
+        const estoqueGrade = normalizarInt(grade.estoque);
+
+        if (estoqueGrade < quantidade) {
+          throw new Error(
+            `Estoque insuficiente para "${produto.nome}" (${grade.atributo1}${grade.atributo2 ? ' / ' + grade.atributo2 : ''}). Disponível: ${estoqueGrade}`
+          );
+        }
+
+        const precoUnitario = normalizarDecimal(item.preco_unitario || grade.preco || produto.preco);
+        const custoUnitario = normalizarDecimal(item.custo_unitario || grade.custo || produto.custo);
+        const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+
+        await client.query(
+          `INSERT INTO venda_itens
+           (venda_id, empresa, empresa_id, produto_id, produto_nome, grade_id, quantidade, preco_unitario, custo_unitario, total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [vendaId, empresaResolvida.nome, empresaResolvida.id, produto.id, produto.nome, gradeId, quantidade, precoUnitario, custoUnitario, totalItem]
+        );
+
+        // Baixa estoque da grade
+        await client.query(
+          `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW() WHERE id = $2`,
+          [estoqueGrade - quantidade, gradeId]
+        );
+
+        // Sincroniza estoque do produto-pai como soma das grades
+        await client.query(
+          `UPDATE produtos SET estoque = (
+             SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
+             WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true
+           ), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          [produtoId, empresaResolvida.id]
+        );
+
+      // ── Produto simples (sem grade) ────────────────────────────────
+      } else {
+        const estoqueAtual = normalizarInt(produto.estoque);
+
+        if (estoqueAtual < quantidade) {
+          throw new Error(`Estoque insuficiente para ${produto.nome}`);
+        }
+
+        const precoUnitario = normalizarDecimal(item.preco_unitario || produto.preco);
+        const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
+        const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+
+        await client.query(
+          `INSERT INTO venda_itens
+           (venda_id, empresa, empresa_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [vendaId, empresaResolvida.nome, empresaResolvida.id, produto.id, produto.nome, quantidade, precoUnitario, custoUnitario, totalItem]
+        );
+
+        await client.query(
+          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+          [estoqueAtual - quantidade, produto.id, empresaResolvida.id]
+        );
       }
-
-      const precoUnitario = normalizarDecimal(item.preco_unitario || produto.preco);
-      const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
-      const totalItem = Number((quantidade * precoUnitario).toFixed(2));
-
-      await client.query(
-        `
-        INSERT INTO venda_itens
-(venda_id, empresa, empresa_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, total)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        `,
-        [
-          vendaId,
-          empresaResolvida.nome,
-          empresaResolvida.id,
-          produto.id,
-          produto.nome,
-          quantidade,
-          precoUnitario,
-          custoUnitario,
-          totalItem
-        ]
-      );
-
-      await client.query(
-        `
-        UPDATE produtos
-        SET estoque = $1,
-            atualizado_em = NOW()
-        WHERE id = $2 AND empresa_id = $3
-        `,
-        [estoqueAtual - quantidade, produto.id, empresaResolvida.id]
-      );
 
       await registrarMovimentacaoEstoque({
         empresa: empresaResolvida.nome,
         empresa_id: empresaResolvida.id,
         produto_id: produto.id,
+        grade_id: gradeId,
         tipo: 'saida_venda',
         quantidade,
         observacao: `Saída por venda #${vendaId}`,
