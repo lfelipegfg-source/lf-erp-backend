@@ -104,6 +104,8 @@ const nfeRoutes = require('./routes/nfe.routes');
 const tabelasPrecoRoutes = require('./routes/tabelasPreco.routes');
 const kitsRoutes = require('./routes/kits.routes');
 const imagensRoutes = require('./routes/imagens.routes');
+const orcamentosRoutes = require('./routes/orcamentos.routes');
+const pedidosRoutes = require('./routes/pedidos.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -358,6 +360,40 @@ app.use(
     validarAcessoEmpresa,
     normalizarDecimal,
     normalizarInt
+  })
+);
+
+app.use(
+  '/orcamentos',
+  orcamentosRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal,
+    normalizarInt,
+    normalizarDataISO,
+    obterPeriodo,
+    adicionarFiltroPeriodo
+  })
+);
+
+app.use(
+  '/pedidos',
+  pedidosRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal,
+    normalizarInt,
+    normalizarDataISO,
+    obterPeriodo,
+    registrarMovimentacaoEstoque,
+    criarParcelasContasReceber,
+    atualizarStatusContasReceberPorEmpresa,
+    atualizarStatusContasPagarPorEmpresa,
+    registrarAuditoria
   })
 );
 
