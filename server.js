@@ -107,6 +107,7 @@ const imagensRoutes = require('./routes/imagens.routes');
 const orcamentosRoutes = require('./routes/orcamentos.routes');
 const pedidosRoutes = require('./routes/pedidos.routes');
 const comissoesRoutes = require('./routes/comissoes.routes');
+const portalRoutes    = require('./routes/portal.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -329,6 +330,8 @@ app.use(
     registrarMovimentacaoEstoque
   })
 );
+
+app.use('/portal', portalRoutes({ auth, pool }));
 
 app.use(
   '/nfe',
