@@ -874,5 +874,89 @@ MAX(v.data) AS ultima_venda
     }
   });
 
+  // ── VENDAS POR VARIAÇÃO DE GRADE ─────────────────────────────────────────
+  router.get('/vendas/por-grade/:empresa', auth, async (req, res) => {
+    try {
+      const empresa = req.params.empresa;
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+
+      if (!empresaResolvida) {
+        return erro(res, 403, 'Sem acesso');
+      }
+
+      const { dataInicial, dataFinal } = obterPeriodo(req);
+      const params = [];
+
+      let where = `
+        WHERE vi.grade_id IS NOT NULL
+        ${adicionarFiltroEmpresaSaaS({ alias: 'vi', params, empresaResolvida })}
+      `;
+
+      where += adicionarFiltroPeriodo({
+        campo: 'v.data',
+        params,
+        dataInicial,
+        dataFinal,
+        castDate: false
+      });
+
+      const result = await pool.query(
+        `
+        SELECT
+          vi.produto_id,
+          vi.produto_nome,
+          vi.grade_id,
+          pg.atributo1,
+          pg.atributo2,
+          COALESCE(SUM(vi.quantidade), 0)                                             AS quantidade_vendida,
+          COALESCE(SUM(vi.total), 0)                                                  AS faturamento_total,
+          COALESCE(MAX(pg.preco), MAX(p.preco), 0)                                    AS preco_atual,
+          COALESCE(MAX(pg.custo), MAX(p.custo_medio), 0)                              AS custo_atual,
+          COALESCE(SUM(vi.quantidade * COALESCE(pg.custo, p.custo_medio, 0)), 0)      AS custo_total,
+          COALESCE(SUM(vi.total), 0)
+            - COALESCE(SUM(vi.quantidade * COALESCE(pg.custo, p.custo_medio, 0)), 0) AS lucro_total,
+          COALESCE(MAX(pg.estoque), 0)                                                AS estoque_atual,
+          MAX(v.data)                                                                 AS ultima_venda
+        FROM venda_itens vi
+        JOIN vendas v
+          ON v.id = vi.venda_id
+          AND (v.empresa_id = vi.empresa_id OR (vi.empresa_id IS NULL AND v.empresa = vi.empresa))
+        LEFT JOIN produtos p
+          ON p.id = vi.produto_id
+        LEFT JOIN produto_grades pg
+          ON pg.id = vi.grade_id
+        ${where}
+        GROUP BY vi.produto_id, vi.produto_nome, vi.grade_id, pg.atributo1, pg.atributo2
+        ORDER BY faturamento_total DESC, vi.produto_nome ASC
+        `,
+        params
+      );
+
+      return res.json(
+        result.rows.map((row) => ({
+          produto_id: row.produto_id,
+          produto_nome: row.produto_nome,
+          grade_id: row.grade_id,
+          atributo1: row.atributo1 || '',
+          atributo2: row.atributo2 || '',
+          variacao: row.atributo2
+            ? `${row.atributo1} / ${row.atributo2}`
+            : row.atributo1 || `Grade #${row.grade_id}`,
+          quantidade_vendida: Number(row.quantidade_vendida || 0),
+          faturamento_total: Number(row.faturamento_total || 0),
+          preco_atual: Number(row.preco_atual || 0),
+          custo_atual: Number(row.custo_atual || 0),
+          custo_total: Number(row.custo_total || 0),
+          lucro_total: Number(row.lucro_total || 0),
+          estoque_atual: Number(row.estoque_atual || 0),
+          ultima_venda: row.ultima_venda || null
+        }))
+      );
+    } catch (error) {
+      console.error('Erro real ao gerar relatório por grade:', error);
+      return erro(res, 500, 'Erro ao gerar relatório por variação');
+    }
+  });
+
   return router;
 };
