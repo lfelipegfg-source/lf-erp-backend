@@ -100,6 +100,60 @@ module.exports = ({
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // GET /tabelas-preco/dashboard — resumo para o painel gerencial
+  // ─────────────────────────────────────────────────────────────────────────
+  router.get('/dashboard', auth, async (req, res) => {
+    try {
+      const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const [statsResult, tabelasResult] = await Promise.all([
+        pool.query(
+          `SELECT
+             COUNT(DISTINCT t.id) AS total_tabelas,
+             COUNT(DISTINCT c.id) AS total_clientes
+           FROM tabelas_preco t
+           LEFT JOIN clientes c
+             ON c.tabela_preco_id = t.id AND c.empresa_id = t.empresa_id
+           WHERE t.empresa_id = $1 AND t.ativa = true`,
+          [empresaResolvida.id]
+        ),
+        pool.query(
+          `SELECT t.id, t.nome, t.tipo,
+                  t.desconto_percentual, t.markup_percentual,
+                  COUNT(c.id) AS total_clientes
+           FROM tabelas_preco t
+           LEFT JOIN clientes c
+             ON c.tabela_preco_id = t.id AND c.empresa_id = t.empresa_id
+           WHERE t.empresa_id = $1 AND t.ativa = true
+           GROUP BY t.id
+           ORDER BY total_clientes DESC, t.nome
+           LIMIT 10`,
+          [empresaResolvida.id]
+        )
+      ]);
+
+      const stats = statsResult.rows[0];
+
+      return ok(res, {
+        total_tabelas:  Number(stats.total_tabelas  || 0),
+        total_clientes: Number(stats.total_clientes || 0),
+        tabelas: tabelasResult.rows.map((t) => ({
+          id:                    t.id,
+          nome:                  t.nome,
+          tipo:                  t.tipo,
+          desconto_percentual:   Number(t.desconto_percentual || 0),
+          markup_percentual:     Number(t.markup_percentual   || 0),
+          total_clientes:        Number(t.total_clientes      || 0)
+        }))
+      });
+    } catch (err) {
+      console.error('[tabelas-preco] GET dashboard:', err.message);
+      return erro(res, 500, 'Erro ao carregar resumo de tabelas de preço');
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // GET /tabelas-preco
   // ─────────────────────────────────────────────────────────────────────────
   router.get('/', auth, async (req, res) => {
