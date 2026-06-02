@@ -101,6 +101,7 @@ const clientesRoutes = require('./routes/clientes.routes');
 const fornecedoresRoutes = require('./routes/fornecedores.routes');
 const gradesRoutes = require('./routes/grades.routes');
 const nfeRoutes = require('./routes/nfe.routes');
+const tabelasPrecoRoutes = require('./routes/tabelasPreco.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -332,6 +333,18 @@ app.use(
     pool,
     validarAcessoEmpresa,
     normalizarDecimal
+  })
+);
+
+app.use(
+  '/tabelas-preco',
+  tabelasPrecoRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal,
+    normalizarInt
   })
 );
 

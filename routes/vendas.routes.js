@@ -1,3 +1,5 @@
+const { resolverPreco } = require('../utils/resolverPreco');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -190,7 +192,8 @@ module.exports = ({
     vendaId,
     empresaResolvida,
     itens,
-    usuarioId
+    usuarioId,
+    clienteId = null
   }) {
     if (!validarItensVenda(itens)) {
       throw new Error('Itens da venda inválidos');
@@ -236,7 +239,10 @@ module.exports = ({
           );
         }
 
-        const precoUnitario = normalizarDecimal(item.preco_unitario || grade.preco || produto.preco);
+        const precoPorTabela = !item.preco_unitario
+          ? await resolverPreco({ pool, produtoId, gradeId, clienteId, empresaId: empresaResolvida.id, quantidade })
+          : null;
+        const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || grade.preco || produto.preco);
         const custoUnitario = normalizarDecimal(item.custo_unitario || grade.custo || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
 
@@ -270,7 +276,10 @@ module.exports = ({
           throw new Error(`Estoque insuficiente para ${produto.nome}`);
         }
 
-        const precoUnitario = normalizarDecimal(item.preco_unitario || produto.preco);
+        const precoPorTabela = !item.preco_unitario
+          ? await resolverPreco({ pool, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
+          : null;
+        const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || produto.preco);
         const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
 
@@ -398,7 +407,8 @@ module.exports = ({
         vendaId: venda.id,
         empresaResolvida,
         itens,
-        usuarioId: req.user.id
+        usuarioId: req.user.id,
+        clienteId: cliente_id ? Number(cliente_id) : null
       });
 
       if (
@@ -650,7 +660,8 @@ module.exports = ({
         vendaId: id,
         empresaResolvida,
         itens,
-        usuarioId: req.user.id
+        usuarioId: req.user.id,
+        clienteId: clienteIdFinal ? Number(clienteIdFinal) : null
       });
 
       if (
