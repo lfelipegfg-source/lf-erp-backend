@@ -103,6 +103,7 @@ const gradesRoutes = require('./routes/grades.routes');
 const nfeRoutes = require('./routes/nfe.routes');
 const tabelasPrecoRoutes = require('./routes/tabelasPreco.routes');
 const kitsRoutes = require('./routes/kits.routes');
+const imagensRoutes = require('./routes/imagens.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -334,6 +335,17 @@ app.use(
     pool,
     validarAcessoEmpresa,
     normalizarDecimal
+  })
+);
+
+app.use(
+  '/imagens',
+  imagensRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarInt
   })
 );
 
