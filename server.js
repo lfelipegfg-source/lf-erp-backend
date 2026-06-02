@@ -106,6 +106,7 @@ const kitsRoutes = require('./routes/kits.routes');
 const imagensRoutes = require('./routes/imagens.routes');
 const orcamentosRoutes = require('./routes/orcamentos.routes');
 const pedidosRoutes = require('./routes/pedidos.routes');
+const comissoesRoutes = require('./routes/comissoes.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -394,6 +395,19 @@ app.use(
     atualizarStatusContasReceberPorEmpresa,
     atualizarStatusContasPagarPorEmpresa,
     registrarAuditoria
+  })
+);
+
+app.use(
+  '/comissoes',
+  comissoesRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal,
+    normalizarDataISO,
+    obterPeriodo
   })
 );
 

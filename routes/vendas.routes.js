@@ -1,5 +1,6 @@
 const { resolverPreco } = require('../utils/resolverPreco');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
+const { calcularComissaoVenda } = require('../utils/comissoes');
 
 module.exports = ({
   auth,
@@ -513,6 +514,13 @@ module.exports = ({
       });
 
       await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+
+      // Calcula comissão do vendedor em background (não bloqueia resposta)
+      calcularComissaoVenda(pool, {
+        vendaId: venda.id,
+        usuarioId: req.user.id,
+        empresaId: empresaResolvida.id
+      }).catch((e) => console.warn('[comissao] erro ao calcular:', e.message));
 
       return res.json({
         sucesso: true,
