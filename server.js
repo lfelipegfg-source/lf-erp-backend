@@ -112,9 +112,6 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
 
-// Disponibiliza pool para middlewares via app.locals
-app.locals.pool = pool;
-
 app.use((req, res, next) => {
   const inicio = Date.now();
 
@@ -156,6 +153,9 @@ const pool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000
 });
+
+// Disponibiliza pool para middlewares via app.locals
+app.locals.pool = pool;
 
 app.get('/health', async (req, res) => {
   const inicio = Date.now();
