@@ -1,4 +1,5 @@
 const { resolverPreco } = require('../utils/resolverPreco');
+const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
 
 module.exports = ({
   auth,
@@ -114,13 +115,19 @@ module.exports = ({
 
       if (!produtoId || quantidade <= 0) continue;
 
+      // Verifica se é kit
+      const prodRow = await client.query(
+        `SELECT e_kit FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+        [produtoId, empresaResolvida.id]
+      );
+      const eKit = prodRow.rowCount > 0 && Boolean(prodRow.rows[0].e_kit);
+
       if (gradeId) {
         // Restaura estoque na grade específica
         await client.query(
           `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2`,
           [quantidade, gradeId]
         );
-        // Sincroniza produto-pai
         await client.query(
           `UPDATE produtos SET estoque = (
              SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
@@ -128,6 +135,14 @@ module.exports = ({
            ), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
           [produtoId, empresaResolvida.id]
         );
+      } else if (eKit) {
+        // Restaura estoque de cada componente do kit
+        await estornarComponentesKit({
+          client, kitId: produtoId, empresaId: empresaResolvida.id,
+          qtdKits: quantidade, vendaId, usuarioId,
+          registrarMovimentacaoEstoque
+        });
+        await sincronizarEstoqueKit(pool, produtoId, empresaResolvida.id);
       } else {
         const produtoResult = await client.query(
           `SELECT estoque FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
@@ -142,19 +157,21 @@ module.exports = ({
         );
       }
 
-      await registrarMovimentacaoEstoque({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        produto_id: produtoId,
-        grade_id: gradeId,
-        tipo: 'estorno_venda',
-        quantidade,
-        observacao: motivo || `Estorno da venda #${vendaId}`,
-        referencia_tipo: 'venda_estornada',
-        referencia_id: vendaId,
-        usuario_id: usuarioId,
-        client
-      });
+      if (!eKit) {
+        await registrarMovimentacaoEstoque({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          produto_id: produtoId,
+          grade_id: gradeId,
+          tipo: 'estorno_venda',
+          quantidade,
+          observacao: motivo || `Estorno da venda #${vendaId}`,
+          referencia_tipo: 'venda_estornada',
+          referencia_id: vendaId,
+          usuario_id: usuarioId,
+          client
+        });
+      }
     }
   }
 
@@ -268,7 +285,34 @@ module.exports = ({
           [produtoId, empresaResolvida.id]
         );
 
-      // ── Produto simples (sem grade) ────────────────────────────────
+      // ── Kit (composição) ──────────────────────────────────────────
+      } else if (produto.e_kit) {
+        await validarEstoqueKit(client, produtoId, empresaResolvida.id, quantidade);
+
+        const precoPorTabela = !item.preco_unitario
+          ? await resolverPreco({ pool, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
+          : null;
+        const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || produto.preco);
+        const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
+        const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+
+        await client.query(
+          `INSERT INTO venda_itens
+           (venda_id, empresa, empresa_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [vendaId, empresaResolvida.nome, empresaResolvida.id, produto.id, produto.nome, quantidade, precoUnitario, custoUnitario, totalItem]
+        );
+
+        await baixarComponentesKit({
+          client, kitId: produtoId, empresaId: empresaResolvida.id,
+          qtdKits: quantidade, vendaId, usuarioId,
+          registrarMovimentacaoEstoque
+        });
+
+        // Sincroniza estoque do kit com base nos componentes restantes
+        await sincronizarEstoqueKit(pool, produtoId, empresaResolvida.id);
+
+      // ── Produto simples (sem grade, sem kit) ───────────────────────
       } else {
         const estoqueAtual = normalizarInt(produto.estoque);
 
@@ -296,19 +340,22 @@ module.exports = ({
         );
       }
 
-      await registrarMovimentacaoEstoque({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        produto_id: produto.id,
-        grade_id: gradeId,
-        tipo: 'saida_venda',
-        quantidade,
-        observacao: `Saída por venda #${vendaId}`,
-        referencia_tipo: 'venda',
-        referencia_id: vendaId,
-        usuario_id: usuarioId,
-        client
-      });
+      // Kits registram movimentações por componente em baixarComponentesKit
+      if (!produto.e_kit) {
+        await registrarMovimentacaoEstoque({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          produto_id: produto.id,
+          grade_id: gradeId,
+          tipo: 'saida_venda',
+          quantidade,
+          observacao: `Saída por venda #${vendaId}`,
+          referencia_tipo: 'venda',
+          referencia_id: vendaId,
+          usuario_id: usuarioId,
+          client
+        });
+      }
     }
   }
 
