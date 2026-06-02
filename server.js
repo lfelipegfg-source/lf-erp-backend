@@ -100,6 +100,7 @@ const estoqueRoutes = require('./routes/estoque.routes');
 const clientesRoutes = require('./routes/clientes.routes');
 const fornecedoresRoutes = require('./routes/fornecedores.routes');
 const gradesRoutes = require('./routes/grades.routes');
+const nfeRoutes = require('./routes/nfe.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -320,6 +321,17 @@ app.use(
     normalizarDecimal,
     normalizarInt,
     registrarMovimentacaoEstoque
+  })
+);
+
+app.use(
+  '/nfe',
+  nfeRoutes({
+    auth,
+    writeRateLimiter,
+    pool,
+    validarAcessoEmpresa,
+    normalizarDecimal
   })
 );
 
