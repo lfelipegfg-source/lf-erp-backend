@@ -1591,6 +1591,22 @@ async function initDb() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS cobrancas_pix (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT,
+      empresa_id INTEGER,
+      conta_receber_id INTEGER,
+      txid TEXT UNIQUE,
+      valor NUMERIC(12,2),
+      cliente_nome TEXT,
+      status TEXT DEFAULT 'ATIVA',
+      pix_copia_e_cola TEXT,
+      qr_image TEXT,
+      expiracao TIMESTAMPTZ,
+      pago_em TIMESTAMPTZ,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS conciliacao_itens (
       id SERIAL PRIMARY KEY,
       conciliacao_id INTEGER NOT NULL,
@@ -1668,6 +1684,15 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_receber_id INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_gateway TEXT DEFAULT 'efi';
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_client_id TEXT;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_client_secret TEXT;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_certificado TEXT;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_chave TEXT;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_sandbox BOOLEAN DEFAULT TRUE;
   `);
 
   // ================= EMPRESA PADRÃO =================
@@ -5805,6 +5830,255 @@ app.get('/dashboard/grafico', auth, async (req, res) => {
   } catch (error) {
     console.error('Erro ao carregar gráfico do dashboard:', error);
     jsonErro(res, 500, 'Erro ao carregar gráfico');
+  }
+});
+
+// ================= PIX (EFÍ / Gerencianet) =================
+
+const https = require('https');
+
+function httpsPost(url, headers, body, agentOptions = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const agent = agentOptions.pfx
+      ? new https.Agent(agentOptions)
+      : undefined;
+
+    const opts = {
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
+      agent
+    };
+
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: res.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function httpsGet(url, headers, agentOptions = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const agent = agentOptions.pfx
+      ? new https.Agent(agentOptions)
+      : undefined;
+
+    const opts = { hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers, agent };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: res.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function efiAuth(config) {
+  const base = config.pix_sandbox
+    ? 'https://api-pix-h.gerencianet.com.br'
+    : 'https://api-pix.gerencianet.com.br';
+
+  const creds = Buffer.from(`${config.pix_client_id}:${config.pix_client_secret}`).toString('base64');
+  const agentOpts = config.pix_certificado
+    ? { pfx: Buffer.from(config.pix_certificado, 'base64'), passphrase: '' }
+    : {};
+
+  const res = await httpsPost(
+    `${base}/oauth/token`,
+    { 'Authorization': `Basic ${creds}`, 'Content-Type': 'application/json' },
+    JSON.stringify({ grant_type: 'client_credentials' }),
+    agentOpts
+  );
+
+  if (res.status !== 200 || !res.body.access_token) {
+    throw new Error(`Falha na autenticação EFÍ: ${JSON.stringify(res.body)}`);
+  }
+
+  return { accessToken: res.body.access_token, base, agentOpts };
+}
+
+// GET /pagamentos/pix/config
+app.get('/pagamentos/pix/config', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const result = await pool.query(
+      `SELECT pix_gateway, pix_client_id, pix_chave, pix_sandbox,
+              CASE WHEN pix_client_secret IS NOT NULL THEN '****' ELSE NULL END AS pix_client_secret,
+              CASE WHEN pix_certificado IS NOT NULL THEN 'configurado' ELSE NULL END AS pix_certificado
+       FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
+
+    res.json(result.rows[0] || { pix_gateway: 'efi', pix_sandbox: true });
+  } catch (error) {
+    console.error('Erro ao buscar config PIX:', error);
+    jsonErro(res, 500, 'Erro ao buscar configuração PIX');
+  }
+});
+
+// PUT /pagamentos/pix/config
+app.put('/pagamentos/pix/config', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox } = req.body;
+
+    await pool.query(
+      `INSERT INTO configuracoes (empresa, empresa_id, pix_gateway, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox)
+       VALUES ($1, $2, 'efi', $3, $4, $5, $6, $7)
+       ON CONFLICT (empresa_id) DO UPDATE
+         SET pix_client_id     = EXCLUDED.pix_client_id,
+             pix_client_secret = COALESCE(NULLIF($4, '****'), configuracoes.pix_client_secret),
+             pix_certificado   = COALESCE(NULLIF($5, 'configurado'), configuracoes.pix_certificado),
+             pix_chave         = EXCLUDED.pix_chave,
+             pix_sandbox       = EXCLUDED.pix_sandbox`,
+      [empresaResolvida.nome, empresaResolvida.id, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox ?? true]
+    );
+
+    res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao salvar config PIX:', error);
+    jsonErro(res, 500, 'Erro ao salvar configuração PIX');
+  }
+});
+
+// POST /pagamentos/pix/gerar
+app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { conta_receber_id, valor, cliente_nome } = req.body;
+    if (!valor || Number(valor) <= 0) return jsonErro(res, 400, 'Valor inválido');
+
+    const cfg = await pool.query(
+      `SELECT * FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
+    const config = cfg.rows[0] || {};
+
+    const expiracao = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+    let txid, pixCopiaECola, qrImage;
+
+    if (config.pix_sandbox || !config.pix_client_id) {
+      // ── Modo sandbox: dados de demonstração ──────────────────────────────
+      txid = `SANDBOX_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      pixCopiaECola = `00020126580014br.gov.bcb.pix0136${config.pix_chave || 'chave-pix-sandbox'}5204000053039865802BR5925SANDBOX DEMO LF ERP6009SAO PAULO62070503***6304DEMO`;
+      qrImage = null; // frontend mostra placeholder
+    } else {
+      // ── Modo produção: chamada real à EFÍ ────────────────────────────────
+      const { accessToken, base, agentOpts } = await efiAuth(config);
+
+      const valorStr = Number(valor).toFixed(2);
+      const cobPayload = {
+        calendario: { expiracao: 1800 },
+        valor: { original: valorStr },
+        chave: config.pix_chave,
+        infoAdicionais: [
+          { nome: 'Sistema', valor: 'LF ERP' },
+          ...(cliente_nome ? [{ nome: 'Cliente', valor: cliente_nome }] : [])
+        ]
+      };
+
+      const cobRes = await httpsPost(
+        `${base}/v2/cob`,
+        { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        JSON.stringify(cobPayload),
+        agentOpts
+      );
+
+      if (cobRes.status !== 201) throw new Error(`EFÍ /v2/cob: ${JSON.stringify(cobRes.body)}`);
+      txid = cobRes.body.txid;
+      pixCopiaECola = cobRes.body.pixCopiaECola;
+
+      // Buscar QR code image
+      const locId = cobRes.body.loc?.id;
+      if (locId) {
+        const qrRes = await httpsGet(`${base}/v2/loc/${locId}/qrcode`,
+          { 'Authorization': `Bearer ${accessToken}` }, agentOpts);
+        if (qrRes.status === 200) qrImage = qrRes.body.imagemQrcode;
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO cobrancas_pix (empresa, empresa_id, conta_receber_id, txid, valor, cliente_nome, status, pix_copia_e_cola, qr_image, expiracao)
+       VALUES ($1,$2,$3,$4,$5,$6,'ATIVA',$7,$8,$9)
+       ON CONFLICT (txid) DO NOTHING`,
+      [empresaResolvida.nome, empresaResolvida.id, conta_receber_id || null,
+       txid, Number(valor), cliente_nome || null, pixCopiaECola, qrImage, expiracao]
+    );
+
+    res.json({
+      sucesso: true,
+      txid,
+      pix_copia_e_cola: pixCopiaECola,
+      qr_image: qrImage,
+      expiracao: expiracao.toISOString(),
+      sandbox: config.pix_sandbox || !config.pix_client_id
+    });
+  } catch (error) {
+    console.error('Erro ao gerar PIX:', error);
+    jsonErro(res, 500, `Erro ao gerar cobrança PIX: ${error.message}`);
+  }
+});
+
+// GET /pagamentos/pix/status/:txid
+app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
+  try {
+    const { txid } = req.params;
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const local = await pool.query(
+      `SELECT * FROM cobrancas_pix WHERE txid = $1 AND (empresa_id = $2 OR empresa = $3)`,
+      [txid, empresaResolvida.id, empresaResolvida.nome]
+    );
+
+    if (!local.rowCount) return jsonErro(res, 404, 'Cobrança não encontrada');
+    const cobr = local.rows[0];
+
+    // Sandbox: status sempre ATIVA (demo)
+    if (cobr.status === 'CONCLUIDA') return res.json({ status: 'CONCLUIDA', pago_em: cobr.pago_em });
+
+    const cfg = await pool.query(
+      `SELECT * FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
+    const config = cfg.rows[0] || {};
+
+    if (config.pix_sandbox || !config.pix_client_id || txid.startsWith('SANDBOX_')) {
+      return res.json({ status: 'ATIVA', sandbox: true });
+    }
+
+    const { accessToken, base, agentOpts } = await efiAuth(config);
+    const checkRes = await httpsGet(`${base}/v2/cob/${txid}`,
+      { 'Authorization': `Bearer ${accessToken}` }, agentOpts);
+
+    if (checkRes.status === 200 && checkRes.body.status === 'CONCLUIDA') {
+      await pool.query(`UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW() WHERE txid=$1`, [txid]);
+    }
+
+    res.json({ status: checkRes.body.status || 'ATIVA' });
+  } catch (error) {
+    console.error('Erro ao verificar status PIX:', error);
+    jsonErro(res, 500, 'Erro ao verificar status da cobrança');
   }
 });
 
