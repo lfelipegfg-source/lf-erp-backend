@@ -1574,6 +1574,37 @@ async function initDb() {
       usuario_id INTEGER,
       criado_em TIMESTAMP NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS conciliacoes (
+      id SERIAL PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      empresa_id INTEGER,
+      nome TEXT NOT NULL,
+      tipo TEXT NOT NULL,
+      conta TEXT,
+      data_inicio DATE,
+      data_fim DATE,
+      total_itens INTEGER DEFAULT 0,
+      itens_conciliados INTEGER DEFAULT 0,
+      itens_ignorados INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'em_andamento',
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS conciliacao_itens (
+      id SERIAL PRIMARY KEY,
+      conciliacao_id INTEGER NOT NULL,
+      empresa TEXT,
+      empresa_id INTEGER,
+      fitid TEXT,
+      data DATE,
+      descricao TEXT,
+      valor NUMERIC(12,2),
+      tipo TEXT,
+      status TEXT DEFAULT 'pendente',
+      lancamento_id INTEGER,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 
   // ================= ALTERAÇÕES / COLUNAS =================
@@ -5774,6 +5805,250 @@ app.get('/dashboard/grafico', auth, async (req, res) => {
   } catch (error) {
     console.error('Erro ao carregar gráfico do dashboard:', error);
     jsonErro(res, 500, 'Erro ao carregar gráfico');
+  }
+});
+
+// ================= CONCILIAÇÃO BANCÁRIA =================
+
+function ofxTagVal(bloco, tag) {
+  const m = new RegExp(`<${tag}>([^<\\n\\r]+)`, 'i').exec(bloco);
+  return m ? m[1].trim() : null;
+}
+
+function parseOFXDate(str) {
+  const s = String(str || '').slice(0, 8);
+  if (s.length < 8) return null;
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+function parseOFX(texto) {
+  const itens = [];
+  const re = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
+  let m;
+  while ((m = re.exec(texto)) !== null) {
+    const b = m[1];
+    const dtposted = ofxTagVal(b, 'DTPOSTED');
+    const trnamt   = ofxTagVal(b, 'TRNAMT');
+    if (!dtposted || !trnamt) continue;
+    const valor = parseFloat(trnamt.replace(',', '.'));
+    if (isNaN(valor)) continue;
+    itens.push({
+      fitid:    ofxTagVal(b, 'FITID') || `${dtposted}_${trnamt}`,
+      data:     parseOFXDate(dtposted),
+      descricao:(ofxTagVal(b, 'MEMO') || ofxTagVal(b, 'NAME') || '').trim(),
+      valor:    Math.abs(valor),
+      tipo:     valor >= 0 ? 'credito' : 'debito'
+    });
+  }
+  return itens;
+}
+
+function parseDataBR(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((s || '').trim());
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+function parseDataISO(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test((s || '').trim()) ? s.trim() : null;
+}
+
+function parseCSV(texto) {
+  const linhas = texto.split('\n').map(l => l.trim()).filter(Boolean);
+  const itens = [];
+  for (let i = 0; i < linhas.length; i++) {
+    const cols = linhas[i].split(/[;,]/).map(c => c.replace(/^["']|["']$/g, '').trim());
+    if (cols.length < 3) continue;
+    const data = parseDataBR(cols[0]) || parseDataISO(cols[0]);
+    if (!data) continue;
+    const desc = cols[1];
+    const valorStr = cols[2].replace(/\./g, '').replace(',', '.');
+    const valor = parseFloat(valorStr);
+    if (isNaN(valor)) continue;
+    itens.push({
+      fitid:    `csv_${i}_${data}`,
+      data,
+      descricao: desc,
+      valor:    Math.abs(valor),
+      tipo:     valor >= 0 ? 'credito' : 'debito'
+    });
+  }
+  return itens;
+}
+
+// POST /conciliacao/importar
+app.post('/conciliacao/importar', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const { conteudo, tipo, nome, conta } = req.body;
+    if (!conteudo || !tipo || !nome) return jsonErro(res, 400, 'Campos obrigatórios: conteudo, tipo, nome');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    let itens = [];
+    if (tipo === 'ofx') itens = parseOFX(conteudo);
+    else if (tipo === 'csv') itens = parseCSV(conteudo);
+    else return jsonErro(res, 400, 'Tipo inválido. Use ofx ou csv.');
+
+    if (!itens.length) return jsonErro(res, 400, 'Nenhuma transação encontrada no arquivo.');
+
+    const datas = itens.map(i => i.data).filter(Boolean).sort();
+    const dataInicio = datas[0] || null;
+    const dataFim    = datas[datas.length - 1] || null;
+
+    const sessao = await pool.query(
+      `INSERT INTO conciliacoes (empresa, empresa_id, nome, tipo, conta, data_inicio, data_fim, total_itens)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [empresaResolvida.nome, empresaResolvida.id, nome, tipo, conta || null, dataInicio, dataFim, itens.length]
+    );
+    const conciliacaoId = sessao.rows[0].id;
+
+    for (const it of itens) {
+      await pool.query(
+        `INSERT INTO conciliacao_itens (conciliacao_id, empresa, empresa_id, fitid, data, descricao, valor, tipo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [conciliacaoId, empresaResolvida.nome, empresaResolvida.id, it.fitid, it.data, it.descricao, it.valor, it.tipo]
+      );
+    }
+
+    res.json({ sucesso: true, conciliacao_id: conciliacaoId, total: itens.length });
+  } catch (error) {
+    console.error('Erro ao importar conciliação:', error);
+    jsonErro(res, 500, 'Erro ao importar arquivo');
+  }
+});
+
+// GET /conciliacao
+app.get('/conciliacao', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const result = await pool.query(
+      `SELECT c.*,
+        (SELECT COUNT(*) FROM conciliacao_itens ci WHERE ci.conciliacao_id = c.id AND ci.status = 'pendente') AS pendentes
+       FROM conciliacoes c
+       WHERE c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2)
+       ORDER BY c.criado_em DESC LIMIT 50`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao listar conciliações:', error);
+    jsonErro(res, 500, 'Erro ao listar conciliações');
+  }
+});
+
+// GET /conciliacao/:id/itens
+app.get('/conciliacao/:id/itens', auth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const status = req.query.status || '';
+    let sql = `SELECT ci.*,
+        lf.descricao AS lancamento_descricao, lf.categoria AS lancamento_categoria
+      FROM conciliacao_itens ci
+      LEFT JOIN lancamentos_financeiros lf ON lf.id = ci.lancamento_id
+      WHERE ci.conciliacao_id = $1
+        AND (ci.empresa_id = $2 OR (ci.empresa_id IS NULL AND ci.empresa = $3))`;
+    const params = [id, empresaResolvida.id, empresaResolvida.nome];
+
+    if (status) { params.push(status); sql += ` AND ci.status = $${params.length}`; }
+    sql += ` ORDER BY ci.data, ci.id`;
+
+    const result = await pool.query(sql, params);
+    res.json(result.rows.map(r => ({ ...r, valor: Number(r.valor || 0) })));
+  } catch (error) {
+    console.error('Erro ao buscar itens de conciliação:', error);
+    jsonErro(res, 500, 'Erro ao buscar itens');
+  }
+});
+
+// POST /conciliacao/itens/:id/ignorar
+app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const item = await pool.query(`SELECT * FROM conciliacao_itens WHERE id = $1`, [id]);
+    if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, item.rows[0].empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    await pool.query(`UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1`, [id]);
+    await pool.query(
+      `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1 WHERE id = $1`,
+      [item.rows[0].conciliacao_id]
+    );
+    res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao ignorar item:', error);
+    jsonErro(res, 500, 'Erro ao ignorar item');
+  }
+});
+
+// POST /conciliacao/itens/:id/criar-lancamento
+app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const item = await pool.query(`SELECT * FROM conciliacao_itens WHERE id = $1`, [id]);
+    if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
+    if (item.rows[0].status === 'conciliado') return jsonErro(res, 400, 'Item já conciliado');
+
+    const row = item.rows[0];
+    const empresaResolvida = await validarAcessoEmpresa(req, row.empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { categoria, observacao } = req.body;
+    const tipoLanc = row.tipo === 'credito' ? 'receita' : 'despesa';
+
+    const lanc = await pool.query(
+      `INSERT INTO lancamentos_financeiros
+         (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, criado_por, criado_em, atualizado_em)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,'pago',$8,NOW(),NOW()) RETURNING id`,
+      [
+        empresaResolvida.nome, empresaResolvida.id,
+        tipoLanc,
+        categoria || (row.tipo === 'credito' ? 'Receita bancária' : 'Despesa bancária'),
+        row.descricao,
+        row.valor,
+        row.data,
+        req.user.id
+      ]
+    );
+    const lancamentoId = lanc.rows[0].id;
+
+    await pool.query(
+      `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2`,
+      [lancamentoId, id]
+    );
+    await pool.query(
+      `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1 WHERE id = $1`,
+      [row.conciliacao_id]
+    );
+    res.json({ sucesso: true, lancamento_id: lancamentoId });
+  } catch (error) {
+    console.error('Erro ao criar lançamento da conciliação:', error);
+    jsonErro(res, 500, 'Erro ao criar lançamento');
+  }
+});
+
+// DELETE /conciliacao/:id
+app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const sess = await pool.query(`SELECT * FROM conciliacoes WHERE id = $1`, [id]);
+    if (!sess.rowCount) return jsonErro(res, 404, 'Sessão não encontrada');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, sess.rows[0].empresa);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    await pool.query(`DELETE FROM conciliacao_itens WHERE conciliacao_id = $1`, [id]);
+    await pool.query(`DELETE FROM conciliacoes WHERE id = $1`, [id]);
+    res.json({ sucesso: true });
+  } catch (error) {
+    console.error('Erro ao excluir conciliação:', error);
+    jsonErro(res, 500, 'Erro ao excluir conciliação');
   }
 });
 
