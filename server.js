@@ -100,7 +100,8 @@ const estoqueRoutes = require('./routes/estoque.routes');
 const clientesRoutes = require('./routes/clientes.routes');
 const fornecedoresRoutes = require('./routes/fornecedores.routes');
 const gradesRoutes = require('./routes/grades.routes');
-const nfeRoutes = require('./routes/nfe.routes');
+const nfeRoutes  = require('./routes/nfe.routes');
+const nfceRoutes = require('./routes/nfce.routes');
 const tabelasPrecoRoutes = require('./routes/tabelasPreco.routes');
 const kitsRoutes = require('./routes/kits.routes');
 const imagensRoutes = require('./routes/imagens.routes');
@@ -338,6 +339,8 @@ app.use('/portal', portalRoutes({ auth, pool }));
 app.use('/caixa',      caixaRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
 app.use('/alertas',    alertasRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
+
+app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
 
 app.use(
   '/nfe',
@@ -1591,6 +1594,23 @@ async function initDb() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS nfce_emissoes (
+      id SERIAL PRIMARY KEY,
+      empresa_id INTEGER,
+      venda_id INTEGER,
+      ref TEXT UNIQUE NOT NULL,
+      ambiente INTEGER DEFAULT 2,
+      status TEXT DEFAULT 'processando',
+      chave_nfe TEXT,
+      numero INTEGER,
+      serie TEXT,
+      mensagem TEXT,
+      cancelado_em TIMESTAMPTZ,
+      motivo_cancelamento TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS cobrancas_pix (
       id SERIAL PRIMARY KEY,
       empresa TEXT,
@@ -1684,6 +1704,11 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_receber_id INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE nfe_config ADD COLUMN IF NOT EXISTS codigo_csc   TEXT;
+    ALTER TABLE nfe_config ADD COLUMN IF NOT EXISTS id_token_csc TEXT;
   `);
 
   await pool.query(`

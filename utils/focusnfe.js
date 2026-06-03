@@ -102,4 +102,30 @@ async function downloadXml(token, ambiente, ref) {
   return { text, contentType: 'application/xml' };
 }
 
-module.exports = { emitirNfe, consultarNfe, cancelarNfe, downloadDanfe, downloadXml, urlDanfe, urlXml };
+// ──────────────────────────────────────────────────────────────────────────────
+// NFC-e (modelo 65)
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function emitirNfce(token, ambiente, ref, payload) {
+  return focusRequest(token, ambiente, 'POST', `/nfce?ref=${ref}`, payload);
+}
+
+async function consultarNfce(token, ambiente, ref) {
+  return focusRequest(token, ambiente, 'GET', `/nfce/${ref}`);
+}
+
+async function cancelarNfce(token, ambiente, ref, justificativa) {
+  return focusRequest(token, ambiente, 'DELETE', `/nfce/${ref}`, { justificativa });
+}
+
+async function downloadDanfce(token, ambiente, ref) {
+  const url = `${baseUrl(ambiente)}/nfce/${ref}/pdf`;
+  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  if (!res.ok) return null;
+  return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
+}
+
+module.exports = {
+  emitirNfe, consultarNfe, cancelarNfe, downloadDanfe, downloadXml, urlDanfe, urlXml,
+  emitirNfce, consultarNfce, cancelarNfce, downloadDanfce
+};

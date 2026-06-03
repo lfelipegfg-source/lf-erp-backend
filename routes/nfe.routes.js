@@ -101,26 +101,32 @@ module.exports = ({
         token_focusnfe,
         ambiente,
         serie,
+        codigo_csc,
+        id_token_csc,
         // dados fiscais da empresa
         ie, im, crt,
         logradouro, numero, complemento, bairro, municipio, uf, cep, codigo_municipio
       } = req.body;
 
       // Salva/atualiza nfe_config
-      if (token_focusnfe || ambiente !== undefined || serie) {
+      if (token_focusnfe || ambiente !== undefined || serie || codigo_csc || id_token_csc) {
         await pool.query(
-          `INSERT INTO nfe_config (empresa_id, token_focusnfe, ambiente, serie, atualizado_em)
-           VALUES ($1, $2, $3, $4, NOW())
+          `INSERT INTO nfe_config (empresa_id, token_focusnfe, ambiente, serie, codigo_csc, id_token_csc, atualizado_em)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())
            ON CONFLICT (empresa_id) DO UPDATE SET
              token_focusnfe = COALESCE($2, nfe_config.token_focusnfe),
              ambiente       = COALESCE($3, nfe_config.ambiente),
              serie          = COALESCE($4, nfe_config.serie),
+             codigo_csc     = COALESCE($5, nfe_config.codigo_csc),
+             id_token_csc   = COALESCE($6, nfe_config.id_token_csc),
              atualizado_em  = NOW()`,
           [
             empresaResolvida.id,
             token_focusnfe || null,
             ambiente != null ? Number(ambiente) : null,
-            serie || null
+            serie || null,
+            codigo_csc || null,
+            id_token_csc || null
           ]
         );
       }
