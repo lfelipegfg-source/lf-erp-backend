@@ -106,6 +106,84 @@ module.exports = ({
     }
   });
 
+  // ── GET /clientes/segmentacao-abc ─────────────────────────────────────────
+  // Classifica clientes em A, B ou C pela Curva de Pareto:
+  //   A = responsáveis pelos primeiros 80% da receita acumulada
+  //   B = entre 80% e 95%
+  //   C = abaixo de 95%
+
+  router.get('/segmentacao-abc', auth, async (req, res) => {
+    try {
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const result = await pool.query(
+        `WITH receita AS (
+           SELECT
+             v.cliente_id,
+             COALESCE(c.nome, v.cliente_nome, 'Sem nome') AS nome,
+             COUNT(*)            AS num_vendas,
+             SUM(v.total)        AS receita_total
+           FROM vendas v
+           LEFT JOIN clientes c ON c.id = v.cliente_id
+           WHERE (v.empresa_id = $1 OR v.empresa = $2)
+             AND v.cliente_id IS NOT NULL
+           GROUP BY v.cliente_id, c.nome, v.cliente_nome
+         ),
+         geral AS (
+           SELECT SUM(receita_total) AS receita_geral FROM receita
+         ),
+         ranqueado AS (
+           SELECT r.*,
+             g.receita_geral,
+             SUM(r.receita_total) OVER (
+               ORDER BY r.receita_total DESC
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+             ) AS acumulado
+           FROM receita r, geral g
+         )
+         SELECT
+           cliente_id,
+           nome,
+           num_vendas::int,
+           ROUND(receita_total::numeric, 2)   AS receita_total,
+           ROUND(receita_geral::numeric, 2)    AS receita_geral,
+           ROUND(acumulado::numeric, 2)        AS acumulado,
+           ROUND((receita_total / NULLIF(receita_geral,0) * 100)::numeric, 2) AS percentual,
+           ROUND((acumulado     / NULLIF(receita_geral,0) * 100)::numeric, 2) AS percentual_acumulado,
+           CASE
+             WHEN acumulado / NULLIF(receita_geral,0) <= 0.80 THEN 'A'
+             WHEN acumulado / NULLIF(receita_geral,0) <= 0.95 THEN 'B'
+             ELSE 'C'
+           END AS classe
+         FROM ranqueado
+         ORDER BY receita_total DESC`,
+        [empresaResolvida.id, empresaResolvida.nome]
+      );
+
+      const rows = result.rows;
+
+      // Resumo por classe
+      const resumo = { A: { clientes: 0, receita: 0 }, B: { clientes: 0, receita: 0 }, C: { clientes: 0, receita: 0 } };
+      for (const r of rows) {
+        resumo[r.classe].clientes++;
+        resumo[r.classe].receita += Number(r.receita_total);
+      }
+
+      const receitaGeral = rows[0]?.receita_geral || 0;
+
+      return res.json({
+        clientes: rows,
+        resumo,
+        receita_geral: Number(receitaGeral),
+        total_clientes: rows.length
+      });
+    } catch (err) {
+      console.error('[clientes] segmentacao-abc:', err.message);
+      return erro(res, 500, 'Erro ao calcular segmentação ABC');
+    }
+  });
+
   router.get('/:empresa', auth, async (req, res) => {
     try {
       const empresa = req.params.empresa;
