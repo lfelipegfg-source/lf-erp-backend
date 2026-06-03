@@ -5668,6 +5668,69 @@ app.get('/dashboard', auth, async (req, res) => {
   }
 });
 
+// ================= DASHBOARD — GRÁFICOS =================
+
+app.get('/dashboard/grafico', auth, async (req, res) => {
+  try {
+    const empresaInformada = req.query.empresa || null;
+    const empresaResolvida = await validarAcessoEmpresa(req, empresaInformada);
+
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+
+    const vendasDiaParams = [];
+    const formaParams = [];
+
+    let vendasDiaWhere = `WHERE 1=1 ${adicionarFiltroEmpresaSaaS({ params: vendasDiaParams, empresaResolvida })}`;
+    let formaWhere = `WHERE 1=1 ${adicionarFiltroEmpresaSaaS({ params: formaParams, empresaResolvida })}`;
+
+    vendasDiaWhere += adicionarFiltroPeriodo({ campo: 'data', params: vendasDiaParams, dataInicial, dataFinal, castDate: false });
+    formaWhere    += adicionarFiltroPeriodo({ campo: 'data', params: formaParams,    dataInicial, dataFinal, castDate: false });
+
+    const [vendasDiaResult, formaResult] = await Promise.all([
+      pool.query(
+        `SELECT
+           (data AT TIME ZONE 'America/Fortaleza')::date AS dia,
+           COALESCE(SUM(total), 0)  AS total,
+           COUNT(*)                 AS quantidade
+         FROM vendas
+         ${vendasDiaWhere}
+         GROUP BY dia
+         ORDER BY dia`,
+        vendasDiaParams
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(NULLIF(TRIM(forma_pagamento), ''), 'Outros') AS forma,
+           COUNT(*)                                              AS quantidade,
+           COALESCE(SUM(total), 0)                              AS total
+         FROM vendas
+         ${formaWhere}
+         GROUP BY forma
+         ORDER BY total DESC`,
+        formaParams
+      )
+    ]);
+
+    res.json({
+      vendas_por_dia: vendasDiaResult.rows.map((r) => ({
+        data:       r.dia,
+        total:      Number(r.total),
+        quantidade: Number(r.quantidade)
+      })),
+      forma_pagamento: formaResult.rows.map((r) => ({
+        forma:      r.forma,
+        quantidade: Number(r.quantidade),
+        total:      Number(r.total)
+      }))
+    });
+  } catch (error) {
+    console.error('Erro ao carregar gráfico do dashboard:', error);
+    jsonErro(res, 500, 'Erro ao carregar gráfico');
+  }
+});
+
 // ================= CONFIGURAÇÕES =================
 
 // BUSCAR CONFIGURAÇÕES
