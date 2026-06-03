@@ -874,6 +874,123 @@ MAX(v.data) AS ultima_venda
     }
   });
 
+  // ── DRE — DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO ────────────────────────
+  router.get('/dre/:empresa', auth, async (req, res) => {
+    try {
+      const empresa = req.params.empresa;
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const { dataInicial, dataFinal } = obterPeriodo(req);
+      const eId   = empresaResolvida.id;
+      const eNome = empresaResolvida.nome;
+
+      // ── 1. Vendas + CMV por mês ──────────────────────────────────────────
+      const vendaParams = [eId, eNome];
+      let vendaWhere = `WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))`;
+      vendaWhere += adicionarFiltroPeriodo({ campo: 'v.data', params: vendaParams, dataInicial, dataFinal, castDate: false });
+
+      const vendasResult = await pool.query(`
+        SELECT
+          TO_CHAR(v.data, 'YYYY-MM')              AS periodo,
+          COALESCE(SUM(v.total), 0)               AS receita,
+          COALESCE(SUM(vi_cmv.cmv), 0)            AS cmv
+        FROM vendas v
+        LEFT JOIN (
+          SELECT venda_id,
+                 SUM(quantidade * COALESCE(custo_unitario, 0)) AS cmv
+          FROM venda_itens
+          GROUP BY venda_id
+        ) vi_cmv ON vi_cmv.venda_id = v.id
+        ${vendaWhere}
+        GROUP BY TO_CHAR(v.data, 'YYYY-MM')
+        ORDER BY 1
+      `, vendaParams);
+
+      // ── 2. Despesas de lançamentos por mês ───────────────────────────────
+      const lancParams = [eId, eNome];
+      let lancWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'despesa'`;
+      lancWhere += adicionarFiltroPeriodo({
+        campo: `COALESCE(pagamento_data, vencimento)`,
+        params: lancParams, dataInicial, dataFinal, castDate: false
+      });
+
+      const lancResult = await pool.query(`
+        SELECT
+          TO_CHAR(COALESCE(pagamento_data, vencimento), 'YYYY-MM') AS periodo,
+          COALESCE(SUM(valor), 0) AS despesas
+        FROM lancamentos_financeiros
+        ${lancWhere}
+        GROUP BY 1
+        ORDER BY 1
+      `, lancParams);
+
+      // ── 3. Contas a pagar pagas por mês ──────────────────────────────────
+      const cpParams = [eId, eNome];
+      let cpWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+                      AND LOWER(COALESCE(status,'pendente')) = 'pago' AND data_pagamento IS NOT NULL`;
+      cpWhere += adicionarFiltroPeriodo({ campo: 'data_pagamento', params: cpParams, dataInicial, dataFinal, castDate: false });
+
+      const cpResult = await pool.query(`
+        SELECT
+          TO_CHAR(data_pagamento, 'YYYY-MM') AS periodo,
+          COALESCE(SUM(valor), 0) AS despesas
+        FROM contas_pagar
+        ${cpWhere}
+        GROUP BY 1
+        ORDER BY 1
+      `, cpParams);
+
+      // ── Merge mensal ─────────────────────────────────────────────────────
+      const periodos = new Set([
+        ...vendasResult.rows.map(r => r.periodo),
+        ...lancResult.rows.map(r => r.periodo),
+        ...cpResult.rows.map(r => r.periodo)
+      ]);
+
+      const lancMap = Object.fromEntries(lancResult.rows.map(r => [r.periodo, Number(r.despesas)]));
+      const cpMap   = Object.fromEntries(cpResult.rows.map(r => [r.periodo, Number(r.despesas)]));
+
+      const mensal = Array.from(periodos).sort().map(p => {
+        const vRow = vendasResult.rows.find(r => r.periodo === p) || { receita: 0, cmv: 0 };
+        const receita   = Number(vRow.receita || 0);
+        const cmv       = Number(vRow.cmv     || 0);
+        const despesas  = Number(lancMap[p] || 0) + Number(cpMap[p] || 0);
+        const lucro_bruto     = receita - cmv;
+        const resultado       = lucro_bruto - despesas;
+        const margem_bruta    = receita > 0 ? +((lucro_bruto / receita) * 100).toFixed(2) : 0;
+        const margem_oper     = receita > 0 ? +((resultado   / receita) * 100).toFixed(2) : 0;
+        const [ano, mes]      = p.split('-');
+        const nomesMes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+        const label = `${nomesMes[Number(mes) - 1]}/${ano}`;
+        return { periodo: p, label, receita, cmv, lucro_bruto, despesas, resultado, margem_bruta, margem_oper };
+      });
+
+      // ── Totais do período ────────────────────────────────────────────────
+      const totReceita  = mensal.reduce((s, m) => s + m.receita,    0);
+      const totCmv      = mensal.reduce((s, m) => s + m.cmv,        0);
+      const totDespesas = mensal.reduce((s, m) => s + m.despesas,    0);
+      const totLucro    = totReceita - totCmv;
+      const totResult   = totLucro - totDespesas;
+
+      return res.json({
+        periodo_inicio: dataInicial,
+        periodo_fim:    dataFinal,
+        receita_bruta:          +totReceita.toFixed(2),
+        cmv:                    +totCmv.toFixed(2),
+        lucro_bruto:            +totLucro.toFixed(2),
+        margem_bruta:           totReceita > 0 ? +((totLucro  / totReceita) * 100).toFixed(2) : 0,
+        despesas_operacionais:  +totDespesas.toFixed(2),
+        resultado_operacional:  +totResult.toFixed(2),
+        margem_operacional:     totReceita > 0 ? +((totResult / totReceita) * 100).toFixed(2) : 0,
+        mensal
+      });
+    } catch (error) {
+      console.error('Erro real ao gerar DRE:', error);
+      return erro(res, 500, 'Erro ao gerar DRE');
+    }
+  });
+
   // ── VENDAS POR VARIAÇÃO DE GRADE ─────────────────────────────────────────
   router.get('/vendas/por-grade/:empresa', auth, async (req, res) => {
     try {
