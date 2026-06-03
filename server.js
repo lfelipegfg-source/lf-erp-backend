@@ -5258,6 +5258,20 @@ app.get('/dashboard', auth, async (req, res) => {
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
+    // Período anterior (mesma duração, imediatamente antes)
+    let prevInicial = null, prevFinal = null;
+    if (dataInicial && dataFinal) {
+      const ini = new Date(dataInicial);
+      const fim = new Date(dataFinal);
+      const dias = Math.round((fim - ini) / 86400000);
+      const pFim = new Date(ini);
+      pFim.setDate(pFim.getDate() - 1);
+      const pIni = new Date(pFim);
+      pIni.setDate(pIni.getDate() - dias);
+      prevInicial = pIni.toISOString().slice(0, 10);
+      prevFinal   = pFim.toISOString().slice(0, 10);
+    }
+
     const vendasParams = [];
     const comprasParams = [];
     const receberParams = [];
@@ -5388,6 +5402,20 @@ app.get('/dashboard', auth, async (req, res) => {
       topProdutosJoinAndWhere += ` AND v.data <= $${topProdutosParams.length}`;
     }
 
+    // Queries do período anterior (faturamento, vendas, clientes)
+    const vAntParams = [];
+    const cAntParams = [];
+    let vAntWhere = `WHERE 1=1 ${adicionarFiltroEmpresaSaaS({ params: vAntParams, empresaResolvida })}`;
+    let cAntWhere = `WHERE 1=1 ${adicionarFiltroEmpresaSaaS({ params: cAntParams, empresaResolvida })}`;
+    if (prevInicial) {
+      vAntParams.push(prevInicial); vAntWhere += ` AND data >= $${vAntParams.length}`;
+      cAntParams.push(prevInicial); cAntWhere += ` AND criado_em::date >= $${cAntParams.length}`;
+    }
+    if (prevFinal) {
+      vAntParams.push(prevFinal); vAntWhere += ` AND data <= $${vAntParams.length}`;
+      cAntParams.push(prevFinal); cAntWhere += ` AND criado_em::date <= $${cAntParams.length}`;
+    }
+
     const [
       vendasResult,
       comprasResult,
@@ -5399,7 +5427,9 @@ app.get('/dashboard', auth, async (req, res) => {
       estoqueBaixoResult,
       indicadoresFinanceirosResult,
       abcResult,
-      lancamentosFinanceirosResult
+      lancamentosFinanceirosResult,
+      vendasAntResult,
+      clientesAntResult
     ] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total), 0) AS faturamento FROM vendas ${vendasWhere}`,
@@ -5533,6 +5563,16 @@ app.get('/dashboard', auth, async (req, res) => {
   GROUP BY tipo
   `,
         lancamentosParams
+      ),
+
+      // Período anterior
+      pool.query(
+        `SELECT COUNT(*) AS total_vendas, COALESCE(SUM(total), 0) AS faturamento FROM vendas ${vAntWhere}`,
+        vAntParams
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total_clientes FROM clientes ${cAntWhere}`,
+        cAntParams
       )
     ]);
 
@@ -5660,7 +5700,13 @@ app.get('/dashboard', auth, async (req, res) => {
         nome: row.nome,
         quantidade: Number(row.quantidade || 0)
       })),
-      alertas
+      alertas,
+
+      comparativo: prevInicial ? {
+        faturamento: Number(vendasAntResult.rows[0]?.faturamento  || 0),
+        vendas:      Number(vendasAntResult.rows[0]?.total_vendas || 0),
+        clientes:    Number(clientesAntResult.rows[0]?.total_clientes || 0)
+      } : null
     });
   } catch (error) {
     console.error('Erro real ao carregar dashboard:', error);
