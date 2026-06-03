@@ -874,6 +874,78 @@ MAX(v.data) AS ultima_venda
     }
   });
 
+  // ── INADIMPLÊNCIA ─────────────────────────────────────────────────────────
+  router.get('/inadimplencia/:empresa', auth, async (req, res) => {
+    try {
+      const empresa = req.params.empresa;
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      // Atualiza status antes de consultar
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+
+      const params = [];
+      let whereBase = `
+        WHERE 1=1
+        ${adicionarFiltroEmpresaSaaS({ params, empresaResolvida })}
+        AND data_vencimento IS NOT NULL
+        AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
+        AND data_vencimento::date < CURRENT_DATE
+      `;
+
+      // ── Por cliente ──────────────────────────────────────────────────────
+      const clientesResult = await pool.query(`
+        SELECT
+          COALESCE(cliente_id::text, 'sem_cadastro') AS cliente_key,
+          COALESCE(cliente_nome, 'Consumidor Final')  AS cliente_nome,
+          COUNT(*)                                    AS total_titulos,
+          COALESCE(SUM(valor), 0)                     AS valor_total,
+          MAX(CURRENT_DATE - data_vencimento::date)   AS max_dias_atraso,
+          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 1  AND 30  THEN valor ELSE 0 END), 0) AS faixa_1_30,
+          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 31 AND 60  THEN valor ELSE 0 END), 0) AS faixa_31_60,
+          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 61 AND 90  THEN valor ELSE 0 END), 0) AS faixa_61_90,
+          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date > 90              THEN valor ELSE 0 END), 0) AS faixa_90plus
+        FROM contas_receber
+        ${whereBase}
+        GROUP BY cliente_key, cliente_nome
+        ORDER BY valor_total DESC
+      `, params);
+
+      const clientes = clientesResult.rows.map((r) => ({
+        cliente_key:       r.cliente_key,
+        cliente_nome:      r.cliente_nome,
+        total_titulos:     Number(r.total_titulos   || 0),
+        valor_total:       Number(r.valor_total      || 0),
+        max_dias_atraso:   Number(r.max_dias_atraso  || 0),
+        faixa_1_30:        Number(r.faixa_1_30       || 0),
+        faixa_31_60:       Number(r.faixa_31_60      || 0),
+        faixa_61_90:       Number(r.faixa_61_90      || 0),
+        faixa_90plus:      Number(r.faixa_90plus     || 0)
+      }));
+
+      // ── Totais ──────────────────────────────────────────────────────────
+      const totValor    = clientes.reduce((s, c) => s + c.valor_total,  0);
+      const totTitulos  = clientes.reduce((s, c) => s + c.total_titulos, 0);
+      const aging = {
+        faixa_1_30:  clientes.reduce((s, c) => s + c.faixa_1_30,  0),
+        faixa_31_60: clientes.reduce((s, c) => s + c.faixa_31_60, 0),
+        faixa_61_90: clientes.reduce((s, c) => s + c.faixa_61_90, 0),
+        faixa_90plus: clientes.reduce((s, c) => s + c.faixa_90plus, 0)
+      };
+
+      return res.json({
+        total_clientes: clientes.length,
+        total_titulos:  totTitulos,
+        total_valor:    +totValor.toFixed(2),
+        aging,
+        clientes
+      });
+    } catch (error) {
+      console.error('Erro real ao gerar relatório de inadimplência:', error);
+      return erro(res, 500, 'Erro ao gerar relatório de inadimplência');
+    }
+  });
+
   // ── DRE — DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO ────────────────────────
   router.get('/dre/:empresa', auth, async (req, res) => {
     try {
