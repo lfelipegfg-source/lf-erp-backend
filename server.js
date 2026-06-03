@@ -108,6 +108,7 @@ const orcamentosRoutes = require('./routes/orcamentos.routes');
 const pedidosRoutes = require('./routes/pedidos.routes');
 const comissoesRoutes = require('./routes/comissoes.routes');
 const portalRoutes    = require('./routes/portal.routes');
+const caixaRoutes     = require('./routes/caixa.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -332,6 +333,7 @@ app.use(
 );
 
 app.use('/portal', portalRoutes({ auth, pool }));
+app.use('/caixa',  caixaRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
 
 app.use(
   '/nfe',
