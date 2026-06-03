@@ -525,5 +525,108 @@ module.exports = function ({
     }
   });
 
+  // ── POST /compras/importar-xml ──────────────────────────────────────────────
+  // Faz o parse de um XML de NF-e do fornecedor e retorna os dados estruturados.
+  // Não cria nada no banco — apenas extrai e retorna para o frontend confirmar.
+
+  function xmlTag(xml, tag) {
+    const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(xml);
+    return m ? m[1].trim() : null;
+  }
+
+  function xmlTagAll(xml, tag) {
+    const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+    const results = [];
+    let m;
+    while ((m = re.exec(xml)) !== null) results.push(m[1].trim());
+    return results;
+  }
+
+  const FORMA_PGTO_NF = {
+    '01': 'dinheiro', '02': 'cheque', '03': 'cartao credito',
+    '04': 'cartao debito', '05': 'credito loja', '10': 'vale alimentacao',
+    '11': 'vale refeicao', '12': 'vale presente', '13': 'vale combustivel',
+    '14': 'duplicata mercantil', '15': 'boleto', '17': 'pix', '90': 'sem pagamento', '99': 'outros'
+  };
+
+  router.post('/importar-xml', auth, async (req, res) => {
+    try {
+      const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const { conteudo } = req.body;
+      if (!conteudo) return erro(res, 400, 'Conteúdo XML não informado');
+
+      // ── Emitente (fornecedor) ────────────────────────────────────────────
+      const emitBloco = xmlTag(conteudo, 'emit');
+      const cnpjFornecedor = emitBloco ? (xmlTag(emitBloco, 'CNPJ') || xmlTag(emitBloco, 'CPF') || '') : '';
+      const nomeFornecedor = emitBloco ? (xmlTag(emitBloco, 'xNome') || '') : '';
+
+      // ── Identificação ────────────────────────────────────────────────────
+      const ideBloco = xmlTag(conteudo, 'ide');
+      const numeroNF = ideBloco ? (xmlTag(ideBloco, 'nNF') || '') : '';
+      const dhEmi    = ideBloco ? (xmlTag(ideBloco, 'dhEmi') || xmlTag(ideBloco, 'dEmi') || '') : '';
+      const dataEmissao = dhEmi ? dhEmi.slice(0, 10) : null;
+
+      // ── Total ────────────────────────────────────────────────────────────
+      const totalBloco = xmlTag(conteudo, 'ICMSTot');
+      const totalNF = totalBloco ? parseFloat(xmlTag(totalBloco, 'vNF') || '0') : 0;
+
+      // ── Forma de pagamento ───────────────────────────────────────────────
+      const detPagBloco = xmlTag(conteudo, 'detPag') || xmlTag(conteudo, 'pag') || '';
+      const tPag = xmlTag(detPagBloco, 'tPag') || '99';
+      const formaPagamento = FORMA_PGTO_NF[tPag] || 'outros';
+
+      // ── Itens ────────────────────────────────────────────────────────────
+      const detBlocos = xmlTagAll(conteudo, 'det');
+      const itens = detBlocos.map((det) => {
+        const prod = xmlTag(det, 'prod') || det;
+        const codigo  = xmlTag(prod, 'cProd') || '';
+        const nome    = xmlTag(prod, 'xProd') || 'Produto';
+        const ncm     = xmlTag(prod, 'NCM') || '';
+        const unidade = xmlTag(prod, 'uCom') || 'UN';
+        const qty     = parseFloat(xmlTag(prod, 'qCom') || '1');
+        const vUnit   = parseFloat(xmlTag(prod, 'vUnCom') || '0');
+        const vTotal  = parseFloat(xmlTag(prod, 'vProd') || String(qty * vUnit));
+        return { codigo, nome, ncm, unidade, quantidade: qty, custo_unitario: vUnit, total: vTotal };
+      }).filter(i => i.quantidade > 0);
+
+      if (!itens.length) return erro(res, 400, 'Nenhum item encontrado no XML');
+
+      // Tenta encontrar fornecedor pelo CNPJ
+      let fornecedorId = null;
+      let fornecedorNome = nomeFornecedor;
+      if (cnpjFornecedor) {
+        const cnpjLimpo = cnpjFornecedor.replace(/\D/g, '');
+        const fRes = await pool.query(
+          `SELECT id, nome FROM fornecedores
+           WHERE (empresa_id = $1 OR empresa = $2)
+             AND replace(replace(replace(cnpj,'.',''),'-',''),'/','') = $3
+             AND deletado_em IS NULL
+           LIMIT 1`,
+          [empresaResolvida.id, empresaResolvida.nome, cnpjLimpo]
+        );
+        if (fRes.rowCount > 0) {
+          fornecedorId   = fRes.rows[0].id;
+          fornecedorNome = fRes.rows[0].nome;
+        }
+      }
+
+      return ok(res, {
+        fornecedor_cnpj: cnpjFornecedor,
+        fornecedor_nome: fornecedorNome,
+        fornecedor_id:   fornecedorId,
+        numero_nf:       numeroNF,
+        data_emissao:    dataEmissao,
+        total:           totalNF,
+        forma_pagamento: formaPagamento,
+        itens
+      });
+    } catch (error) {
+      console.error('[compras] importar-xml:', error.message);
+      return erro(res, 500, 'Erro ao processar XML: ' + error.message);
+    }
+  });
+
   return router;
 };
