@@ -125,7 +125,37 @@ async function downloadDanfce(token, ambiente, ref) {
   return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// NFS-e (Nota Fiscal de Serviço Eletrônica)
+// FocusNFe suporta NFS-e para múltiplos municípios via API unificada.
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function emitirNfse(token, ambiente, ref, payload) {
+  return focusRequest(token, ambiente, 'POST', `/nfse?ref=${ref}`, payload);
+}
+
+async function consultarNfse(token, ambiente, ref) {
+  return focusRequest(token, ambiente, 'GET', `/nfse/${ref}`);
+}
+
+async function cancelarNfse(token, ambiente, ref) {
+  return focusRequest(token, ambiente, 'DELETE', `/nfse/${ref}`);
+}
+
+async function downloadNfsePdf(token, ambiente, ref) {
+  const url = `${baseUrl(ambiente)}/nfse/${ref}/pdf`;
+  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  if (!res.ok) return null;
+  return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
+}
+
+async function listarNfse(token, ambiente, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return focusRequest(token, ambiente, 'GET', `/nfse${qs ? '?' + qs : ''}`);
+}
+
 module.exports = {
   emitirNfe, consultarNfe, cancelarNfe, downloadDanfe, downloadXml, urlDanfe, urlXml,
-  emitirNfce, consultarNfce, cancelarNfce, downloadDanfce
+  emitirNfce, consultarNfce, cancelarNfce, downloadDanfce,
+  emitirNfse, consultarNfse, cancelarNfse, downloadNfsePdf, listarNfse
 };

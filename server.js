@@ -102,6 +102,7 @@ const fornecedoresRoutes = require('./routes/fornecedores.routes');
 const gradesRoutes = require('./routes/grades.routes');
 const nfeRoutes  = require('./routes/nfe.routes');
 const nfceRoutes = require('./routes/nfce.routes');
+const nfseRoutes = require('./routes/nfse.routes');
 const tabelasPrecoRoutes = require('./routes/tabelasPreco.routes');
 const kitsRoutes = require('./routes/kits.routes');
 const imagensRoutes = require('./routes/imagens.routes');
@@ -341,6 +342,7 @@ app.use('/alertas',    alertasRoutes({ auth, writeRateLimiter, pool, validarAces
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
 app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
+app.use('/nfse', nfseRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
 
 app.use(
   '/nfe',
