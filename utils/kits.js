@@ -16,8 +16,8 @@
  * estornarComponentesKit: restaura estoque dos componentes ao estornar venda.
  */
 
-async function calcularEstoqueKit(pool, kitId, empresaId) {
-  const r = await pool.query(
+async function calcularEstoqueKit(db, kitId, empresaId) {
+  const r = await db.query(
     `SELECT kc.quantidade AS qtd_por_kit, p.estoque, p.nome
      FROM kit_componentes kc
      JOIN produtos p ON p.id = kc.componente_id AND p.empresa_id = kc.empresa_id
@@ -38,9 +38,10 @@ async function calcularEstoqueKit(pool, kitId, empresaId) {
   return minKits === Infinity ? 0 : minKits;
 }
 
-async function sincronizarEstoqueKit(pool, kitId, empresaId) {
-  const estoque = await calcularEstoqueKit(pool, kitId, empresaId);
-  await pool.query(
+// Aceita pool ou client (importante: usar client dentro de transações)
+async function sincronizarEstoqueKit(db, kitId, empresaId) {
+  const estoque = await calcularEstoqueKit(db, kitId, empresaId);
+  await db.query(
     `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
     [estoque, kitId, empresaId]
   );

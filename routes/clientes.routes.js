@@ -206,6 +206,7 @@ module.exports = ({
       let idx = 2;
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${idx}
@@ -213,7 +214,7 @@ module.exports = ({
             OR LOWER(COALESCE(telefone, '')) LIKE $${idx}
           )
         `;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 

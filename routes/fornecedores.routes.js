@@ -144,6 +144,7 @@ module.exports = function ({
       let idx = 2;
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${idx}
@@ -152,7 +153,7 @@ module.exports = function ({
             OR LOWER(COALESCE(email, '')) LIKE $${idx}
           )
         `;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 

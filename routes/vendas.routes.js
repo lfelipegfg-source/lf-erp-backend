@@ -82,7 +82,7 @@ module.exports = ({
   async function vendaPossuiParcelaPaga({ client, vendaId, empresaResolvida }) {
     const result = await client.query(
       `
-      SELECT COUNT(*) AS total
+      SELECT 1
       FROM contas_receber
       WHERE venda_id = $1
         AND (
@@ -91,11 +91,12 @@ module.exports = ({
           OR empresa_id IS NULL
         )
         AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+      LIMIT 1
       `,
       [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    return Number(result.rows[0].total || 0) > 0;
+    return result.rowCount > 0;
   }
 
   async function estornarEstoqueVenda({ client, vendaId, empresaResolvida, usuarioId, motivo }) {
@@ -143,7 +144,7 @@ module.exports = ({
           qtdKits: quantidade, vendaId, usuarioId,
           registrarMovimentacaoEstoque
         });
-        await sincronizarEstoqueKit(pool, produtoId, empresaResolvida.id);
+        await sincronizarEstoqueKit(client, produtoId, empresaResolvida.id);
       } else {
         const produtoResult = await client.query(
           `SELECT estoque FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
@@ -311,7 +312,7 @@ module.exports = ({
         });
 
         // Sincroniza estoque do kit com base nos componentes restantes
-        await sincronizarEstoqueKit(pool, produtoId, empresaResolvida.id);
+        await sincronizarEstoqueKit(client, produtoId, empresaResolvida.id);
 
       // ── Produto simples (sem grade, sem kit) ───────────────────────
       } else {
@@ -902,7 +903,7 @@ module.exports = ({
     empresaResolvida
   })}
 `;
-      let idx = 2;
+      let idx = params.length + 1;
 
       if (clienteId > 0) {
         sql += ` AND v.cliente_id = $${idx}`;
@@ -923,12 +924,13 @@ module.exports = ({
       }
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += ` AND (
           LOWER(COALESCE(v.cliente_nome,'')) LIKE $${idx}
           OR LOWER(COALESCE(v.observacao,'')) LIKE $${idx}
           OR CAST(v.id AS TEXT) LIKE $${idx}
         )`;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 

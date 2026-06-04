@@ -12,65 +12,54 @@
  */
 
 async function resolverPreco({ pool, produtoId, gradeId = null, clienteId = null, empresaId, quantidade = 1 }) {
-  // Preço padrão como fallback (produto pode ter grade com preco próprio)
-  let precoPadrao = null;
+  // Query 1: produto + grade em uma única round-trip
+  const prodResult = await pool.query(
+    `SELECT p.preco AS produto_preco,
+            g.preco AS grade_preco
+     FROM produtos p
+     LEFT JOIN produto_grades g
+       ON g.id = $2 AND g.produto_id = p.id
+     WHERE p.id = $1 AND p.empresa_id = $3 AND p.deletado_em IS NULL`,
+    [produtoId, gradeId || 0, empresaId]
+  );
 
-  if (gradeId) {
-    const g = await pool.query(
-      `SELECT COALESCE(preco, 0) AS preco FROM produto_grades WHERE id = $1 AND produto_id = $2`,
-      [gradeId, produtoId]
-    );
-    if (g.rowCount > 0 && Number(g.rows[0].preco) > 0) precoPadrao = Number(g.rows[0].preco);
-  }
+  if (prodResult.rowCount === 0) return null;
 
-  if (!precoPadrao) {
-    const p = await pool.query(
-      `SELECT preco FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-      [produtoId, empresaId]
-    );
-    if (p.rowCount === 0) return null;
-    precoPadrao = Number(p.rows[0].preco || 0);
-  }
+  const row = prodResult.rows[0];
+  const gradePreco = gradeId ? Number(row.grade_preco || 0) : 0;
+  const precoPadrao = gradeId && gradePreco > 0 ? gradePreco : Number(row.produto_preco || 0);
 
-  // Sem cliente → preço padrão
+  // Sem cliente → preço padrão direto
   if (!clienteId) return precoPadrao;
 
-  // Busca tabela_preco_id do cliente
-  const cli = await pool.query(
-    `SELECT tabela_preco_id FROM clientes WHERE id = $1 AND empresa_id = $2`,
-    [clienteId, empresaId]
-  );
-  if (cli.rowCount === 0 || !cli.rows[0].tabela_preco_id) return precoPadrao;
-
-  const tabelaId = cli.rows[0].tabela_preco_id;
-
-  // Busca configuração da tabela
-  const tab = await pool.query(
-    `SELECT * FROM tabelas_preco WHERE id = $1 AND empresa_id = $2 AND ativa = true`,
-    [tabelaId, empresaId]
-  );
-  if (tab.rowCount === 0) return precoPadrao;
-
-  const tabela = tab.rows[0];
-
-  // 1 e 2 — Preço fixo por produto (com ou sem grade), respeitando quantidade mínima
-  const itemResult = await pool.query(
-    `SELECT preco
-     FROM tabela_preco_itens
-     WHERE tabela_id = $1
-       AND produto_id = $2
-       AND (grade_id = $3 OR grade_id IS NULL)
-       AND quantidade_minima <= $4
-     ORDER BY
-       -- Prefere o item mais específico (com grade) e a maior quantidade_minima aplicável
-       (CASE WHEN grade_id = $3 THEN 0 ELSE 1 END),
-       quantidade_minima DESC
-     LIMIT 1`,
-    [tabelaId, produtoId, gradeId, quantidade]
+  // Query 2: tabela do cliente + itens específicos em uma única round-trip
+  const tabelaResult = await pool.query(
+    `SELECT tp.tipo, tp.desconto_percentual, tp.markup_percentual,
+            tpi.preco AS item_preco
+     FROM clientes c
+     JOIN tabelas_preco tp
+       ON tp.id = c.tabela_preco_id AND tp.empresa_id = c.empresa_id AND tp.ativa = true
+     LEFT JOIN LATERAL (
+       SELECT preco
+       FROM tabela_preco_itens
+       WHERE tabela_id = tp.id
+         AND produto_id = $2
+         AND (grade_id = $3 OR grade_id IS NULL)
+         AND quantidade_minima <= $4
+       ORDER BY (CASE WHEN grade_id = $3 THEN 0 ELSE 1 END), quantidade_minima DESC
+       LIMIT 1
+     ) tpi ON true
+     WHERE c.id = $1 AND c.empresa_id = $5`,
+    [clienteId, produtoId, gradeId, quantidade, empresaId]
   );
 
-  if (itemResult.rowCount > 0) {
-    return Number(itemResult.rows[0].preco);
+  if (tabelaResult.rowCount === 0) return precoPadrao;
+
+  const tabela = tabelaResult.rows[0];
+
+  // 1/2 — Preço fixo encontrado na tabela
+  if (tabela.item_preco !== null && tabela.item_preco !== undefined) {
+    return Number(tabela.item_preco);
   }
 
   // 3 — Regra percentual global da tabela
