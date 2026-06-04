@@ -7086,6 +7086,67 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── GET /admin/dashboard — métricas SaaS Owner ───────────────────────────────
+app.get('/admin/dashboard', auth, apenasAdmin, async (req, res) => {
+  try {
+    const [empresasResult, receitaResult, ativosResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE assinatura_status = 'ativo')   AS ativos,
+          COUNT(*) FILTER (WHERE assinatura_status = 'trial')   AS em_trial,
+          COUNT(*) FILTER (WHERE bloqueada = true)              AS bloqueados,
+          COUNT(*) FILTER (WHERE assinatura_status IN ('inativo','cancelado')) AS inativos,
+          COUNT(*) FILTER (WHERE criado_em >= NOW() - INTERVAL '30 days') AS novos_30d,
+          COUNT(*) FILTER (WHERE assinatura_status = 'trial' AND trial_fim < CURRENT_DATE) AS trial_expirado
+        FROM empresas`),
+      pool.query(`
+        SELECT COALESCE(SUM(p.preco_mensal), 0) AS mrr
+        FROM empresas e
+        JOIN planos p ON p.id = e.plano_id
+        WHERE e.assinatura_status = 'ativo' AND NOT e.bloqueada`),
+      pool.query(`
+        SELECT
+          COUNT(*) AS total_vendas_30d,
+          COALESCE(SUM(total), 0) AS volume_vendas_30d
+        FROM vendas
+        WHERE criado_em >= NOW() - INTERVAL '30 days'`),
+    ]);
+
+    const e = empresasResult.rows[0];
+    const mrr = Number(receitaResult.rows[0]?.mrr || 0);
+    const v = ativosResult.rows[0];
+
+    // Últimas 6 empresas criadas
+    const ultimasResult = await pool.query(
+      `SELECT e.nome, e.assinatura_status, e.criado_em, p.nome AS plano_nome
+       FROM empresas e
+       LEFT JOIN planos p ON p.id = e.plano_id
+       ORDER BY e.criado_em DESC LIMIT 6`
+    );
+
+    res.json({
+      sucesso: true,
+      metricas: {
+        total_empresas:    Number(e.total),
+        ativas:            Number(e.ativos),
+        em_trial:          Number(e.em_trial),
+        bloqueadas:        Number(e.bloqueados),
+        inativos:          Number(e.inativos),
+        novos_30d:         Number(e.novos_30d),
+        trial_expirado:    Number(e.trial_expirado),
+        mrr:               Number(mrr.toFixed(2)),
+        total_vendas_30d:  Number(v.total_vendas_30d),
+        volume_vendas_30d: Number(v.volume_vendas_30d || 0)
+      },
+      ultimas_empresas: ultimasResult.rows
+    });
+  } catch (err) {
+    console.error('[admin] dashboard:', err.message);
+    jsonErro(res, 500, 'Erro ao carregar dashboard admin');
+  }
+});
+
 // ================= ADMIN: GESTÃO DE EMPRESAS =================
 
 app.get('/admin/empresas', auth, apenasAdmin, async (req, res) => {
