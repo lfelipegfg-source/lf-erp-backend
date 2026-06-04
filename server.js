@@ -7087,6 +7087,60 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── LGPD — exportação de dados da própria empresa ─────────────────────────────
+app.get('/empresa/exportar-dados', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const id = empresaResolvida.id;
+
+    const [
+      clientesResult, produtosResult, vendasResult,
+      venda_itensResult, comprasResult, compra_itensResult,
+      crResult, cpResult, movimResult, lancamentosResult
+    ] = await Promise.all([
+      pool.query(`SELECT id,nome,telefone,email,cpf,cpf_cnpj,endereco,criado_em FROM clientes WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT id,nome,categoria,preco,custo_medio,estoque,estoque_minimo,codigo_barras,criado_em FROM produtos WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT id,cliente_nome,subtotal,desconto,acrescimo,total,pagamento,status_pagamento,data,criado_em FROM vendas WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT vi.venda_id,vi.produto_nome,vi.quantidade,vi.preco_unitario,vi.total FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE v.empresa_id=$1 ORDER BY vi.venda_id,vi.id`, [id]),
+      pool.query(`SELECT id,fornecedor_id,data,total,pagamento,status,criado_em FROM compras WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT ci.compra_id,ci.produto_nome,ci.quantidade,ci.custo_unitario FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE c.empresa_id=$1 ORDER BY ci.compra_id`, [id]),
+      pool.query(`SELECT id,cliente_nome,parcela,total_parcelas,valor,data_vencimento,data_pagamento,status,forma_pagamento FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT id,fornecedor_id,descricao,valor,data_vencimento,data_pagamento,status FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT produto_id,tipo,quantidade,data_movimentacao FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
+      pool.query(`SELECT id,tipo,descricao,valor,data,categoria FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY data`, [id])
+    ]);
+
+    const payload = {
+      exportacao: {
+        empresa:      { id: empresaResolvida.id, nome: empresaResolvida.nome },
+        gerado_em:    new Date().toISOString(),
+        aviso_lgpd:   'Exportação de dados pessoais conforme LGPD (Lei 13.709/2018).'
+      },
+      clientes:              clientesResult.rows,
+      produtos:              produtosResult.rows,
+      vendas:                vendasResult.rows,
+      venda_itens:           venda_itensResult.rows,
+      compras:               comprasResult.rows,
+      compra_itens:          compra_itensResult.rows,
+      contas_receber:        crResult.rows,
+      contas_pagar:          cpResult.rows,
+      movimentacoes_estoque: movimResult.rows,
+      lancamentos_financeiros: lancamentosResult.rows
+    };
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="lferp-dados-${empresaResolvida.nome.replace(/\s+/g,'_')}-${hoje()}.json"`
+    );
+    res.send(JSON.stringify(payload, null, 2));
+  } catch (err) {
+    console.error('[lgpd] exportar-dados:', err.message);
+    jsonErro(res, 500, 'Erro ao exportar dados');
+  }
+});
+
 // ── Notificações in-app ───────────────────────────────────────────────────────
 // GET /notificacoes — retorna notificações relevantes para a empresa logada
 app.get('/notificacoes', auth, async (req, res) => {
