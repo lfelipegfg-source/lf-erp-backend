@@ -279,5 +279,97 @@ module.exports = function ({
     }
   });
 
+  // ── Cashflow futuro ───────────────────────────────────────────────────────────
+  // GET /financeiro/cashflow-futuro?dias=30|60|90
+  router.get('/cashflow-futuro', auth, async (req, res) => {
+    try {
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
+
+      await Promise.all([
+        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id),
+        atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+      ]);
+
+      const [receberResult, pagarResult] = await Promise.all([
+        pool.query(
+          `SELECT
+             data_vencimento AS data,
+             SUM(COALESCE(valor_atualizado, valor)) AS valor,
+             COUNT(*) AS qtd
+           FROM contas_receber
+           WHERE empresa_id = $1
+             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
+             AND data_vencimento IS NOT NULL
+             AND data_vencimento <= (CURRENT_DATE + ($2 || ' days')::INTERVAL)::DATE
+           GROUP BY data_vencimento
+           ORDER BY data_vencimento`,
+          [empresaResolvida.id, dias]
+        ),
+        pool.query(
+          `SELECT
+             data_vencimento AS data,
+             SUM(COALESCE(valor_atualizado, valor)) AS valor,
+             COUNT(*) AS qtd
+           FROM contas_pagar
+           WHERE empresa_id = $1
+             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
+             AND data_vencimento IS NOT NULL
+             AND data_vencimento <= (CURRENT_DATE + ($2 || ' days')::INTERVAL)::DATE
+           GROUP BY data_vencimento
+           ORDER BY data_vencimento`,
+          [empresaResolvida.id, dias]
+        )
+      ]);
+
+      // Monta mapa de dias com entradas e saídas
+      const mapaEntradas = {};
+      const mapaSaidas   = {};
+      let totalEntradas  = 0;
+      let totalSaidas    = 0;
+
+      for (const row of receberResult.rows) {
+        mapaEntradas[row.data] = Number(row.valor || 0);
+        totalEntradas += Number(row.valor || 0);
+      }
+      for (const row of pagarResult.rows) {
+        mapaSaidas[row.data] = Number(row.valor || 0);
+        totalSaidas += Number(row.valor || 0);
+      }
+
+      // Cria array de dias com saldo acumulado
+      const hoje = new Date();
+      let saldoAcum = 0;
+      const projecao = [];
+
+      for (let i = 0; i <= dias; i++) {
+        const d = new Date(hoje);
+        d.setDate(d.getDate() + i);
+        const key = d.toISOString().slice(0, 10);
+        const entrada = mapaEntradas[key] || 0;
+        const saida   = mapaSaidas[key]   || 0;
+
+        if (entrada > 0 || saida > 0) {
+          saldoAcum += entrada - saida;
+          projecao.push({ data: key, entrada, saida, saldo_acumulado: Number(saldoAcum.toFixed(2)) });
+        }
+      }
+
+      return res.json({
+        sucesso: true,
+        dias,
+        total_entradas:  Number(totalEntradas.toFixed(2)),
+        total_saidas:    Number(totalSaidas.toFixed(2)),
+        saldo_projetado: Number((totalEntradas - totalSaidas).toFixed(2)),
+        projecao
+      });
+    } catch (err) {
+      console.error('[financeiro] cashflow-futuro:', err.message);
+      return erro(res, 500, 'Erro ao calcular cashflow futuro');
+    }
+  });
+
   return router;
 };
