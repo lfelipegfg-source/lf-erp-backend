@@ -1,6 +1,7 @@
 const { resolverPreco } = require('../utils/resolverPreco');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
 const { calcularComissaoVenda } = require('../utils/comissoes');
+const { acumularPontosFidelidade } = require('../utils/fidelidade');
 
 module.exports = ({
   auth,
@@ -580,6 +581,16 @@ module.exports = ({
         `[comissao] falha ao calcular venda=${venda.id} usuario=${req.user.id} empresa=${empresaResolvida.id}:`,
         e.message
       ));
+
+      // Acumula pontos de fidelidade em background (só se houver cliente vinculado)
+      if (clienteIdFinal) {
+        acumularPontosFidelidade(pool, {
+          empresaId: empresaResolvida.id,
+          clienteId: clienteIdFinal,
+          vendaId:   venda.id,
+          totalVenda: totalFinal
+        }).catch((e) => console.error(`[fidelidade] falha venda=${venda.id}:`, e.message));
+      }
 
       return res.json({
         sucesso: true,

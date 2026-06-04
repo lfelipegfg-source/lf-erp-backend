@@ -120,6 +120,7 @@ const apiPublicaRoutes   = require('./routes/api-publica.routes');
 const webhooksRoutes         = require('./routes/webhooks.routes');
 const rastreabilidadeRoutes  = require('./routes/rastreabilidade.routes');
 const whatsappRoutes         = require('./routes/whatsapp.routes');
+const fidelidadeRoutes       = require('./routes/fidelidade.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -353,6 +354,7 @@ app.use('/api/v1',    apiPublicaRoutes({ pool, writeRateLimiter, normalizarDecim
 app.use('/webhooks',         webhooksRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }));
 app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }));
+app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
 app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
