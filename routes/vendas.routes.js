@@ -141,6 +141,16 @@ module.exports = ({
       [vendaId]
     );
 
+    // Pré-busca e_kit de todos os produtos da venda — evita N+1 (atributo estático)
+    const prodIdsEstorno = [...new Set(
+      itensResult.rows.map(r => Number(r.produto_id)).filter(id => id > 0)
+    )];
+    const eKitRows = await client.query(
+      `SELECT id, e_kit FROM produtos WHERE id = ANY($1) AND empresa_id = $2`,
+      [prodIdsEstorno, empresaResolvida.id]
+    );
+    const eKitMap = Object.fromEntries(eKitRows.rows.map(r => [r.id, Boolean(r.e_kit)]));
+
     for (const item of itensResult.rows) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
@@ -148,12 +158,7 @@ module.exports = ({
 
       if (!produtoId || quantidade <= 0) continue;
 
-      // Verifica se é kit
-      const prodRow = await client.query(
-        `SELECT e_kit FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-        [produtoId, empresaResolvida.id]
-      );
-      const eKit = prodRow.rowCount > 0 && Boolean(prodRow.rows[0].e_kit);
+      const eKit = eKitMap[produtoId] ?? false;
 
       if (gradeId) {
         // Restaura estoque na grade específica
@@ -249,21 +254,25 @@ module.exports = ({
       throw new Error('Itens da venda inválidos');
     }
 
+    // Pré-busca todos os produtos em uma query — evita N+1 no loop
+    // Seguro porque nome/preco/custo/e_kit/tem_grade são atributos estáticos;
+    // o débito de estoque é feito via UPDATE atômico (estoque - qty WHERE estoque >= qty)
+    const produtoIds = [...new Set(itens.map(i => Number(i.produto_id)).filter(id => id > 0))];
+    const produtosRows = await client.query(
+      `SELECT * FROM produtos WHERE id = ANY($1) AND empresa_id = $2`,
+      [produtoIds, empresaResolvida.id]
+    );
+    const produtosMap = Object.fromEntries(produtosRows.rows.map(p => [p.id, p]));
+
     for (const item of itens) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
       const gradeId = item.grade_id ? Number(item.grade_id) : null;
 
-      const produtoResult = await client.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-        [produtoId, empresaResolvida.id]
-      );
-
-      if (produtoResult.rowCount === 0) {
+      const produto = produtosMap[produtoId];
+      if (!produto) {
         throw new Error(`Produto ${produtoId} não encontrado`);
       }
-
-      const produto = produtoResult.rows[0];
 
       // ── Produto com grade ──────────────────────────────────────────
       if (produto.tem_grade) {

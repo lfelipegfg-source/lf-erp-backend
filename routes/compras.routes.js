@@ -530,15 +530,32 @@ module.exports = function ({
   // Não cria nada no banco — apenas extrai e retorna para o frontend confirmar.
 
   function xmlTag(xml, tag) {
-    const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(xml);
-    return m ? m[1].trim() : null;
+    if (!xml) return null;
+    const open = xml.indexOf(`<${tag}`);
+    if (open === -1) return null;
+    const closeAngle = xml.indexOf('>', open);
+    if (closeAngle === -1) return null;
+    const end = xml.indexOf(`</${tag}>`, closeAngle);
+    if (end === -1) return null;
+    return xml.slice(closeAngle + 1, end).trim() || null;
   }
 
   function xmlTagAll(xml, tag) {
-    const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+    if (!xml) return [];
     const results = [];
-    let m;
-    while ((m = re.exec(xml)) !== null) results.push(m[1].trim());
+    const openPrefix = `<${tag}`;
+    const closeTag   = `</${tag}>`;
+    let pos = 0;
+    while (pos < xml.length && results.length < 1000) {
+      const open = xml.indexOf(openPrefix, pos);
+      if (open === -1) break;
+      const closeAngle = xml.indexOf('>', open);
+      if (closeAngle === -1) break;
+      const end = xml.indexOf(closeTag, closeAngle);
+      if (end === -1) break;
+      results.push(xml.slice(closeAngle + 1, end).trim());
+      pos = end + closeTag.length;
+    }
     return results;
   }
 

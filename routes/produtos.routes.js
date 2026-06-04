@@ -58,7 +58,8 @@ module.exports = ({
       comprimento_cm: row.comprimento_cm ? Number(row.comprimento_cm) : null,
       largura_cm: row.largura_cm ? Number(row.largura_cm) : null,
       altura_cm: row.altura_cm ? Number(row.altura_cm) : null,
-      tem_grade: Boolean(row.tem_grade)
+      tem_grade: Boolean(row.tem_grade),
+      e_kit: Boolean(row.e_kit)
     };
   }
 
