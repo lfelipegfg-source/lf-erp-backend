@@ -6111,6 +6111,7 @@ app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
 // ================= BOLETO ASAAS =================
 
 const { resolverClienteAsaas, criarBoleto: criarBoletoAsaas, consultarBoleto: consultarBoletoAsaas } = require('./utils/asaas');
+const { enviarEmailBoasVindas, getSaasSmtp, criarTransporter } = require('./utils/email');
 
 async function getAsaasConfig(empresaResolvida) {
   const cfg = await pool.query(
@@ -7086,6 +7087,60 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── Config SMTP SaaS Owner ────────────────────────────────────────────────────
+
+app.get('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
+  try {
+    const cfg = await getSaasSmtp(pool);
+    res.json({
+      sucesso: true,
+      smtp_host:  cfg.smtp_host  || '',
+      smtp_port:  cfg.smtp_port  || 587,
+      smtp_user:  cfg.smtp_user  || '',
+      smtp_pass:  cfg.smtp_pass  ? '***' : '',
+      smtp_from:  cfg.smtp_from  || '',
+      app_url:    cfg.app_url    || ''
+    });
+  } catch (err) {
+    jsonErro(res, 500, 'Erro ao buscar config SMTP');
+  }
+});
+
+app.put('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
+  try {
+    const { smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, app_url } = req.body;
+    await pool.query(
+      `UPDATE saas_config SET
+         smtp_host = $1, smtp_port = $2, smtp_user = $3,
+         smtp_pass = COALESCE(NULLIF($4,'***'), smtp_pass),
+         smtp_from = $5, app_url = $6, atualizado_em = NOW()`,
+      [smtp_host || null, Number(smtp_port || 587), smtp_user || null,
+       smtp_pass || null, smtp_from || null, app_url || null]
+    );
+    res.json({ sucesso: true });
+  } catch (err) {
+    jsonErro(res, 500, 'Erro ao salvar config SMTP');
+  }
+});
+
+app.post('/admin/smtp/testar', auth, apenasAdmin, async (req, res) => {
+  try {
+    const cfg = await getSaasSmtp(pool);
+    const transporter = criarTransporter(cfg);
+    if (!transporter) return jsonErro(res, 400, 'SMTP não configurado');
+
+    await transporter.sendMail({
+      from:    cfg.smtp_from || cfg.smtp_user,
+      to:      req.body.email || req.user.email || req.user.usuario,
+      subject: 'Teste de SMTP — LF ERP',
+      text:    'Este é um email de teste do sistema LF ERP. Configuração funcionando!'
+    });
+    res.json({ sucesso: true, mensagem: 'Email de teste enviado com sucesso' });
+  } catch (err) {
+    jsonErro(res, 500, `Erro ao enviar teste: ${err.message}`);
+  }
+});
+
 // ── GET /admin/dashboard — métricas SaaS Owner ───────────────────────────────
 app.get('/admin/dashboard', auth, apenasAdmin, async (req, res) => {
   try {
@@ -7316,6 +7371,17 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
       SECRET,
       { expiresIn: '12h' }
     );
+
+    // Envia email de boas-vindas em background (não bloqueia resposta)
+    if (email) {
+      enviarEmailBoasVindas(pool, {
+        nomeEmpresa: empresa.nome,
+        nomeUsuario: user.nome_completo || usuario,
+        email,
+        usuario,
+        trialFim
+      }).catch((e) => console.error('[registro] email:', e.message));
+    }
 
     return res.status(201).json({
       sucesso:    true,
