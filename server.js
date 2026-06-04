@@ -7012,6 +7012,95 @@ app.get('/admin/empresas/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── Self-service onboarding ───────────────────────────────────────────────────
+// POST /registro — público, cria empresa + usuário admin em trial de 14 dias
+app.post('/registro', loginRateLimiter, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { nome_empresa, nome_responsavel, email, telefone, usuario, senha } = req.body;
+
+    if (!nome_empresa || !usuario || !senha) {
+      return jsonErro(res, 400, 'nome_empresa, usuario e senha são obrigatórios');
+    }
+    if (String(senha).length < 6) {
+      return jsonErro(res, 400, 'A senha deve ter ao menos 6 caracteres');
+    }
+
+    // Verifica unicidade de empresa e usuário
+    const [empresaExiste, usuarioExiste] = await Promise.all([
+      pool.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1`, [nome_empresa.trim()]),
+      pool.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER($1) LIMIT 1`, [usuario.trim()])
+    ]);
+    if (empresaExiste.rowCount > 0) return jsonErro(res, 409, 'Já existe uma empresa com esse nome');
+    if (usuarioExiste.rowCount > 0) return jsonErro(res, 409, 'Esse nome de usuário já está em uso');
+
+    await client.query('BEGIN');
+
+    // Cria empresa com plano starter em trial de 14 dias
+    const planoResult = await client.query(`SELECT id FROM planos WHERE codigo = 'starter' LIMIT 1`);
+    const planoId  = planoResult.rows[0]?.id || null;
+    const trialFim = addDias(hoje(), 14);
+
+    const empresaResult = await client.query(
+      `INSERT INTO empresas
+         (nome, email, telefone, plano_id, assinatura_status, trial_inicio, trial_fim, bloqueada, criado_em, atualizado_em)
+       VALUES ($1,$2,$3,$4,'trial',$5,$6,false,NOW(),NOW())
+       RETURNING *`,
+      [nome_empresa.trim(), email || null, telefone || null, planoId, hoje(), trialFim]
+    );
+    const empresa = empresaResult.rows[0];
+
+    // Cria configuração da empresa
+    await client.query(
+      `INSERT INTO configuracoes (empresa, empresa_id, nome_empresa, criado_em, atualizado_em)
+       VALUES ($1,$2,$3,NOW(),NOW()) ON CONFLICT DO NOTHING`,
+      [empresa.nome, empresa.id, empresa.nome]
+    );
+
+    // Cria usuário admin
+    const hash = await bcrypt.hash(senha, 10);
+    const userResult = await client.query(
+      `INSERT INTO usuarios
+         (usuario, senha, tipo, empresa, empresa_id, nome_completo, email, criado_em, atualizado_em)
+       VALUES ($1,$2,'admin',$3,$4,$5,$6,NOW(),NOW())
+       RETURNING id, usuario, tipo, empresa, empresa_id, nome_completo`,
+      [usuario.trim(), hash, empresa.nome, empresa.id, nome_responsavel || usuario.trim(), email || null]
+    );
+    const user = userResult.rows[0];
+
+    await client.query('COMMIT');
+
+    // Gera token JWT — usuário já entra logado
+    const token = jwt.sign(
+      {
+        id:          user.id,
+        usuario:     user.usuario,
+        tipo:        user.tipo,
+        empresa:     empresa.nome,
+        empresa_id:  empresa.id,
+        nome:        user.nome_completo,
+        primeiro_acesso: true
+      },
+      SECRET,
+      { expiresIn: '12h' }
+    );
+
+    return res.status(201).json({
+      sucesso:    true,
+      token,
+      empresa:    { id: empresa.id, nome: empresa.nome, trial_fim: trialFim },
+      user:       { id: user.id, usuario: user.usuario, tipo: user.tipo, nome: user.nome_completo },
+      mensagem:   `Bem-vindo ao LF ERP! Seu período de teste de 14 dias começou.`
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[registro]', err.message);
+    jsonErro(res, 500, 'Erro ao criar conta');
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/admin/empresas', auth, apenasAdmin, async (req, res) => {
   try {
     const { nome, plano_id, trial_dias = 30, email, telefone, cnpj } = req.body;
