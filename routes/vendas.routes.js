@@ -51,6 +51,36 @@ module.exports = ({
     );
   }
 
+  // Normaliza array de pagamentos do split.
+  // Retorna { pagamentosArray, pagamentoPrincipal, totalPromissoria, statusPagamento }
+  function normalizarPagamentosSplit({ pagamentos, pagamento, total, status_pagamento, parcelas }) {
+    const FORMAS_PENDENTES = ['promissoria', 'promissória', 'boleto'];
+
+    let pagamentosArray;
+
+    if (Array.isArray(pagamentos) && pagamentos.length > 0) {
+      pagamentosArray = pagamentos.map((p) => ({
+        forma: String(p.forma || 'Dinheiro'),
+        valor: normalizarDecimal(p.valor),
+        parcelas: normalizarInt(p.parcelas) || 1,
+        vencimento: p.vencimento || null
+      }));
+    } else {
+      // Retrocompatibilidade: pagamento único
+      pagamentosArray = [{ forma: pagamento || 'Dinheiro', valor: normalizarDecimal(total), parcelas: normalizarInt(parcelas) || 1, vencimento: null }];
+    }
+
+    const pagamentoPrincipal = pagamentosArray[0]?.forma || 'Dinheiro';
+
+    const totalPromissoria = pagamentosArray
+      .filter((p) => FORMAS_PENDENTES.includes(normalizarTexto(p.forma)))
+      .reduce((acc, p) => acc + p.valor, 0);
+
+    const statusFinal = totalPromissoria > 0 ? 'pendente' : (status_pagamento || 'pago');
+
+    return { pagamentosArray, pagamentoPrincipal, totalPromissoria: Number(totalPromissoria.toFixed(2)), statusPagamento: statusFinal };
+  }
+
   async function validarVendaPertenceEmpresa({ client, venda, empresaResolvida }) {
     const vendaEmpresaId = venda.empresa_id ? Number(venda.empresa_id) : null;
     const vendaEmpresaNome = venda.empresa || null;
@@ -378,6 +408,7 @@ module.exports = ({
         acrescimo,
         total,
         pagamento,
+        pagamentos,
         parcelas,
         status_pagamento,
         data,
@@ -426,10 +457,22 @@ module.exports = ({
       const acrescimoFinal = normalizarDecimal(acrescimo);
       const totalFinal = normalizarDecimal(total);
 
+      const {
+        pagamentosArray,
+        pagamentoPrincipal,
+        totalPromissoria,
+        statusPagamento: statusFinal
+      } = normalizarPagamentosSplit({ pagamentos, pagamento, total: totalFinal, status_pagamento, parcelas });
+
+      // Dados de parcelas da entrada Promissória (se houver)
+      const promissoriaEntry = pagamentosArray.find(
+        (p) => ['promissoria', 'promissória'].includes(normalizarTexto(p.forma))
+      );
+
       const vendaResult = await client.query(
         `INSERT INTO vendas
-        (empresa, empresa_id, cliente_id, cliente_nome, subtotal, desconto, acrescimo, total, pagamento, parcelas, status_pagamento, data, observacao, criado_por, criado_em, atualizado_em)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW())
+        (empresa, empresa_id, cliente_id, cliente_nome, subtotal, desconto, acrescimo, total, pagamento, pagamentos, parcelas, status_pagamento, data, observacao, criado_por, criado_em, atualizado_em)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())
         RETURNING *`,
         [
           empresaResolvida.nome,
@@ -440,9 +483,10 @@ module.exports = ({
           descontoFinal,
           acrescimoFinal,
           totalFinal,
-          pagamento || 'Dinheiro',
-          Math.max(1, normalizarInt(parcelas || 1)),
-          status_pagamento || 'pago',
+          pagamentoPrincipal,
+          JSON.stringify(pagamentosArray),
+          Math.max(1, promissoriaEntry ? normalizarInt(promissoriaEntry.parcelas || 1) : normalizarInt(parcelas || 1)),
+          statusFinal,
           normalizarDataISO(data) || hoje(),
           observacao || '',
           req.user.id
@@ -460,14 +504,25 @@ module.exports = ({
         clienteId: cliente_id ? Number(cliente_id) : null
       });
 
-      if (
-        deveGerarFinanceiroVenda({
-          conta_receber,
-          pagamento,
-          status_pagamento,
-          parcelas
-        })
-      ) {
+      // Gera contas a receber apenas para a parcela Promissória do split
+      if (totalPromissoria > 0) {
+        await criarParcelasContasReceber({
+          client,
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          venda_id: venda.id,
+          cliente_id: clienteIdFinal,
+          cliente_nome: clienteNomeFinal,
+          total: totalPromissoria,
+          quantidade_parcelas: Math.max(1, normalizarInt(promissoriaEntry?.parcelas || parcelas || 1)),
+          data_primeiro_vencimento: normalizarDataISO(promissoriaEntry?.vencimento || data) || hoje(),
+          intervalo_dias: 30,
+          observacao: observacao || '',
+          criado_por: req.user.id,
+          forma_pagamento: 'Promissória'
+        });
+      } else if (deveGerarFinanceiroVenda({ conta_receber, pagamento: pagamentoPrincipal, status_pagamento: statusFinal, parcelas })) {
+        // Retrocompatibilidade: venda sem split mas com conta_receber explícita
         await criarParcelasContasReceber({
           client,
           empresa: empresaResolvida.nome,
@@ -481,7 +536,7 @@ module.exports = ({
           intervalo_dias: 30,
           observacao: observacao || '',
           criado_por: req.user.id,
-          forma_pagamento: pagamento || 'Promissória'
+          forma_pagamento: pagamentoPrincipal || 'Promissória'
         });
       }
 
@@ -1020,6 +1075,9 @@ ORDER BY parcela ASC
         acrescimo: Number(venda.acrescimo || 0),
         total: Number(venda.total || 0),
         parcelas: Number(venda.parcelas || 1),
+        pagamentos: venda.pagamentos
+          ? (typeof venda.pagamentos === 'string' ? JSON.parse(venda.pagamentos) : venda.pagamentos)
+          : [{ forma: venda.pagamento || 'Dinheiro', valor: Number(venda.total || 0) }],
         itens: itensResult.rows.map((item) => ({
           ...item,
           quantidade: Number(item.quantidade || 0),
