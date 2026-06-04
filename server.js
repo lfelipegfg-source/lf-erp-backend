@@ -6755,6 +6755,177 @@ app.get('/alertas/:empresa', auth, async (req, res) => {
   }
 });
 
+// ================= BILLING DE ASSINATURAS SAAS =================
+
+// Configuração Asaas do dono do SaaS (não das empresas-clientes)
+async function getSaasAsaasConfig() {
+  const r = await pool.query(`SELECT asaas_api_key, asaas_sandbox FROM saas_config LIMIT 1`);
+  const row = r.rows[0] || {};
+  return { apiKey: row.asaas_api_key || null, sandbox: row.asaas_sandbox !== false };
+}
+
+// GET /admin/billing/config — retorna config Asaas do SaaS owner
+app.get('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT CASE WHEN asaas_api_key IS NOT NULL THEN '****' ELSE NULL END AS asaas_api_key, asaas_sandbox
+       FROM saas_config LIMIT 1`
+    );
+    res.json({ sucesso: true, ...(r.rows[0] || { asaas_sandbox: true }) });
+  } catch (err) {
+    console.error('[billing] GET config:', err.message);
+    jsonErro(res, 500, 'Erro ao buscar config de billing');
+  }
+});
+
+// PUT /admin/billing/config
+app.put('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
+  try {
+    const { asaas_api_key, asaas_sandbox } = req.body;
+    await pool.query(
+      `UPDATE saas_config
+       SET asaas_api_key = COALESCE(NULLIF($1,'****'), asaas_api_key),
+           asaas_sandbox = $2, atualizado_em = NOW()`,
+      [asaas_api_key || null, asaas_sandbox !== false]
+    );
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error('[billing] PUT config:', err.message);
+    jsonErro(res, 500, 'Erro ao salvar config de billing');
+  }
+});
+
+// POST /admin/billing/cobrar/:empresaId — gera cobrança de assinatura
+app.post('/admin/billing/cobrar/:empresaId', auth, apenasAdmin, async (req, res) => {
+  try {
+    const empresaId = Number(req.params.empresaId);
+    const empresaResult = await pool.query(
+      `SELECT e.*, p.preco_mensal, p.nome AS plano_nome
+       FROM empresas e
+       LEFT JOIN planos p ON p.id = e.plano_id
+       WHERE e.id = $1`,
+      [empresaId]
+    );
+    if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
+
+    const empresa = empresaResult.rows[0];
+    const valor = Number(empresa.preco_mensal || req.body.valor || 0);
+    if (valor <= 0) return jsonErro(res, 400, 'Plano sem preço configurado');
+
+    const { apiKey, sandbox } = await getSaasAsaasConfig();
+
+    // Cria/busca cliente Asaas para o responsável da empresa
+    let customerId = empresa.asaas_customer_id;
+    if (!customerId && apiKey) {
+      customerId = await resolverClienteAsaas(apiKey, sandbox, {
+        nome:     empresa.responsavel_nome || empresa.nome,
+        cpfCnpj:  empresa.responsavel_cpf  || empresa.cnpj || null,
+        email:    empresa.responsavel_email || empresa.email || null,
+        telefone: empresa.telefone || null
+      });
+      await pool.query(
+        `UPDATE empresas SET asaas_customer_id = $1 WHERE id = $2`,
+        [customerId, empresaId]
+      );
+    }
+
+    const vencimento = req.body.vencimento || addDias(hoje(), 5);
+    const descricao  = `Assinatura ${empresa.plano_nome || 'LF ERP'} — ${empresa.nome}`;
+
+    const boleto = await criarBoletoAsaas(apiKey, sandbox, {
+      customerId,
+      valor,
+      vencimento,
+      descricao,
+      externalReference: `assinatura_${empresaId}`
+    });
+
+    await pool.query(
+      `UPDATE empresas
+       SET assinatura_boleto_id  = $1,
+           assinatura_boleto_url = $2,
+           assinatura_vencimento = $3,
+           atualizado_em         = NOW()
+       WHERE id = $4`,
+      [boleto.id, boleto.invoiceUrl || boleto.bankSlipUrl || null, vencimento, empresaId]
+    );
+
+    res.json({
+      sucesso: true,
+      boleto,
+      sandbox: boleto.demo || sandbox || !apiKey,
+      mensagem: boleto.demo
+        ? 'Cobrança em modo demo (configure API Asaas em Billing → Configuração)'
+        : `Boleto gerado para ${empresa.nome} — vencimento ${vencimento}`
+    });
+  } catch (err) {
+    console.error('[billing] cobrar:', err.message);
+    jsonErro(res, 500, `Erro ao gerar cobrança: ${err.message}`);
+  }
+});
+
+// GET /admin/billing/status/:empresaId — consulta status da cobrança
+app.get('/admin/billing/status/:empresaId', auth, apenasAdmin, async (req, res) => {
+  try {
+    const empresaId = Number(req.params.empresaId);
+    const r = await pool.query(
+      `SELECT assinatura_boleto_id, assinatura_boleto_url, assinatura_status, assinatura_vencimento
+       FROM empresas WHERE id = $1`,
+      [empresaId]
+    );
+    if (r.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
+
+    const empresa = r.rows[0];
+    if (!empresa.assinatura_boleto_id) {
+      return res.json({ sucesso: true, status: 'sem_cobranca', empresa_id: empresaId });
+    }
+
+    const { apiKey, sandbox } = await getSaasAsaasConfig();
+    const boleto = await consultarBoletoAsaas(apiKey, sandbox, empresa.assinatura_boleto_id);
+
+    // Ativa empresa automaticamente se pagamento confirmado
+    if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status)) {
+      await pool.query(
+        `UPDATE empresas
+         SET assinatura_status = 'ativo', bloqueada = false,
+             trial_fim = NULL, atualizado_em = NOW()
+         WHERE id = $1 AND assinatura_status != 'ativo'`,
+        [empresaId]
+      );
+    }
+
+    res.json({ sucesso: true, boleto: { ...boleto, ...empresa } });
+  } catch (err) {
+    console.error('[billing] status:', err.message);
+    jsonErro(res, 500, 'Erro ao consultar cobrança');
+  }
+});
+
+// POST /admin/billing/webhook-assinatura — Asaas notifica pagamento de assinatura
+app.post('/admin/billing/webhook-assinatura', async (req, res) => {
+  try {
+    const { event, payment } = req.body || {};
+    const ref = payment?.externalReference || '';
+
+    if (ref.startsWith('assinatura_') && ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) {
+      const empresaId = Number(ref.replace('assinatura_', ''));
+      if (empresaId > 0) {
+        await pool.query(
+          `UPDATE empresas
+           SET assinatura_status = 'ativo', bloqueada = false,
+               trial_fim = NULL, atualizado_em = NOW()
+           WHERE id = $1`,
+          [empresaId]
+        );
+      }
+    }
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[billing] webhook-assinatura:', err.message);
+    res.status(200).json({ ok: true });
+  }
+});
+
 // ================= START =================
 async function start() {
   try {
