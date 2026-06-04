@@ -241,7 +241,7 @@ module.exports = ({
         }
 
         const gradeResult = await client.query(
-          `SELECT * FROM produto_grades WHERE id = $1 AND produto_id = $2 AND empresa_id = $3 AND ativo = true`,
+          `SELECT * FROM produto_grades WHERE id = $1 AND produto_id = $2 AND empresa_id = $3 AND ativo = true FOR UPDATE`,
           [gradeId, produtoId, empresaResolvida.id]
         );
 
@@ -316,12 +316,6 @@ module.exports = ({
 
       // ── Produto simples (sem grade, sem kit) ───────────────────────
       } else {
-        const estoqueAtual = normalizarInt(produto.estoque);
-
-        if (estoqueAtual < quantidade) {
-          throw new Error(`Estoque insuficiente para ${produto.nome}`);
-        }
-
         const precoPorTabela = !item.preco_unitario
           ? await resolverPreco({ pool, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
           : null;
@@ -336,10 +330,16 @@ module.exports = ({
           [vendaId, empresaResolvida.nome, empresaResolvida.id, produto.id, produto.nome, quantidade, precoUnitario, custoUnitario, totalItem]
         );
 
-        await client.query(
-          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-          [estoqueAtual - quantidade, produto.id, empresaResolvida.id]
+        // UPDATE atômico: debita apenas se estoque suficiente — previne oversell em concorrência
+        const upd = await client.query(
+          `UPDATE produtos SET estoque = estoque - $1, atualizado_em = NOW()
+           WHERE id = $2 AND empresa_id = $3 AND estoque >= $1`,
+          [quantidade, produto.id, empresaResolvida.id]
         );
+
+        if (upd.rowCount === 0) {
+          throw new Error(`Estoque insuficiente para ${produto.nome}`);
+        }
       }
 
       // Kits registram movimentações por componente em baixarComponentesKit
@@ -516,12 +516,15 @@ module.exports = ({
 
       await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
-      // Calcula comissão do vendedor em background (não bloqueia resposta)
+      // Calcula comissão em background — não bloqueia resposta; erro é logado com contexto
       calcularComissaoVenda(pool, {
         vendaId: venda.id,
         usuarioId: req.user.id,
         empresaId: empresaResolvida.id
-      }).catch((e) => console.warn('[comissao] erro ao calcular:', e.message));
+      }).catch((e) => console.error(
+        `[comissao] falha ao calcular venda=${venda.id} usuario=${req.user.id} empresa=${empresaResolvida.id}:`,
+        e.message
+      ));
 
       return res.json({
         sucesso: true,
@@ -982,12 +985,10 @@ module.exports = ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const itensResult = await pool.query(
-        `SELECT * FROM venda_itens WHERE venda_id = $1 ORDER BY id ASC`,
-        [id]
-      );
-
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      const [itensResult] = await Promise.all([
+        pool.query(`SELECT * FROM venda_itens WHERE venda_id = $1 ORDER BY id ASC`, [id]),
+        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+      ]);
 
       const contasReceberResult = await pool.query(
         `

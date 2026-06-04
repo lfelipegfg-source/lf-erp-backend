@@ -119,7 +119,7 @@ module.exports = function ({
         const subtotal = Number((quantidade * custoUnitario).toFixed(2));
 
         const produtoResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
           [produtoId, empresaResolvida.id]
         );
 
@@ -378,7 +378,7 @@ module.exports = function ({
 
       for (const item of itensOriginais.rows) {
         const prod = await client.query(
-          `SELECT estoque, custo_medio, custo FROM produtos WHERE id = $1 AND empresa_id = $2`,
+          `SELECT estoque, custo_medio, custo FROM produtos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
           [item.produto_id, empresaResolvida.id]
         );
         if (prod.rowCount > 0) {
@@ -442,7 +442,7 @@ module.exports = function ({
         const custoUnitario = normalizarDecimal(item.custo_unitario || item.custo);
 
         const prodResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
           [produtoId, empresaResolvida.id]
         );
         if (prodResult.rowCount === 0) {
