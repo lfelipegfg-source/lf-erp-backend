@@ -7087,6 +7087,234 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── Multi-depósito ────────────────────────────────────────────────────────────
+
+// GET /depositos — lista depósitos da empresa
+app.get('/depositos', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const result = await pool.query(
+      `SELECT d.*,
+              COUNT(ped.produto_id) AS total_produtos,
+              COALESCE(SUM(ped.estoque), 0) AS total_unidades
+       FROM depositos d
+       LEFT JOIN produto_estoque_deposito ped ON ped.deposito_id = d.id
+       WHERE d.empresa_id = $1
+       GROUP BY d.id
+       ORDER BY d.principal DESC, d.nome`,
+      [empresaResolvida.id]
+    );
+
+    res.json({ sucesso: true, depositos: result.rows });
+  } catch (err) {
+    console.error('[depositos] GET lista:', err.message);
+    jsonErro(res, 500, 'Erro ao listar depósitos');
+  }
+});
+
+// POST /depositos — criar depósito
+app.post('/depositos', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { nome, descricao } = req.body;
+    if (!nome) return jsonErro(res, 400, 'Nome do depósito é obrigatório');
+
+    const result = await pool.query(
+      `INSERT INTO depositos (empresa_id, nome, descricao, ativo, principal)
+       VALUES ($1, $2, $3, true, false)
+       RETURNING *`,
+      [empresaResolvida.id, nome.trim(), descricao || null]
+    );
+
+    res.status(201).json({ sucesso: true, deposito: result.rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return jsonErro(res, 409, 'Já existe um depósito com esse nome');
+    console.error('[depositos] POST:', err.message);
+    jsonErro(res, 500, 'Erro ao criar depósito');
+  }
+});
+
+// PUT /depositos/:id — editar depósito
+app.put('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const id = Number(req.params.id);
+    const { nome, descricao, ativo } = req.body;
+
+    const result = await pool.query(
+      `UPDATE depositos
+       SET nome = COALESCE($1, nome),
+           descricao = COALESCE($2, descricao),
+           ativo = COALESCE($3, ativo),
+           atualizado_em = NOW()
+       WHERE id = $4 AND empresa_id = $5
+       RETURNING *`,
+      [nome?.trim() || null, descricao !== undefined ? descricao : null,
+       ativo != null ? Boolean(ativo) : null, id, empresaResolvida.id]
+    );
+
+    if (result.rowCount === 0) return jsonErro(res, 404, 'Depósito não encontrado');
+    res.json({ sucesso: true, deposito: result.rows[0] });
+  } catch (err) {
+    console.error('[depositos] PUT:', err.message);
+    jsonErro(res, 500, 'Erro ao editar depósito');
+  }
+});
+
+// DELETE /depositos/:id — remover depósito (só se sem estoque)
+app.delete('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const id = Number(req.params.id);
+
+    // Verifica se tem estoque
+    const temEstoque = await pool.query(
+      `SELECT 1 FROM produto_estoque_deposito WHERE deposito_id = $1 AND estoque > 0 LIMIT 1`,
+      [id]
+    );
+    if (temEstoque.rowCount > 0) {
+      return jsonErro(res, 400, 'Não é possível excluir um depósito com estoque. Transfira ou zere o estoque primeiro.');
+    }
+
+    const deposito = await pool.query(
+      `SELECT principal FROM depositos WHERE id = $1 AND empresa_id = $2`,
+      [id, empresaResolvida.id]
+    );
+    if (deposito.rowCount === 0) return jsonErro(res, 404, 'Depósito não encontrado');
+    if (deposito.rows[0].principal) return jsonErro(res, 400, 'O depósito principal não pode ser excluído');
+
+    await pool.query(`DELETE FROM depositos WHERE id = $1 AND empresa_id = $2`, [id, empresaResolvida.id]);
+    res.json({ sucesso: true, mensagem: 'Depósito excluído' });
+  } catch (err) {
+    console.error('[depositos] DELETE:', err.message);
+    jsonErro(res, 500, 'Erro ao excluir depósito');
+  }
+});
+
+// GET /depositos/:id/estoque — estoque de um depósito
+app.get('/depositos/:id/estoque', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const id = Number(req.params.id);
+    const busca = (req.query.busca || '').trim().toLowerCase();
+
+    let sql = `
+      SELECT ped.produto_id, p.nome AS produto_nome, p.categoria,
+             p.codigo_barras, ped.grade_id,
+             pg.atributo1, pg.atributo2,
+             ped.estoque, ped.atualizado_em
+      FROM produto_estoque_deposito ped
+      JOIN produtos p ON p.id = ped.produto_id AND p.empresa_id = $1
+      LEFT JOIN produto_grades pg ON pg.id = ped.grade_id
+      WHERE ped.deposito_id = $2`;
+
+    const params = [empresaResolvida.id, id];
+
+    if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
+      sql += ` AND (LOWER(p.nome) LIKE $3 OR LOWER(COALESCE(p.categoria,'')) LIKE $3)`;
+      params.push(`%${buscaEsc}%`);
+    }
+
+    sql += ` ORDER BY p.nome, pg.atributo1`;
+
+    const result = await pool.query(sql, params);
+    res.json({ sucesso: true, itens: result.rows });
+  } catch (err) {
+    console.error('[depositos] GET estoque:', err.message);
+    jsonErro(res, 500, 'Erro ao buscar estoque do depósito');
+  }
+});
+
+// POST /depositos/transferir — mover estoque entre depósitos
+app.post('/depositos/transferir', auth, writeRateLimiter, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { deposito_origem_id, deposito_destino_id, produto_id, grade_id, quantidade } = req.body;
+    const qtd = normalizarInt(quantidade);
+
+    if (!deposito_origem_id || !deposito_destino_id || !produto_id || qtd <= 0) {
+      return jsonErro(res, 400, 'Campos obrigatórios: deposito_origem_id, deposito_destino_id, produto_id, quantidade > 0');
+    }
+    if (deposito_origem_id === deposito_destino_id) {
+      return jsonErro(res, 400, 'Depósito de origem e destino devem ser diferentes');
+    }
+
+    await client.query('BEGIN');
+
+    // Verifica estoque na origem com FOR UPDATE
+    const origem = await client.query(
+      `SELECT estoque FROM produto_estoque_deposito
+       WHERE deposito_id = $1 AND produto_id = $2 AND (grade_id = $3 OR ($3::INTEGER IS NULL AND grade_id IS NULL))
+       FOR UPDATE`,
+      [deposito_origem_id, produto_id, grade_id || null]
+    );
+
+    if (origem.rowCount === 0 || Number(origem.rows[0].estoque) < qtd) {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 400, `Estoque insuficiente no depósito de origem. Disponível: ${origem.rows[0]?.estoque || 0}`);
+    }
+
+    // Debita na origem
+    await client.query(
+      `UPDATE produto_estoque_deposito
+       SET estoque = estoque - $1, atualizado_em = NOW()
+       WHERE deposito_id = $2 AND produto_id = $3
+         AND (grade_id = $4 OR ($4::INTEGER IS NULL AND grade_id IS NULL))`,
+      [qtd, deposito_origem_id, produto_id, grade_id || null]
+    );
+
+    // Credita no destino (upsert)
+    await client.query(
+      `INSERT INTO produto_estoque_deposito (empresa_id, produto_id, grade_id, deposito_id, estoque)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (produto_id, grade_id, deposito_id) DO UPDATE
+       SET estoque = produto_estoque_deposito.estoque + $5, atualizado_em = NOW()`,
+      [empresaResolvida.id, produto_id, grade_id || null, deposito_destino_id, qtd]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({ sucesso: true, mensagem: `${qtd} unidade(s) transferida(s) com sucesso` });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[depositos] transferir:', err.message);
+    jsonErro(res, 500, 'Erro ao transferir estoque');
+  } finally {
+    client.release();
+  }
+});
+
+// Inicializa depósito principal para empresas sem depósito
+async function garantirDepositoPrincipal(empresaId, empresaNome, client) {
+  const executor = client || pool;
+  const existente = await executor.query(
+    `SELECT id FROM depositos WHERE empresa_id = $1 LIMIT 1`,
+    [empresaId]
+  );
+  if (existente.rowCount === 0) {
+    await executor.query(
+      `INSERT INTO depositos (empresa_id, nome, principal, ativo)
+       VALUES ($1, 'Depósito Principal', true, true)
+       ON CONFLICT (empresa_id, nome) DO NOTHING`,
+      [empresaId]
+    );
+  }
+}
+
 // ── LGPD — exportação de dados da própria empresa ─────────────────────────────
 app.get('/empresa/exportar-dados', auth, async (req, res) => {
   try {
