@@ -107,6 +107,87 @@ module.exports = ({
   });
 
   // ── GET /clientes/segmentacao-abc ─────────────────────────────────────────
+  // ── Extrato financeiro do cliente ────────────────────────────────────────────
+  router.get('/:id/extrato', auth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!id) return erro(res, 400, 'Cliente inválido');
+
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const clienteResult = await pool.query(
+        `SELECT id, nome, telefone, cpf, cpf_cnpj, email, endereco
+         FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+        [id, empresaResolvida.id]
+      );
+      if (clienteResult.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
+
+      const hoje = new Date().toISOString().slice(0, 10);
+
+      const [parcelasResult, resumoResult] = await Promise.all([
+        pool.query(
+          `SELECT
+             cr.id, cr.venda_id, cr.parcela, cr.total_parcelas,
+             cr.valor, cr.valor_atualizado, cr.multa, cr.juros, cr.dias_atraso,
+             cr.data_vencimento, cr.data_pagamento, cr.forma_pagamento, cr.observacao,
+             CASE
+               WHEN LOWER(COALESCE(cr.status,'pendente')) = 'pago' THEN 'pago'
+               WHEN LOWER(COALESCE(cr.status,'pendente')) IN ('parcial','parcial_atrasado')
+                    AND cr.data_vencimento < $3 THEN 'parcial_atrasado'
+               WHEN LOWER(COALESCE(cr.status,'pendente')) = 'parcial' THEN 'parcial'
+               WHEN cr.data_vencimento IS NOT NULL AND cr.data_vencimento < $3 THEN 'atrasado'
+               ELSE 'pendente'
+             END AS status_calc
+           FROM contas_receber cr
+           WHERE cr.cliente_id = $1 AND cr.empresa_id = $2
+           ORDER BY
+             CASE WHEN LOWER(COALESCE(cr.status,'pendente')) = 'pago' THEN 1 ELSE 0 END,
+             cr.data_vencimento ASC`,
+          [id, empresaResolvida.id, hoje]
+        ),
+        pool.query(
+          `SELECT
+             COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'pendente')) NOT IN ('pago') THEN COALESCE(valor_atualizado, valor) ELSE 0 END), 0) AS total_aberto,
+             COALESCE(SUM(CASE WHEN data_vencimento < $3 AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago') THEN COALESCE(valor_atualizado, valor) ELSE 0 END), 0) AS total_atrasado,
+             COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'pendente')) = 'pago' THEN valor ELSE 0 END), 0) AS total_pago,
+             COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'pendente')) IN ('parcial','parcial_atrasado') THEN COALESCE(valor_atualizado, valor) ELSE 0 END), 0) AS total_parcial,
+             COUNT(*) FILTER (WHERE LOWER(COALESCE(status,'pendente')) NOT IN ('pago')) AS qtd_pendente,
+             COUNT(*) AS qtd_total
+           FROM contas_receber
+           WHERE cliente_id = $1 AND empresa_id = $2`,
+          [id, empresaResolvida.id, hoje]
+        )
+      ]);
+
+      const resumo = resumoResult.rows[0];
+
+      return ok(res, {
+        cliente: clienteResult.rows[0],
+        resumo: {
+          total_aberto:   Number(resumo.total_aberto   || 0),
+          total_atrasado: Number(resumo.total_atrasado || 0),
+          total_pago:     Number(resumo.total_pago     || 0),
+          total_parcial:  Number(resumo.total_parcial  || 0),
+          qtd_pendente:   Number(resumo.qtd_pendente   || 0),
+          qtd_total:      Number(resumo.qtd_total      || 0)
+        },
+        parcelas: parcelasResult.rows.map((p) => ({
+          ...p,
+          valor:            Number(p.valor            || 0),
+          valor_atualizado: Number(p.valor_atualizado || p.valor || 0),
+          multa:            Number(p.multa            || 0),
+          juros:            Number(p.juros            || 0),
+          dias_atraso:      Number(p.dias_atraso      || 0),
+          status:           p.status_calc
+        }))
+      });
+    } catch (err) {
+      console.error('[clientes] GET extrato:', err.message);
+      return erro(res, 500, 'Erro ao carregar extrato do cliente');
+    }
+  });
+
   // Classifica clientes em A, B ou C pela Curva de Pareto:
   //   A = responsáveis pelos primeiros 80% da receita acumulada
   //   B = entre 80% e 95%
