@@ -6108,6 +6108,237 @@ app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
   }
 });
 
+// ================= BOLETO ASAAS =================
+
+const { resolverClienteAsaas, criarBoleto: criarBoletoAsaas, consultarBoleto: consultarBoletoAsaas } = require('./utils/asaas');
+
+async function getAsaasConfig(empresaResolvida) {
+  const cfg = await pool.query(
+    `SELECT asaas_api_key, asaas_sandbox FROM configuracoes
+     WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) LIMIT 1`,
+    [empresaResolvida.id, empresaResolvida.nome]
+  );
+  const row = cfg.rows[0] || {};
+  return {
+    apiKey:  row.asaas_api_key  || null,
+    sandbox: row.asaas_sandbox !== false   // default true (sandbox)
+  };
+}
+
+// GET /pagamentos/boleto/config
+app.get('/pagamentos/boleto/config', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const cfg = await pool.query(
+      `SELECT
+         CASE WHEN asaas_api_key IS NOT NULL THEN '****' ELSE NULL END AS asaas_api_key,
+         asaas_sandbox
+       FROM configuracoes
+       WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) LIMIT 1`,
+      [empresaResolvida.id, empresaResolvida.nome]
+    );
+
+    res.json({ sucesso: true, ...(cfg.rows[0] || { asaas_sandbox: true }) });
+  } catch (err) {
+    console.error('[boleto] GET config:', err.message);
+    jsonErro(res, 500, 'Erro ao buscar configuração Asaas');
+  }
+});
+
+// PUT /pagamentos/boleto/config
+app.put('/pagamentos/boleto/config', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { asaas_api_key, asaas_sandbox } = req.body;
+
+    await pool.query(
+      `UPDATE configuracoes
+       SET asaas_api_key = COALESCE(NULLIF($3, '****'), asaas_api_key),
+           asaas_sandbox = $4,
+           atualizado_em = NOW()
+       WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
+      [empresaResolvida.id, empresaResolvida.nome, asaas_api_key || null, asaas_sandbox !== false]
+    );
+
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error('[boleto] PUT config:', err.message);
+    jsonErro(res, 500, 'Erro ao salvar configuração Asaas');
+  }
+});
+
+// POST /pagamentos/boleto/gerar
+app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { conta_receber_id } = req.body;
+    if (!conta_receber_id) return jsonErro(res, 400, 'conta_receber_id é obrigatório');
+
+    // Busca a conta a receber
+    const crResult = await pool.query(
+      `SELECT cr.*, c.cpf, c.cpf_cnpj, c.telefone, c.email
+       FROM contas_receber cr
+       LEFT JOIN clientes c ON c.id = cr.cliente_id AND c.empresa_id = cr.empresa_id
+       WHERE cr.id = $1 AND cr.empresa_id = $2`,
+      [Number(conta_receber_id), empresaResolvida.id]
+    );
+
+    if (crResult.rowCount === 0) return jsonErro(res, 404, 'Conta a receber não encontrada');
+
+    const cr = crResult.rows[0];
+
+    if (['pago', 'parcial'].includes(String(cr.status || '').toLowerCase())) {
+      return jsonErro(res, 400, 'Esta conta já foi paga ou está parcialmente paga');
+    }
+
+    // Boleto já emitido e válido
+    if (cr.boleto_id && !cr.boleto_id.startsWith('DEMO_')) {
+      const { apiKey, sandbox } = await getAsaasConfig(empresaResolvida);
+      if (apiKey) {
+        const boleto = await consultarBoletoAsaas(apiKey, sandbox, cr.boleto_id);
+        if (boleto.status !== 'OVERDUE' && boleto.status !== 'CANCELLED') {
+          return res.json({ sucesso: true, boleto, reaproveitado: true });
+        }
+      }
+    }
+
+    const { apiKey, sandbox } = await getAsaasConfig(empresaResolvida);
+
+    // Cria ou busca cliente Asaas
+    let customerId = null;
+    if (apiKey && (cr.cliente_id || cr.cliente_nome)) {
+      customerId = await resolverClienteAsaas(apiKey, sandbox, {
+        nome:     cr.cliente_nome || 'Cliente',
+        cpfCnpj:  cr.cpf || cr.cpf_cnpj || null,
+        email:    cr.email || null,
+        telefone: cr.telefone || null
+      });
+    }
+
+    const vencimento = cr.data_vencimento || hoje();
+    const descricao  = `Parcela ${cr.parcela || 1}/${cr.total_parcelas || 1} — ${cr.cliente_nome || 'Cliente'}`;
+
+    const boleto = await criarBoletoAsaas(apiKey, sandbox, {
+      customerId,
+      valor:             Number(cr.valor_atualizado || cr.valor),
+      vencimento,
+      descricao,
+      externalReference: String(cr.id)
+    });
+
+    // Persiste dados do boleto
+    await pool.query(
+      `UPDATE contas_receber
+       SET boleto_id            = $1,
+           boleto_url           = $2,
+           boleto_linha_digitavel = $3,
+           boleto_status        = $4,
+           boleto_gerado_em     = NOW(),
+           atualizado_em        = NOW()
+       WHERE id = $5`,
+      [
+        boleto.id,
+        boleto.invoiceUrl || boleto.bankSlipUrl || null,
+        boleto.linhaDigitavel || null,
+        boleto.status || 'PENDING',
+        cr.id
+      ]
+    );
+
+    res.json({ sucesso: true, boleto, sandbox: boleto.demo || sandbox || !apiKey });
+  } catch (err) {
+    console.error('[boleto] POST gerar:', err.message);
+    jsonErro(res, 500, `Erro ao gerar boleto: ${err.message}`);
+  }
+});
+
+// GET /pagamentos/boleto/status/:contaReceberID
+app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const crId = Number(req.params.contaReceberID);
+    const crResult = await pool.query(
+      `SELECT boleto_id, boleto_url, boleto_linha_digitavel, boleto_status, boleto_gerado_em
+       FROM contas_receber WHERE id = $1 AND empresa_id = $2`,
+      [crId, empresaResolvida.id]
+    );
+
+    if (crResult.rowCount === 0) return jsonErro(res, 404, 'Conta não encontrada');
+
+    const cr = crResult.rows[0];
+    if (!cr.boleto_id) return jsonErro(res, 404, 'Nenhum boleto gerado para esta conta');
+
+    const { apiKey, sandbox } = await getAsaasConfig(empresaResolvida);
+    const boleto = await consultarBoletoAsaas(apiKey, sandbox, cr.boleto_id);
+
+    // Atualiza status no banco se necessário
+    if (boleto.status !== cr.boleto_status) {
+      await pool.query(
+        `UPDATE contas_receber SET boleto_status = $1, atualizado_em = NOW() WHERE id = $2`,
+        [boleto.status, crId]
+      );
+    }
+
+    // Se Asaas confirma pagamento, baixa automaticamente a conta
+    if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status)) {
+      await pool.query(
+        `UPDATE contas_receber
+         SET status = 'pago', data_pagamento = COALESCE($1::date, CURRENT_DATE),
+             atualizado_em = NOW()
+         WHERE id = $2 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+        [boleto.dataPagamento, crId]
+      );
+    }
+
+    res.json({ sucesso: true, boleto: { ...boleto, ...cr } });
+  } catch (err) {
+    console.error('[boleto] GET status:', err.message);
+    jsonErro(res, 500, 'Erro ao consultar boleto');
+  }
+});
+
+// POST /pagamentos/boleto/webhook — notificações Asaas (PAYMENT_RECEIVED, etc.)
+app.post('/pagamentos/boleto/webhook', async (req, res) => {
+  try {
+    const { event, payment } = req.body || {};
+
+    if (!payment?.externalReference) return res.status(200).json({ ok: true });
+
+    const contaId = Number(payment.externalReference);
+
+    if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event) && contaId > 0) {
+      await pool.query(
+        `UPDATE contas_receber
+         SET status = 'pago', boleto_status = 'RECEIVED',
+             data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
+         WHERE id = $1 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+        [contaId, payment.paymentDate || null]
+      );
+    }
+
+    if (event === 'PAYMENT_OVERDUE' && contaId > 0) {
+      await pool.query(
+        `UPDATE contas_receber SET boleto_status = 'OVERDUE', atualizado_em = NOW()
+         WHERE id = $1`,
+        [contaId]
+      );
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[boleto] webhook:', err.message);
+    res.status(200).json({ ok: true }); // Sempre 200 para Asaas não retentar
+  }
+});
+
 // ================= CONCILIAÇÃO BANCÁRIA =================
 
 function ofxTagVal(bloco, tag) {
