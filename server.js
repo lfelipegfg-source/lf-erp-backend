@@ -7087,6 +7087,109 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── Metas de vendas ───────────────────────────────────────────────────────────
+
+// GET /metas-vendas?periodo=YYYY-MM — lista metas com progresso real
+app.get('/metas-vendas', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const periodo = req.query.periodo || hoje().slice(0, 7); // default: mês atual
+
+    // Calcula intervalo de datas do período
+    let dataInicio, dataFim;
+    if (/^\d{4}-\d{2}$/.test(periodo)) {
+      // Mensal: YYYY-MM
+      dataInicio = `${periodo}-01`;
+      const [y, m] = periodo.split('-').map(Number);
+      const fim = new Date(y, m, 0); // último dia do mês
+      dataFim = fim.toISOString().slice(0, 10);
+    } else {
+      dataInicio = hoje().slice(0, 8) + '01';
+      dataFim = hoje();
+    }
+
+    const metasResult = await pool.query(
+      `SELECT m.*, u.nome_completo AS vendedor_nome, u.usuario AS vendedor_usuario
+       FROM metas_vendas m
+       LEFT JOIN usuarios u ON u.id = m.usuario_id
+       WHERE m.empresa_id = $1 AND m.periodo = $2
+       ORDER BY m.usuario_id NULLS FIRST, m.id`,
+      [empresaResolvida.id, periodo]
+    );
+
+    // Calcula progresso real via vendas do período
+    const metasComProgresso = await Promise.all(
+      metasResult.rows.map(async (meta) => {
+        const vendasResult = await pool.query(
+          `SELECT COALESCE(SUM(total), 0) AS realizado
+           FROM vendas
+           WHERE empresa_id = $1
+             AND data >= $2 AND data <= $3
+             ${meta.usuario_id ? 'AND criado_por = $4' : ''}`,
+          meta.usuario_id
+            ? [empresaResolvida.id, dataInicio, dataFim, meta.usuario_id]
+            : [empresaResolvida.id, dataInicio, dataFim]
+        );
+        const realizado = Number(vendasResult.rows[0].realizado || 0);
+        const meta_valor = Number(meta.valor_meta || 0);
+        const percentual = meta_valor > 0 ? Math.min(100, Math.round((realizado / meta_valor) * 100)) : 0;
+        return { ...meta, realizado, percentual, faltando: Math.max(0, meta_valor - realizado) };
+      })
+    );
+
+    res.json({ sucesso: true, periodo, data_inicio: dataInicio, data_fim: dataFim, metas: metasComProgresso });
+  } catch (err) {
+    console.error('[metas] GET:', err.message);
+    jsonErro(res, 500, 'Erro ao carregar metas');
+  }
+});
+
+// POST /metas-vendas — criar ou atualizar meta
+app.post('/metas-vendas', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { usuario_id, periodo, valor_meta, descricao } = req.body;
+    if (!periodo || !valor_meta) return jsonErro(res, 400, 'periodo e valor_meta são obrigatórios');
+    if (!/^\d{4}-\d{2}$/.test(periodo)) return jsonErro(res, 400, 'periodo deve ser YYYY-MM');
+
+    const result = await pool.query(
+      `INSERT INTO metas_vendas (empresa_id, usuario_id, periodo, valor_meta, descricao)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (empresa_id, usuario_id, periodo) DO UPDATE
+       SET valor_meta = $4, descricao = $5, atualizado_em = NOW()
+       RETURNING *`,
+      [empresaResolvida.id, usuario_id || null, periodo,
+       normalizarDecimal(valor_meta), descricao || null]
+    );
+
+    res.status(201).json({ sucesso: true, meta: result.rows[0] });
+  } catch (err) {
+    console.error('[metas] POST:', err.message);
+    jsonErro(res, 500, 'Erro ao salvar meta');
+  }
+});
+
+// DELETE /metas-vendas/:id
+app.delete('/metas-vendas/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const r = await pool.query(
+      `DELETE FROM metas_vendas WHERE id = $1 AND empresa_id = $2`,
+      [Number(req.params.id), empresaResolvida.id]
+    );
+    if (r.rowCount === 0) return jsonErro(res, 404, 'Meta não encontrada');
+    res.json({ sucesso: true });
+  } catch (err) {
+    jsonErro(res, 500, 'Erro ao excluir meta');
+  }
+});
+
 // ── Multi-depósito ────────────────────────────────────────────────────────────
 
 // GET /depositos — lista depósitos da empresa
