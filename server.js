@@ -5966,15 +5966,16 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, async (req, res) => {
     const { pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox } = req.body;
 
     await pool.query(
-      `INSERT INTO configuracoes (empresa, empresa_id, pix_gateway, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox)
-       VALUES ($1, $2, 'efi', $3, $4, $5, $6, $7)
-       ON CONFLICT (empresa_id) DO UPDATE
-         SET pix_client_id     = EXCLUDED.pix_client_id,
-             pix_client_secret = COALESCE(NULLIF($4, '****'), configuracoes.pix_client_secret),
-             pix_certificado   = COALESCE(NULLIF($5, 'configurado'), configuracoes.pix_certificado),
-             pix_chave         = EXCLUDED.pix_chave,
-             pix_sandbox       = EXCLUDED.pix_sandbox`,
-      [empresaResolvida.nome, empresaResolvida.id, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox ?? true]
+      `UPDATE configuracoes
+       SET pix_gateway       = 'efi',
+           pix_client_id     = $3,
+           pix_client_secret = COALESCE(NULLIF($4, '****'), pix_client_secret),
+           pix_certificado   = COALESCE(NULLIF($5, 'configurado'), pix_certificado),
+           pix_chave         = $6,
+           pix_sandbox       = $7,
+           atualizado_em     = NOW()
+       WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
+      [empresaResolvida.id, empresaResolvida.nome, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox ?? true]
     );
 
     res.json({ sucesso: true });
