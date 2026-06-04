@@ -1,0 +1,427 @@
+/**
+ * BI Simplificado — LF ERP
+ * Relatórios executivos com análises temporais e comparativos.
+ *
+ * GET /bi/resumo-executivo   — todos os dados em uma única chamada
+ * GET /bi/tendencia-vendas   — vendas por mês (últimos N meses)
+ * GET /bi/comparativo        — este período vs anterior vs mesmo período ano passado
+ * GET /bi/top-produtos       — top produtos por receita
+ * GET /bi/top-clientes       — top clientes por receita
+ * GET /bi/mix-pagamentos     — breakdown por forma de pagamento
+ * GET /bi/margem-categorias  — margem bruta por categoria
+ * GET /bi/funil              — orçamentos → pedidos → vendas
+ */
+
+module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
+  const router = require('express').Router();
+
+  function ok(res, d = {})              { return res.json({ sucesso: true, ...d }); }
+  function erro(res, s = 500, m = 'Erro interno') { return res.status(s).json({ sucesso: false, erro: m }); }
+  async function emp(req)               { return validarAcessoEmpresa(req, null, req.empresa_id); }
+
+  function empresaCond(eId, eNome, alias = '') {
+    const a = alias ? alias + '.' : '';
+    return `(${a}empresa_id = ${eId} OR (${a}empresa_id IS NULL AND ${a}empresa = '${eNome.replace(/'/g, "''")}'))`;
+  }
+
+  // ── Tendência de vendas (últimos N meses) ─────────────────────────────────
+
+  router.get('/tendencia-vendas', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const meses = Math.min(24, Math.max(3, Number(req.query.meses) || 12));
+
+      const result = await pool.query(
+        `SELECT
+           TO_CHAR(DATE_TRUNC('month', data::date), 'YYYY-MM') AS mes,
+           COUNT(*)                                             AS qtd_vendas,
+           COALESCE(SUM(total), 0)                             AS receita,
+           COALESCE(SUM(desconto), 0)                          AS descontos,
+           COALESCE(SUM(vi_cmv.cmv), 0)                        AS custo
+         FROM vendas v
+         LEFT JOIN (
+           SELECT venda_id, SUM(quantidade * COALESCE(custo_unitario, 0)) AS cmv
+           FROM venda_itens GROUP BY venda_id
+         ) vi_cmv ON vi_cmv.venda_id = v.id
+         WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
+           AND v.data::date >= (CURRENT_DATE - ($3 || ' months')::interval)::date
+         GROUP BY 1
+         ORDER BY 1`,
+        [e.id, e.nome, meses]
+      );
+
+      return ok(res, {
+        meses,
+        dados: result.rows.map((r) => ({
+          mes:        r.mes,
+          qtd_vendas: Number(r.qtd_vendas),
+          receita:    Number(r.receita),
+          descontos:  Number(r.descontos),
+          custo:      Number(r.custo),
+          margem:     Number(r.receita) - Number(r.custo)
+        }))
+      });
+    } catch (err) {
+      console.error('[bi] tendencia:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Comparativo de períodos ───────────────────────────────────────────────
+
+  router.get('/comparativo', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      async function kpiPeriodo(ini, fim) {
+        const r = await pool.query(
+          `SELECT
+             COUNT(*)                      AS qtd_vendas,
+             COALESCE(SUM(total), 0)       AS receita,
+             COALESCE(SUM(desconto), 0)    AS descontos,
+             COALESCE(COUNT(DISTINCT cliente_id) FILTER (WHERE cliente_id IS NOT NULL), 0) AS clientes_unicos
+           FROM vendas
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+             AND data::date BETWEEN $3 AND $4`,
+          [e.id, e.nome, ini, fim]
+        );
+
+        const comp = await pool.query(
+          `SELECT COALESCE(SUM(total), 0) AS compras
+           FROM compras
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+             AND data::date BETWEEN $3 AND $4`,
+          [e.id, e.nome, ini, fim]
+        );
+
+        const v = r.rows[0];
+        return {
+          qtd_vendas:    Number(v.qtd_vendas),
+          receita:       Number(v.receita),
+          descontos:     Number(v.descontos),
+          compras:       Number(comp.rows[0].compras),
+          clientes_unicos: Number(v.clientes_unicos)
+        };
+      }
+
+      const hojeStr   = hoje();
+      const dt        = new Date(hojeStr);
+      const iniMes    = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-01`;
+      const fimMes    = hojeStr;
+
+      const dtPrev = new Date(dt.getFullYear(), dt.getMonth() - 1, 1);
+      const iniPrev = `${dtPrev.getFullYear()}-${String(dtPrev.getMonth()+1).padStart(2,'0')}-01`;
+      const fimPrev = `${dtPrev.getFullYear()}-${String(dtPrev.getMonth()+1).padStart(2,'0')}-${new Date(dtPrev.getFullYear(), dtPrev.getMonth()+1, 0).getDate()}`;
+
+      const dtAnoAnt = new Date(dt.getFullYear()-1, dt.getMonth(), 1);
+      const iniAnoAnt = `${dtAnoAnt.getFullYear()}-${String(dtAnoAnt.getMonth()+1).padStart(2,'0')}-01`;
+      const fimAnoAnt = `${dtAnoAnt.getFullYear()}-${String(dtAnoAnt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+
+      const [atual, anterior, anoAnterior] = await Promise.all([
+        kpiPeriodo(iniMes, fimMes),
+        kpiPeriodo(iniPrev, fimPrev),
+        kpiPeriodo(iniAnoAnt, fimAnoAnt)
+      ]);
+
+      function variacao(agora, antes) {
+        if (antes === 0) return agora > 0 ? 100 : 0;
+        return Number((((agora - antes) / antes) * 100).toFixed(1));
+      }
+
+      return ok(res, {
+        atual,
+        anterior,
+        ano_anterior: anoAnterior,
+        variacoes: {
+          vs_anterior:    { receita: variacao(atual.receita,    anterior.receita),    vendas: variacao(atual.qtd_vendas, anterior.qtd_vendas) },
+          vs_ano_anterior: { receita: variacao(atual.receita,   anoAnterior.receita), vendas: variacao(atual.qtd_vendas, anoAnterior.qtd_vendas) }
+        },
+        periodos: { atual: { ini: iniMes, fim: fimMes }, anterior: { ini: iniPrev, fim: fimPrev }, ano_anterior: { ini: iniAnoAnt, fim: fimAnoAnt } }
+      });
+    } catch (err) {
+      console.error('[bi] comparativo:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Top produtos ──────────────────────────────────────────────────────────
+
+  router.get('/top-produtos', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const limit  = Math.min(20, Number(req.query.limit) || 10);
+      const { inicio, fim } = req.query;
+
+      const params = [e.id];
+      let dataCond = '';
+      if (inicio) { params.push(inicio); dataCond += ` AND v.data >= $${params.length}`; }
+      if (fim)    { params.push(fim);    dataCond += ` AND v.data <= $${params.length}`; }
+
+      const result = await pool.query(
+        `SELECT vi.produto_nome,
+                COUNT(DISTINCT vi.venda_id)       AS qtd_vendas,
+                SUM(vi.quantidade)                AS qtd_total,
+                COALESCE(SUM(vi.total), 0)        AS receita,
+                COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario,0)), 0) AS custo
+         FROM venda_itens vi
+         JOIN vendas v ON v.id = vi.venda_id
+         WHERE vi.empresa_id = $1 ${dataCond}
+         GROUP BY vi.produto_nome
+         ORDER BY receita DESC
+         LIMIT ${limit}`,
+        params
+      );
+
+      return ok(res, {
+        produtos: result.rows.map((r) => ({
+          nome:       r.produto_nome,
+          qtd_vendas: Number(r.qtd_vendas),
+          qtd_total:  Number(r.qtd_total),
+          receita:    Number(r.receita),
+          custo:      Number(r.custo),
+          margem:     Number(r.receita) - Number(r.custo)
+        }))
+      });
+    } catch (err) {
+      console.error('[bi] top-produtos:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Top clientes ──────────────────────────────────────────────────────────
+
+  router.get('/top-clientes', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const limit = Math.min(20, Number(req.query.limit) || 10);
+      const { inicio, fim } = req.query;
+
+      const params = [e.id, e.nome];
+      let dataCond = '';
+      if (inicio) { params.push(inicio); dataCond += ` AND data >= $${params.length}`; }
+      if (fim)    { params.push(fim);    dataCond += ` AND data <= $${params.length}`; }
+
+      const result = await pool.query(
+        `SELECT COALESCE(cliente_nome, 'Consumidor final') AS cliente,
+                COUNT(*)                                   AS qtd_compras,
+                COALESCE(SUM(total), 0)                    AS total_gasto,
+                COALESCE(AVG(total), 0)                    AS ticket_medio
+         FROM vendas
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}
+         GROUP BY cliente
+         ORDER BY total_gasto DESC
+         LIMIT ${limit}`,
+        params
+      );
+
+      return ok(res, {
+        clientes: result.rows.map((r) => ({
+          nome:        r.cliente,
+          qtd_compras: Number(r.qtd_compras),
+          total_gasto: Number(r.total_gasto),
+          ticket_medio: Number(Number(r.ticket_medio).toFixed(2))
+        }))
+      });
+    } catch (err) {
+      console.error('[bi] top-clientes:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Mix de pagamentos ─────────────────────────────────────────────────────
+
+  router.get('/mix-pagamentos', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const { inicio, fim } = req.query;
+      const params = [e.id, e.nome];
+      let dataCond = '';
+      if (inicio) { params.push(inicio); dataCond += ` AND data >= $${params.length}`; }
+      if (fim)    { params.push(fim);    dataCond += ` AND data <= $${params.length}`; }
+
+      const result = await pool.query(
+        `SELECT COALESCE(pagamento, 'Não informado') AS metodo,
+                COUNT(*)                             AS qtd,
+                COALESCE(SUM(total), 0)              AS total
+         FROM vendas
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}
+         GROUP BY metodo
+         ORDER BY total DESC`,
+        params
+      );
+
+      const totalGeral = result.rows.reduce((s, r) => s + Number(r.total), 0);
+
+      return ok(res, {
+        metodos: result.rows.map((r) => ({
+          metodo: r.metodo,
+          qtd:    Number(r.qtd),
+          total:  Number(r.total),
+          pct:    totalGeral > 0 ? Number(((r.total / totalGeral) * 100).toFixed(1)) : 0
+        })),
+        total_geral: totalGeral
+      });
+    } catch (err) {
+      console.error('[bi] mix-pagamentos:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Margem por categoria ──────────────────────────────────────────────────
+
+  router.get('/margem-categorias', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const { inicio, fim } = req.query;
+      const params = [e.id];
+      let dataCond = '';
+      if (inicio) { params.push(inicio); dataCond += ` AND v.data >= $${params.length}`; }
+      if (fim)    { params.push(fim);    dataCond += ` AND v.data <= $${params.length}`; }
+
+      const result = await pool.query(
+        `SELECT COALESCE(p.categoria, 'Sem categoria') AS categoria,
+                COALESCE(SUM(vi.total), 0) AS receita,
+                COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario, 0)), 0) AS custo,
+                COUNT(DISTINCT vi.venda_id) AS qtd_vendas
+         FROM venda_itens vi
+         JOIN vendas v ON v.id = vi.venda_id
+         LEFT JOIN produtos p ON p.id = vi.produto_id
+         WHERE vi.empresa_id = $1 ${dataCond}
+         GROUP BY categoria
+         ORDER BY receita DESC`,
+        params
+      );
+
+      return ok(res, {
+        categorias: result.rows.map((r) => {
+          const rec = Number(r.receita);
+          const cus = Number(r.custo);
+          return {
+            categoria:  r.categoria,
+            receita:    rec,
+            custo:      cus,
+            margem:     rec - cus,
+            margem_pct: rec > 0 ? Number(((rec - cus) / rec * 100).toFixed(1)) : 0,
+            qtd_vendas: Number(r.qtd_vendas)
+          };
+        })
+      });
+    } catch (err) {
+      console.error('[bi] margem-categorias:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Funil de conversão ────────────────────────────────────────────────────
+
+  router.get('/funil', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const { inicio, fim } = req.query;
+      const params = [e.id, e.nome];
+      let dataCond = '';
+      if (inicio) { params.push(inicio); dataCond += ` AND criado_em::date >= $${params.length}`; }
+      if (fim)    { params.push(fim);    dataCond += ` AND criado_em::date <= $${params.length}`; }
+
+      const [orcRes, pedRes, vendasRes] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM orcamentos WHERE (empresa_id = $1 OR empresa = $2) ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] })),
+        pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM pedidos WHERE (empresa_id = $1 OR empresa = $2) ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] })),
+        pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM vendas WHERE (empresa_id = $1 OR empresa = $2) ${dataCond.replace(/criado_em/g,'criado_em')}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] }))
+      ]);
+
+      const etapas = [
+        { etapa: 'Orçamentos', qtd: Number(orcRes.rows[0].total),    valor: Number(orcRes.rows[0].valor) },
+        { etapa: 'Pedidos',    qtd: Number(pedRes.rows[0].total),    valor: Number(pedRes.rows[0].valor) },
+        { etapa: 'Vendas',     qtd: Number(vendasRes.rows[0].total), valor: Number(vendasRes.rows[0].valor) }
+      ];
+
+      const maxQtd = Math.max(...etapas.map((e) => e.qtd), 1);
+      const funilDados = etapas.map((e, i) => ({
+        ...e,
+        pct_entrada:   i === 0 ? 100 : Number(((e.qtd / etapas[0].qtd) * 100).toFixed(1)),
+        conversao_step: i === 0 ? 100 : etapas[i-1].qtd > 0 ? Number(((e.qtd / etapas[i-1].qtd) * 100).toFixed(1)) : 0
+      }));
+
+      return ok(res, { etapas: funilDados });
+    } catch (err) {
+      console.error('[bi] funil:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  // ── Resumo executivo (tudo em uma chamada) ────────────────────────────────
+
+  router.get('/resumo-executivo', auth, async (req, res) => {
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const q = new URLSearchParams(req.query).toString();
+
+      const [tendencia, comparativo, topProdutos, topClientes, mixPag, margemCat, funil] = await Promise.allSettled([
+        pool.query(`SELECT TO_CHAR(DATE_TRUNC('month',data::date),'YYYY-MM') AS mes, COUNT(*) AS qtd_vendas, COALESCE(SUM(total),0) AS receita FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND data::date >= (CURRENT_DATE - '12 months'::interval)::date GROUP BY 1 ORDER BY 1`, [e.id, e.nome]),
+        null, null, null, null, null, null
+      ]);
+
+      // Dispara todas as queries em paralelo
+      const [t, comp, tp, tc, mp, mc, fn] = await Promise.allSettled([
+        // tendencia
+        pool.query(`SELECT TO_CHAR(DATE_TRUNC('month',data::date),'YYYY-MM') AS mes, COUNT(*) AS qtd, COALESCE(SUM(total),0) AS receita FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND data::date >= (CURRENT_DATE - '12 months'::interval)::date GROUP BY 1 ORDER BY 1`, [e.id, e.nome]),
+        // comparativo mês atual vs anterior
+        pool.query(`SELECT TO_CHAR(DATE_TRUNC('month',data::date),'YYYY-MM') AS mes, COALESCE(SUM(total),0) AS receita, COUNT(*) AS qtd FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND DATE_TRUNC('month',data::date) >= DATE_TRUNC('month',CURRENT_DATE) - INTERVAL '1 month' GROUP BY 1 ORDER BY 1`, [e.id, e.nome]),
+        // top produtos
+        pool.query(`SELECT vi.produto_nome, COALESCE(SUM(vi.total),0) AS receita, SUM(vi.quantidade) AS qtd FROM venda_itens vi WHERE vi.empresa_id=$1 GROUP BY vi.produto_nome ORDER BY receita DESC LIMIT 10`, [e.id]),
+        // top clientes
+        pool.query(`SELECT COALESCE(cliente_nome,'Consumidor final') AS cliente, COALESCE(SUM(total),0) AS total, COUNT(*) AS qtd FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) GROUP BY cliente ORDER BY total DESC LIMIT 10`, [e.id, e.nome]),
+        // mix pagamentos
+        pool.query(`SELECT COALESCE(pagamento,'Não informado') AS metodo, COUNT(*) AS qtd, COALESCE(SUM(total),0) AS total FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND data::date >= CURRENT_DATE - INTERVAL '30 days' GROUP BY metodo ORDER BY total DESC`, [e.id, e.nome]),
+        // margem categorias
+        pool.query(`SELECT COALESCE(p.categoria,'Sem categoria') AS categoria, COALESCE(SUM(vi.total),0) AS receita, COALESCE(SUM(vi.quantidade*COALESCE(vi.custo_unitario,0)),0) AS custo FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id LEFT JOIN produtos p ON p.id=vi.produto_id WHERE vi.empresa_id=$1 AND v.data::date >= CURRENT_DATE-INTERVAL '30 days' GROUP BY categoria ORDER BY receita DESC`, [e.id]),
+        // funil
+        Promise.all([
+          pool.query(`SELECT COUNT(*) AS total FROM orcamentos WHERE (empresa_id=$1 OR empresa=$2) AND criado_em >= CURRENT_DATE-INTERVAL '30 days'`, [e.id, e.nome]).catch(()=>({rows:[{total:0}]})),
+          pool.query(`SELECT COUNT(*) AS total FROM pedidos    WHERE (empresa_id=$1 OR empresa=$2) AND criado_em >= CURRENT_DATE-INTERVAL '30 days'`, [e.id, e.nome]).catch(()=>({rows:[{total:0}]})),
+          pool.query(`SELECT COUNT(*) AS total FROM vendas     WHERE (empresa_id=$1 OR empresa=$2) AND criado_em >= CURRENT_DATE-INTERVAL '30 days'`, [e.id, e.nome]).catch(()=>({rows:[{total:0}]}))
+        ])
+      ]);
+
+      const safe = (r, map) => r.status === 'fulfilled' ? (map ? r.value.rows.map(map) : r.value.rows) : [];
+      const safeVal = (r, key, def = []) => r.status === 'fulfilled' ? r.value[key] || def : def;
+
+      const fnVal = fn.status === 'fulfilled' ? fn.value : [{ rows:[{total:0}] }, { rows:[{total:0}] }, { rows:[{total:0}] }];
+
+      return ok(res, {
+        tendencia_12m:  safe(t),
+        comparativo_2m: safe(comp),
+        top_produtos:   safe(tp),
+        top_clientes:   safe(tc),
+        mix_pagamentos: safe(mp),
+        margem_categorias: safe(mc),
+        funil: [
+          { etapa: 'Orçamentos', qtd: Number(fnVal[0].rows[0].total) },
+          { etapa: 'Pedidos',    qtd: Number(fnVal[1].rows[0].total) },
+          { etapa: 'Vendas',     qtd: Number(fnVal[2].rows[0].total) }
+        ]
+      });
+    } catch (err) {
+      console.error('[bi] resumo-executivo:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
+  return router;
+};

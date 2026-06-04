@@ -123,6 +123,7 @@ const whatsappRoutes         = require('./routes/whatsapp.routes');
 const fidelidadeRoutes       = require('./routes/fidelidade.routes');
 const checkoutRoutes         = require('./routes/checkout.routes');
 const filiaisRoutes          = require('./routes/filiais.routes');
+const biRoutes               = require('./routes/bi.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -359,6 +360,7 @@ app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, valida
 app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
 app.use('/checkout',     checkoutRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
 app.use('/filiais',     filiaisRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, obterPeriodo, adicionarFiltroPeriodo, hoje }));
+app.use('/bi',         biRoutes({ auth, pool, validarAcessoEmpresa, hoje }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
 app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
