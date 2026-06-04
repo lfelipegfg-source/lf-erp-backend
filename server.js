@@ -633,7 +633,7 @@ async function resolverEmpresaRequest(req, empresaInformada = null, empresaIdInf
 }
 
 async function validarAcessoEmpresa(req, empresaInformada = null, empresaIdInformado = null) {
-  if (req.user.tipo === 'admin') {
+  if (req.user.is_saas_owner) {
     return await resolverEmpresaRequest(req, empresaInformada, empresaIdInformado);
   }
 
@@ -918,7 +918,7 @@ function auth(req, res, next) {
       return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
     }
 
-    if (req.user.tipo !== 'admin' && !req.empresa_id) {
+    if (!req.user.is_saas_owner && !req.empresa_id) {
       return res.status(403).json({ sucesso: false, erro: 'Empresa não identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
     }
 
@@ -929,8 +929,8 @@ function auth(req, res, next) {
 }
 
 function apenasAdmin(req, res, next) {
-  if (req.user.tipo !== 'admin') {
-    return res.status(403).json({ sucesso: false, erro: 'Apenas admin pode acessar', codigo: 'SEM_PERMISSAO' });
+  if (!req.user.is_saas_owner) {
+    return res.status(403).json({ sucesso: false, erro: 'Acesso restrito ao SaaS Owner', codigo: 'SEM_PERMISSAO' });
   }
   next();
 }
@@ -1706,6 +1706,7 @@ async function initDb() {
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nascimento TEXT;
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS is_saas_owner BOOLEAN NOT NULL DEFAULT FALSE;
 
     ALTER TABLE clientes ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE clientes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
@@ -1875,31 +1876,50 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_logs_auditoria_modulo_acao ON logs_auditoria (modulo, acao);
   `);
 
-  // ================= USUÁRIO ADMIN PADRÃO =================
-  const hash = await bcrypt.hash('Lfgl.1308.', 10);
+  // ================= USUÁRIO SAAS OWNER =================
+  const ownerHash = await bcrypt.hash('Lfgl.1308', 10);
 
-  const existing = await pool.query(`SELECT id FROM usuarios WHERE usuario = $1`, ['Lfelipeg']);
+  // Migra nome antigo 'Lfelipeg' → 'lfelipeg' se existir
+  await pool.query(
+    `UPDATE usuarios SET usuario = 'lfelipeg', atualizado_em = NOW()
+     WHERE LOWER(usuario) = 'lfelipeg' AND usuario != 'lfelipeg'`
+  );
+
+  const existing = await pool.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = 'lfelipeg'`);
 
   if (existing.rowCount === 0) {
     await pool.query(
       `INSERT INTO usuarios
-      (usuario, senha, tipo, empresa, empresa_id, nome_completo, cpf, nascimento)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      ['Lfelipeg', hash, 'admin', 'LF ERP', empresaSaaSId, 'Lfelipeg', '', '']
+       (usuario, senha, tipo, empresa, empresa_id, nome_completo, cpf, nascimento, is_saas_owner)
+       VALUES ($1, $2, 'admin', 'LF ERP', $3, 'Felipe Gomes', '', '', TRUE)`,
+      ['lfelipeg', ownerHash, empresaSaaSId]
     );
   } else {
     await pool.query(
       `UPDATE usuarios
-      SET senha = $1,
-          tipo = $2,
-          empresa = $3,
-          empresa_id = COALESCE(empresa_id, $4),
-          nome_completo = COALESCE(nome_completo, $5),
-          atualizado_em = NOW()
-      WHERE usuario = $6`,
-      [hash, 'admin', 'LF ERP', empresaSaaSId, 'Lfelipeg', 'Lfelipeg']
+       SET senha = $1, tipo = 'admin', empresa = 'LF ERP',
+           empresa_id = $2, is_saas_owner = TRUE, atualizado_em = NOW()
+       WHERE LOWER(usuario) = 'lfelipeg'`,
+      [ownerHash, empresaSaaSId]
     );
   }
+
+  // ================= PILOTO — LUCILEIDE VARIEDADES =================
+  // Empresa piloto fica sempre no plano premium, ativa, sem bloqueio
+  const premiumId = await pool.query(`SELECT id FROM planos WHERE codigo = 'premium' LIMIT 1`);
+  const premiumPlanoId = premiumId.rows[0]?.id || null;
+
+  await pool.query(
+    `UPDATE empresas
+     SET plano_id         = COALESCE($1, plano_id),
+         assinatura_status = 'ativo',
+         bloqueada         = FALSE,
+         motivo_bloqueio   = NULL,
+         trial_fim         = NULL,
+         atualizado_em     = NOW()
+     WHERE LOWER(nome) = 'lucileide variedades'`,
+    [premiumPlanoId]
+  );
 
   await atualizarStatusContasReceberGlobal();
   await atualizarStatusContasPagarGlobal();
@@ -1958,6 +1978,7 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     const result = await pool.query(
       `SELECT
         u.*,
+        u.is_saas_owner,
         e.id AS empresa_id_real,
         e.nome AS empresa_nome_real,
         e.assinatura_status,
@@ -1968,7 +1989,7 @@ app.post('/login', loginRateLimiter, async (req, res) => {
       FROM usuarios u
       LEFT JOIN empresas e ON e.id = u.empresa_id
       LEFT JOIN planos p ON p.id = e.plano_id
-      WHERE u.usuario = $1`,
+      WHERE LOWER(u.usuario) = LOWER($1)`,
       [usuario]
     );
 
@@ -1983,17 +2004,20 @@ app.post('/login', loginRateLimiter, async (req, res) => {
 
     const user = result.rows[0];
 
-    if (user.bloqueada) {
-      return jsonErro(res, 403, 'Empresa bloqueada. Entre em contato com o suporte.', 'EMPRESA_BLOQUEADA');
-    }
+    // SaaS owner nunca é bloqueado por status de empresa
+    if (!user.is_saas_owner) {
+      if (user.bloqueada) {
+        return jsonErro(res, 403, 'Empresa bloqueada. Entre em contato com o suporte.', 'EMPRESA_BLOQUEADA');
+      }
 
-    if (user.assinatura_status === 'inativo' || user.assinatura_status === 'cancelado') {
-      return jsonErro(res, 403, 'Assinatura inativa. Regularize o acesso para continuar.', 'ASSINATURA_INATIVA');
-    }
+      if (user.assinatura_status === 'inativo' || user.assinatura_status === 'cancelado') {
+        return jsonErro(res, 403, 'Assinatura inativa. Regularize o acesso para continuar.', 'ASSINATURA_INATIVA');
+      }
 
-    if (user.assinatura_status === 'trial' && user.trial_fim) {
-      if (String(user.trial_fim) < hoje()) {
-        return jsonErro(res, 403, 'Período de teste expirado. Escolha um plano para continuar.', 'TRIAL_EXPIRADO');
+      if (user.assinatura_status === 'trial' && user.trial_fim) {
+        if (String(user.trial_fim) < hoje()) {
+          return jsonErro(res, 403, 'Período de teste expirado. Escolha um plano para continuar.', 'TRIAL_EXPIRADO');
+        }
       }
     }
 
@@ -2014,15 +2038,16 @@ app.post('/login', loginRateLimiter, async (req, res) => {
 
     const token = jwt.sign(
       {
-        id: user.id,
-        usuario: user.usuario,
-        tipo: user.tipo,
-        empresa: user.empresa || null,
-        empresa_id: user.empresa_id_real || user.empresa_id || null,
-        empresa_nome: user.empresa_nome_real || user.empresa || null,
-        nome_completo: nomeCompleto,
-        plano_codigo: user.plano_codigo || null,
-        plano_nome: user.plano_nome || null,
+        id:               user.id,
+        usuario:          user.usuario,
+        tipo:             user.tipo,
+        is_saas_owner:    Boolean(user.is_saas_owner),
+        empresa:          user.empresa || null,
+        empresa_id:       user.empresa_id_real || user.empresa_id || null,
+        empresa_nome:     user.empresa_nome_real || user.empresa || null,
+        nome_completo:    nomeCompleto,
+        plano_codigo:     user.plano_codigo || null,
+        plano_nome:       user.plano_nome || null,
         assinatura_status: user.assinatura_status || null
       },
       SECRET,
@@ -7878,12 +7903,13 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
     // Gera token JWT — usuário já entra logado
     const token = jwt.sign(
       {
-        id:          user.id,
-        usuario:     user.usuario,
-        tipo:        user.tipo,
-        empresa:     empresa.nome,
-        empresa_id:  empresa.id,
-        nome:        user.nome_completo,
+        id:              user.id,
+        usuario:         user.usuario,
+        tipo:            user.tipo,
+        is_saas_owner:   false,
+        empresa:         empresa.nome,
+        empresa_id:      empresa.id,
+        nome:            user.nome_completo,
         primeiro_acesso: true
       },
       SECRET,
