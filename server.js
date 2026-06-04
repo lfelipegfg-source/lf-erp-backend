@@ -7087,6 +7087,115 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
   }
 });
 
+// ── Notificações in-app ───────────────────────────────────────────────────────
+// GET /notificacoes — retorna notificações relevantes para a empresa logada
+app.get('/notificacoes', auth, async (req, res) => {
+  try {
+    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const dataHoje = hoje();
+    const amanha   = addDias(dataHoje, 1);
+    const em7dias  = addDias(dataHoje, 7);
+
+    const [estoqueResult, crResult, cpResult, trialResult] = await Promise.all([
+      // Produtos abaixo do estoque mínimo
+      pool.query(
+        `SELECT id, nome, estoque, estoque_minimo FROM produtos
+         WHERE empresa_id = $1 AND deletado_em IS NULL
+           AND estoque_minimo > 0 AND estoque < estoque_minimo
+         ORDER BY (estoque_minimo - estoque) DESC LIMIT 10`,
+        [empresaResolvida.id]
+      ),
+      // Contas a receber vencendo hoje ou já atrasadas
+      pool.query(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
+         FROM contas_receber
+         WHERE empresa_id = $1
+           AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
+           AND data_vencimento <= $2`,
+        [empresaResolvida.id, dataHoje]
+      ),
+      // Contas a pagar vencendo hoje ou amanhã
+      pool.query(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
+         FROM contas_pagar
+         WHERE empresa_id = $1
+           AND LOWER(COALESCE(status,'pendente')) = 'pendente'
+           AND data_vencimento <= $2`,
+        [empresaResolvida.id, amanha]
+      ),
+      // Trial expirando em até 7 dias
+      pool.query(
+        `SELECT trial_fim FROM empresas
+         WHERE id = $1 AND assinatura_status = 'trial'
+           AND trial_fim IS NOT NULL AND trial_fim <= $2`,
+        [empresaResolvida.id, em7dias]
+      )
+    ]);
+
+    const notifs = [];
+
+    // Estoque baixo
+    const prodAbaixo = estoqueResult.rows;
+    if (prodAbaixo.length > 0) {
+      notifs.push({
+        tipo:   'estoque',
+        icone:  'fa-boxes-stacked',
+        cor:    '#d69e2e',
+        titulo: `${prodAbaixo.length} produto(s) abaixo do estoque mínimo`,
+        texto:  prodAbaixo.slice(0, 3).map((p) => `${p.nome} (${p.estoque}/${p.estoque_minimo})`).join(', ') + (prodAbaixo.length > 3 ? ` e mais ${prodAbaixo.length - 3}` : ''),
+        link:   'estoque'
+      });
+    }
+
+    // CR vencidas/vencendo
+    const cr = crResult.rows[0];
+    if (Number(cr.total) > 0) {
+      notifs.push({
+        tipo:   'contas_receber',
+        icone:  'fa-money-bill-wave',
+        cor:    '#e53e3e',
+        titulo: `${cr.total} conta(s) a receber em atraso`,
+        texto:  `Total: R$ ${Number(cr.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        link:   'contas-receber'
+      });
+    }
+
+    // CP vencendo
+    const cp = cpResult.rows[0];
+    if (Number(cp.total) > 0) {
+      notifs.push({
+        tipo:   'contas_pagar',
+        icone:  'fa-calendar-xmark',
+        cor:    '#e53e3e',
+        titulo: `${cp.total} conta(s) a pagar vencendo hoje/amanhã`,
+        texto:  `Total: R$ ${Number(cp.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        link:   'contas-pagar'
+      });
+    }
+
+    // Trial expirando
+    if (trialResult.rowCount > 0) {
+      const tf = trialResult.rows[0].trial_fim;
+      const diasRestantes = Math.ceil((new Date(tf) - new Date(dataHoje)) / 86400000);
+      notifs.push({
+        tipo:   'trial',
+        icone:  'fa-clock',
+        cor:    '#d69e2e',
+        titulo: diasRestantes <= 0 ? 'Seu trial expirou' : `Trial expira em ${diasRestantes} dia(s)`,
+        texto:  'Escolha um plano para continuar usando o sistema.',
+        link:   'configuracoes'
+      });
+    }
+
+    res.json({ sucesso: true, notificacoes: notifs, total: notifs.length });
+  } catch (err) {
+    console.error('[notificacoes]', err.message);
+    jsonErro(res, 500, 'Erro ao carregar notificações');
+  }
+});
+
 // ── Config SMTP SaaS Owner ────────────────────────────────────────────────────
 
 app.get('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
