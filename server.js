@@ -119,6 +119,7 @@ const exportacaoRoutes   = require('./routes/exportacao.routes');
 const apiPublicaRoutes   = require('./routes/api-publica.routes');
 const webhooksRoutes         = require('./routes/webhooks.routes');
 const rastreabilidadeRoutes  = require('./routes/rastreabilidade.routes');
+const whatsappRoutes         = require('./routes/whatsapp.routes');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -351,6 +352,7 @@ app.use('/exportacao', exportacaoRoutes({ auth, pool, validarAcessoEmpresa, adic
 app.use('/api/v1',    apiPublicaRoutes({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje }));
 app.use('/webhooks',         webhooksRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }));
+app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
 app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
