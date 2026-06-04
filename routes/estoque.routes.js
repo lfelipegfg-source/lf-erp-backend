@@ -197,5 +197,61 @@ ${filtroEmpresa}
     }
   });
 
+  // ── Sugestão automática de compra ────────────────────────────────────────────
+  router.get('/sugestao-compra', auth, async (req, res) => {
+    try {
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+      if (!empresaResolvida) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+
+      const result = await pool.query(
+        `SELECT
+           p.id,
+           p.nome,
+           p.categoria,
+           p.codigo_barras,
+           p.estoque         AS estoque_atual,
+           p.estoque_minimo,
+           p.custo_medio,
+           p.custo,
+           GREATEST(p.estoque_minimo * 2 - p.estoque, p.estoque_minimo - p.estoque) AS qtd_sugerida,
+           f.nome AS fornecedor_preferencial
+         FROM produtos p
+         LEFT JOIN fornecedores f ON f.id = p.fornecedor_id AND f.empresa_id = p.empresa_id
+         WHERE p.empresa_id = $1
+           AND p.deletado_em IS NULL
+           AND p.estoque_minimo > 0
+           AND p.estoque < p.estoque_minimo
+         ORDER BY (p.estoque_minimo - p.estoque) DESC, p.nome`,
+        [empresaResolvida.id]
+      );
+
+      const itens = result.rows.map((r) => ({
+        id:                     Number(r.id),
+        nome:                   r.nome,
+        categoria:              r.categoria || '',
+        codigo_barras:          r.codigo_barras || '',
+        estoque_atual:          Number(r.estoque_atual  || 0),
+        estoque_minimo:         Number(r.estoque_minimo || 0),
+        qtd_sugerida:           Math.max(1, Number(r.qtd_sugerida || 1)),
+        custo_estimado:         Number(r.custo_medio || r.custo || 0),
+        fornecedor_preferencial: r.fornecedor_preferencial || null
+      }));
+
+      const total_estimado = itens.reduce(
+        (acc, i) => acc + i.qtd_sugerida * i.custo_estimado, 0
+      );
+
+      return res.json({
+        sucesso: true,
+        total_itens: itens.length,
+        total_estimado: Number(total_estimado.toFixed(2)),
+        itens
+      });
+    } catch (err) {
+      console.error('[estoque] sugestao-compra:', err.message);
+      return res.status(500).json({ sucesso: false, erro: 'Erro ao gerar sugestão de compra' });
+    }
+  });
+
   return router;
 };
