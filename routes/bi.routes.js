@@ -362,6 +362,143 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
     }
   });
 
+  // ── Insights IA ───────────────────────────────────────────────────────────
+
+  const _iaCache = new Map(); // empresa_id → { ts, texto, gerado_em }
+
+  router.get('/insights-ia', auth, async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return erro(res, 503, 'ANTHROPIC_API_KEY não configurada no servidor');
+
+    try {
+      const e = await emp(req);
+      if (!e) return erro(res, 403, 'Sem acesso');
+
+      // Cache de 30 min por empresa
+      const hit = _iaCache.get(e.id);
+      if (hit && Date.now() - hit.ts < 30 * 60 * 1000) {
+        return ok(res, { insights: hit.texto, gerado_em: hit.gerado_em, cache: true });
+      }
+
+      const [compR, tendR, atrasoR, estoqueR, topProdR] = await Promise.allSettled([
+        pool.query(`
+          SELECT TO_CHAR(DATE_TRUNC('month', data::date), 'YYYY-MM') AS mes,
+                 COALESCE(SUM(total), 0) AS receita,
+                 COUNT(*) AS qtd,
+                 COALESCE(AVG(total), 0) AS ticket
+          FROM vendas
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+            AND DATE_TRUNC('month', data::date) >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'
+          GROUP BY 1 ORDER BY 1`, [e.id, e.nome]),
+
+        pool.query(`
+          SELECT TO_CHAR(DATE_TRUNC('month', data::date), 'YYYY-MM') AS mes,
+                 COALESCE(SUM(total), 0) AS receita
+          FROM vendas
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+            AND data::date >= CURRENT_DATE - INTERVAL '6 months'
+          GROUP BY 1 ORDER BY 1`, [e.id, e.nome]),
+
+        pool.query(`
+          SELECT COUNT(*) AS qtd, COALESCE(SUM(valor), 0) AS total
+          FROM contas_receber
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+            AND status IN ('atrasado', 'parcial_atrasado')`, [e.id, e.nome]),
+
+        pool.query(`
+          SELECT COUNT(*) AS qtd
+          FROM produtos
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+            AND estoque_minimo > 0 AND estoque < estoque_minimo`, [e.id, e.nome]),
+
+        pool.query(`
+          SELECT vi.produto_nome, COALESCE(SUM(vi.total), 0) AS receita
+          FROM venda_itens vi
+          JOIN vendas v ON v.id = vi.venda_id
+          WHERE vi.empresa_id = $1
+            AND v.data::date >= CURRENT_DATE - INTERVAL '30 days'
+          GROUP BY vi.produto_nome ORDER BY receita DESC LIMIT 5`, [e.id])
+      ]);
+
+      const safeRows = (r) => r.status === 'fulfilled' ? r.value.rows : [];
+
+      const hojeStr  = hoje();
+      const mesMes   = hojeStr.slice(0, 7);
+      const comp     = safeRows(compR);
+      const tend     = safeRows(tendR);
+      const atraso   = safeRows(atrasoR)[0] || { qtd: 0, total: 0 };
+      const estoque  = safeRows(estoqueR)[0] || { qtd: 0 };
+      const topProd  = safeRows(topProdR);
+
+      // Calcula mês anterior dinamicamente
+      const dtAnterior = new Date(hojeStr.slice(0, 8) + '01');
+      dtAnterior.setMonth(dtAnterior.getMonth() - 1);
+      const mesPrev  = `${dtAnterior.getFullYear()}-${String(dtAnterior.getMonth() + 1).padStart(2, '0')}`;
+
+      const atual    = comp.find(r => r.mes === mesMes)  || { receita: 0, qtd: 0, ticket: 0 };
+      const anterior = comp.find(r => r.mes === mesPrev) || { receita: 0 };
+
+      const varPct   = Number(anterior.receita) > 0
+        ? ((Number(atual.receita) - Number(anterior.receita)) / Number(anterior.receita) * 100).toFixed(1)
+        : null;
+
+      const brl      = (v) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const tendFmt  = tend.map(t => `${t.mes}: ${brl(t.receita)}`).join(', ');
+      const prodFmt  = topProd.map((p, i) => `${i + 1}. ${p.produto_nome} (${brl(p.receita)})`).join('; ');
+      const nomeEmp  = e.nome.replace(/["""'']/g, "'").slice(0, 60);
+
+      const prompt = `Você é um analista de negócios especialista do ERP da empresa "${nomeEmp}". Com base nos dados reais abaixo, gere um resumo executivo em português do Brasil.
+
+DADOS DO NEGÓCIO:
+- Receita mês atual: ${brl(atual.receita)}${varPct !== null ? ` (${Number(varPct) >= 0 ? '+' : ''}${varPct}% vs mês anterior)` : ''}
+- Número de vendas este mês: ${atual.qtd}
+- Ticket médio: ${brl(atual.ticket)}
+- Tendência dos últimos 6 meses (receita por mês): ${tendFmt || 'dados insuficientes'}
+- Top 5 produtos últimos 30 dias: ${prodFmt || 'sem dados'}
+- Contas a receber em atraso: ${atraso.qtd} título(s), total ${brl(atraso.total)}
+- Produtos com estoque abaixo do mínimo: ${estoque.qtd}
+
+Responda EXATAMENTE neste formato (sem markdown adicional):
+
+DIAGNÓSTICO
+[2 frases curtas sobre o momento atual do negócio usando os números reais]
+
+PONTOS POSITIVOS
+• [ponto específico com dado numérico]
+• [ponto específico com dado numérico]
+
+ALERTAS
+• [alerta específico com dado numérico]
+• [alerta específico com dado numérico]
+
+AÇÕES PARA ESTA SEMANA
+• [ação concreta e prática]
+• [ação concreta e prática]
+
+Máximo 200 palavras. Use os números reais fornecidos acima.`;
+
+      const AnthropicSdk = require('@anthropic-ai/sdk');
+      const AntClass     = AnthropicSdk.default ?? AnthropicSdk;
+      const client       = new AntClass({ apiKey });
+
+      const msg = await client.messages.create({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 600,
+        messages:   [{ role: 'user', content: prompt }]
+      });
+
+      const texto     = (msg.content[0]?.type === 'text' ? msg.content[0].text : '').trim();
+      const gerado_em = new Date().toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' });
+
+      _iaCache.set(e.id, { ts: Date.now(), texto, gerado_em });
+      return ok(res, { insights: texto, gerado_em, cache: false });
+
+    } catch (err) {
+      console.error('[bi] insights-ia:', err.message);
+      return erro(res, 500, err.message);
+    }
+  });
+
   // ── Resumo executivo (tudo em uma chamada) ────────────────────────────────
 
   router.get('/resumo-executivo', auth, async (req, res) => {
