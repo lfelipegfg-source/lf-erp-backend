@@ -884,7 +884,12 @@ module.exports = ({
         return erro(res, 400, 'Venda inválida');
       }
 
-      const vendaResult = await pool.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id]);
+      const vendaResult = req.user.is_saas_owner
+        ? await pool.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id])
+        : await pool.query(
+            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
 
       if (vendaResult.rowCount === 0) {
         return erro(res, 404, 'Venda não encontrada');
@@ -1057,7 +1062,12 @@ module.exports = ({
     try {
       const id = Number(req.params.id);
 
-      const vendaResult = await pool.query(`SELECT * FROM vendas WHERE id = $1`, [id]);
+      const vendaResult = req.user.is_saas_owner
+        ? await pool.query(`SELECT * FROM vendas WHERE id = $1`, [id])
+        : await pool.query(
+            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
 
       if (vendaResult.rowCount === 0) {
         return erro(res, 404, 'Venda não encontrada');
@@ -1153,7 +1163,12 @@ ORDER BY parcela ASC
 
       await client.query('BEGIN');
 
-      const vendaResult = await client.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id]);
+      const vendaResult = req.user.is_saas_owner
+        ? await client.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id])
+        : await client.query(
+            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
 
       if (vendaResult.rowCount === 0) {
         await client.query('ROLLBACK');
