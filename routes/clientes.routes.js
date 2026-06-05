@@ -299,8 +299,8 @@ module.exports = ({
         idx++;
       }
 
-      const limite = Math.min(normalizarInt(req.query.limit || 100), 500);
-      const offset = Math.max(normalizarInt(req.query.offset || 0), 0);
+      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
       const filterParams = [...params];
       const limIdx = filterParams.length + 1;
       const offIdx = filterParams.length + 2;
