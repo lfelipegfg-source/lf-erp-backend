@@ -100,7 +100,7 @@ ${filtroEmpresa}
 
       const result = await pool.query(sql, params);
 
-      return res.json(result.rows.map(normalizarMov));
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarMov) });
     } catch (error) {
       console.error('Erro real ao buscar movimentações:', error);
       return erro(res, 500, 'Erro ao buscar movimentações de estoque');

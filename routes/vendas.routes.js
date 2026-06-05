@@ -1040,6 +1040,7 @@ module.exports = ({
       ]);
 
       return res.json({
+        sucesso: true,
         dados: result.rows.map((row) => ({
           ...row,
           subtotal: Number(row.subtotal || 0),

@@ -280,6 +280,7 @@ module.exports = function ({
         Number(investimentosResult.rows[0].total || 0);
 
       return res.json({
+        sucesso: true,
         contas_receber: {
           pago: Number(receber.pago || 0),
           pendente: Number(receber.pendente || 0),
@@ -549,7 +550,7 @@ module.exports = function ({
           return db - da;
         });
 
-      return res.json(movimentos);
+      return res.json({ sucesso: true, dados: movimentos });
     } catch (error) {
       console.error('Erro real ao gerar relatório de fluxo de caixa:', error);
       return erro(res, 500, 'Erro ao gerar relatório de fluxo de caixa');
@@ -615,14 +616,12 @@ module.exports = function ({
 
       const result = await pool.query(sql, params);
 
-      return res.json(
-        result.rows.map((row) => ({
-          ...row,
-          valor: Number(row.valor || 0),
-          parcela: Number(row.parcela || 1),
-          total_parcelas: Number(row.total_parcelas || 1)
-        }))
-      );
+      return res.json({ sucesso: true, dados: result.rows.map((row) => ({
+        ...row,
+        valor: Number(row.valor || 0),
+        parcela: Number(row.parcela || 1),
+        total_parcelas: Number(row.total_parcelas || 1)
+      })) });
     } catch (error) {
       console.error('Erro real ao gerar relatório de contas a receber:', error);
       return erro(res, 500, 'Erro ao gerar relatório de contas a receber');
@@ -689,14 +688,12 @@ module.exports = function ({
 
       const result = await pool.query(sql, params);
 
-      return res.json(
-        result.rows.map((row) => ({
-          ...row,
-          valor: Number(row.valor || 0),
-          parcela: Number(row.parcela || 1),
-          total_parcelas: Number(row.total_parcelas || 1)
-        }))
-      );
+      return res.json({ sucesso: true, dados: result.rows.map((row) => ({
+        ...row,
+        valor: Number(row.valor || 0),
+        parcela: Number(row.parcela || 1),
+        total_parcelas: Number(row.total_parcelas || 1)
+      })) });
     } catch (error) {
       console.error('Erro real ao gerar relatório de contas a pagar:', error);
       return erro(res, 500, 'Erro ao gerar relatório de contas a pagar');
@@ -866,7 +863,7 @@ MAX(v.data) AS ultima_venda
         };
       });
 
-      return res.json(linhasComAbc);
+      return res.json({ sucesso: true, dados: linhasComAbc });
     } catch (error) {
       console.error('Erro real ao gerar relatório de lucratividade:', error);
 
@@ -934,6 +931,7 @@ MAX(v.data) AS ultima_venda
       };
 
       return res.json({
+        sucesso: true,
         total_clientes: clientes.length,
         total_titulos:  totTitulos,
         total_valor:    +totValor.toFixed(2),
@@ -1046,6 +1044,7 @@ MAX(v.data) AS ultima_venda
       const totResult   = totLucro - totDespesas;
 
       return res.json({
+        sucesso: true,
         periodo_inicio: dataInicial,
         periodo_fim:    dataFinal,
         receita_bruta:          +totReceita.toFixed(2),
@@ -1121,26 +1120,24 @@ MAX(v.data) AS ultima_venda
         params
       );
 
-      return res.json(
-        result.rows.map((row) => ({
-          produto_id: row.produto_id,
-          produto_nome: row.produto_nome,
-          grade_id: row.grade_id,
-          atributo1: row.atributo1 || '',
-          atributo2: row.atributo2 || '',
-          variacao: row.atributo2
-            ? `${row.atributo1} / ${row.atributo2}`
-            : row.atributo1 || `Grade #${row.grade_id}`,
-          quantidade_vendida: Number(row.quantidade_vendida || 0),
-          faturamento_total: Number(row.faturamento_total || 0),
-          preco_atual: Number(row.preco_atual || 0),
-          custo_atual: Number(row.custo_atual || 0),
-          custo_total: Number(row.custo_total || 0),
-          lucro_total: Number(row.lucro_total || 0),
-          estoque_atual: Number(row.estoque_atual || 0),
-          ultima_venda: row.ultima_venda || null
-        }))
-      );
+      return res.json({ sucesso: true, dados: result.rows.map((row) => ({
+        produto_id: row.produto_id,
+        produto_nome: row.produto_nome,
+        grade_id: row.grade_id,
+        atributo1: row.atributo1 || '',
+        atributo2: row.atributo2 || '',
+        variacao: row.atributo2
+          ? `${row.atributo1} / ${row.atributo2}`
+          : row.atributo1 || `Grade #${row.grade_id}`,
+        quantidade_vendida: Number(row.quantidade_vendida || 0),
+        faturamento_total: Number(row.faturamento_total || 0),
+        preco_atual: Number(row.preco_atual || 0),
+        custo_atual: Number(row.custo_atual || 0),
+        custo_total: Number(row.custo_total || 0),
+        lucro_total: Number(row.lucro_total || 0),
+        estoque_atual: Number(row.estoque_atual || 0),
+        ultima_venda: row.ultima_venda || null
+      })) });
     } catch (error) {
       console.error('Erro real ao gerar relatório por grade:', error);
       return erro(res, 500, 'Erro ao gerar relatório por variação');

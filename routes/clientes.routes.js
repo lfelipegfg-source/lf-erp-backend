@@ -314,6 +314,7 @@ module.exports = ({
       ]);
 
       return res.json({
+        sucesso: true,
         dados:  result.rows.map(normalizarCliente),
         total:  Number(countResult.rows[0]?.total || 0),
         limite,

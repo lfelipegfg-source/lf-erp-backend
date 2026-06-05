@@ -268,6 +268,7 @@ module.exports = function ({
         .reduce((acc, m) => acc + m.valor, 0);
 
       return res.json({
+        sucesso: true,
         entradas,
         saidas,
         saldo: entradas - saidas,

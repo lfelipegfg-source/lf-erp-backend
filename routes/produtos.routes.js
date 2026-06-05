@@ -281,7 +281,7 @@ ${adicionarFiltroEmpresaSaaS({
 
       const result = await pool.query(sql, params);
 
-      return res.json(result.rows.map(normalizarProduto));
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarProduto) });
     } catch (error) {
       console.error('Erro real ao buscar produtos:', error);
       return erro(res, 500, 'Erro ao buscar produtos');
@@ -335,7 +335,7 @@ ${adicionarFiltroEmpresaSaaS({
         params
       );
 
-      return res.json(result.rows.map(normalizarProduto));
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarProduto) });
     } catch (error) {
       console.error('Erro real ao buscar produtos admin:', error);
       return erro(res, 500, 'Erro ao buscar produtos');

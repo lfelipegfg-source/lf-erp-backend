@@ -161,7 +161,7 @@ module.exports = function ({
 
       const result = await pool.query(sql, params);
 
-      return res.json(result.rows.map(normalizarFornecedor));
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarFornecedor) });
     } catch (error) {
       console.error('Erro real ao buscar fornecedores:', error);
       return erro(res, 500, 'Erro ao buscar fornecedores');
@@ -215,7 +215,7 @@ module.exports = function ({
         params
       );
 
-      return res.json(result.rows.map(normalizarFornecedor));
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarFornecedor) });
     } catch (error) {
       console.error('Erro real ao buscar fornecedores admin:', error);
       return erro(res, 500, 'Erro ao buscar fornecedores');
