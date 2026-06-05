@@ -376,27 +376,35 @@ module.exports = function ({
         `SELECT * FROM compra_itens WHERE compra_id = $1`, [id]
       );
 
-      for (const item of itensOriginais.rows) {
-        const prod = await client.query(
-          `SELECT estoque, custo_medio, custo FROM produtos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
-          [item.produto_id, empresaResolvida.id]
+      // Pré-busca todos os produtos originais em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)
+      const idsOriginais = [...new Set(itensOriginais.rows.map(r => Number(r.produto_id)))].sort((a, b) => a - b);
+      if (idsOriginais.length > 0) {
+        const prodsOriginaisResult = await client.query(
+          `SELECT id, estoque, custo_medio, custo FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 FOR UPDATE`,
+          [idsOriginais, empresaResolvida.id]
         );
-        if (prod.rowCount > 0) {
-          const estoqueAtual = normalizarInt(prod.rows[0].estoque);
-          const custoAtual = normalizarDecimal(prod.rows[0].custo_medio || prod.rows[0].custo || 0);
-          const qtdOriginal = normalizarInt(item.quantidade);
+        const prodsOriginaisMap = Object.fromEntries(prodsOriginaisResult.rows.map(p => [Number(p.id), p]));
+
+        for (const item of itensOriginais.rows) {
+          const prod = prodsOriginaisMap[Number(item.produto_id)];
+          if (!prod) continue;
+          const estoqueAtual  = normalizarInt(prod.estoque);
+          const custoAtual    = normalizarDecimal(prod.custo_medio || prod.custo || 0);
+          const qtdOriginal   = normalizarInt(item.quantidade);
           const custoOriginal = normalizarDecimal(item.custo_unitario);
           const estoqueRevertido = Math.max(0, estoqueAtual - qtdOriginal);
           const custoRevertido = (() => {
             if (estoqueRevertido <= 0) return custoAtual;
-            const calculado = (estoqueAtual * custoAtual - qtdOriginal * custoOriginal) / estoqueRevertido;
-            return calculado > 0 ? Number(calculado.toFixed(2)) : custoAtual;
+            const calc = (estoqueAtual * custoAtual - qtdOriginal * custoOriginal) / estoqueRevertido;
+            return calc > 0 ? Number(calc.toFixed(2)) : custoAtual;
           })();
 
           await client.query(
             `UPDATE produtos SET estoque = $1, custo_medio = $2, atualizado_em = NOW() WHERE id = $3 AND empresa_id = $4`,
-            [estoqueRevertido, custoRevertido, item.produto_id, empresaResolvida.id]
+            [estoqueRevertido, custoRevertido, Number(item.produto_id), empresaResolvida.id]
           );
+          // Atualiza o mapa para itens duplicados na mesma compra
+          prodsOriginaisMap[Number(item.produto_id)] = { ...prod, estoque: estoqueRevertido, custo_medio: custoRevertido };
         }
       }
 
@@ -435,30 +443,40 @@ module.exports = function ({
         [fornecedor_id, normalizarDataISO(data) || hoje(), totalCalculado, observacao || '', pagamentoNormalizado, geraContaPagar, id]
       );
 
-      // Aplicar novos itens
-      for (const item of itens) {
-        const produtoId = Number(item.produto_id);
-        const quantidade = normalizarInt(item.quantidade);
-        const custoUnitario = normalizarDecimal(item.custo_unitario || item.custo);
+      // Aplicar novos itens — pré-busca todos em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)
+      const idsNovos = [...new Set(itens.map(i => Number(i.produto_id)))].sort((a, b) => a - b);
+      const prodsNovosResult = await client.query(
+        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
+        [idsNovos, empresaResolvida.id]
+      );
+      const prodsNovosMap = Object.fromEntries(prodsNovosResult.rows.map(p => [Number(p.id), p]));
 
-        const prodResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-          [produtoId, empresaResolvida.id]
-        );
-        if (prodResult.rowCount === 0) {
+      // Valida todos os produtos antes de iniciar as escritas
+      for (const item of itens) {
+        if (!prodsNovosMap[Number(item.produto_id)]) {
           await client.query('ROLLBACK');
-          return erro(res, 404, `Produto ${produtoId} não encontrado`);
+          return erro(res, 404, `Produto ${Number(item.produto_id)} não encontrado`);
         }
-        const produto = prodResult.rows[0];
-        const estoqueAtual = normalizarInt(produto.estoque);
-        const novoEstoque = estoqueAtual + quantidade;
-        const custoAtual = normalizarDecimal(produto.custo_medio || produto.custo || 0);
+      }
+
+      for (const item of itens) {
+        const produtoId     = Number(item.produto_id);
+        const quantidade    = normalizarInt(item.quantidade);
+        const custoUnitario = normalizarDecimal(item.custo_unitario || item.custo);
+        const produto       = prodsNovosMap[produtoId];
+
+        const estoqueAtual  = normalizarInt(produto.estoque);
+        const novoEstoque   = estoqueAtual + quantidade;
+        const custoAtual    = normalizarDecimal(produto.custo_medio || produto.custo || 0);
         const novoCustoMedio = novoEstoque > 0
           ? Number(((estoqueAtual * custoAtual + quantidade * custoUnitario) / novoEstoque).toFixed(2))
           : custoUnitario;
-        const precoProduto = normalizarDecimal(produto.preco || 0);
+        const precoProduto  = normalizarDecimal(produto.preco || 0);
         const lucroUnitario = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucro = novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const margemLucro   = Math.min(
+          novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0,
+          999
+        );
 
         await client.query(
           `INSERT INTO compra_itens (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
@@ -470,6 +488,9 @@ module.exports = function ({
           `UPDATE produtos SET estoque=$1, custo=$2, custo_unitario=$3, custo_medio=$4, lucro_unitario=$5, margem_lucro=$6, atualizado_em=NOW() WHERE id=$7 AND empresa_id=$8`,
           [novoEstoque, custoUnitario, custoUnitario, novoCustoMedio, lucroUnitario, margemLucro, produto.id, empresaResolvida.id]
         );
+
+        // Atualiza mapa para produto duplicado na mesma compra
+        prodsNovosMap[produtoId] = { ...produto, estoque: novoEstoque, custo_medio: novoCustoMedio };
 
         if (typeof registrarMovimentacaoEstoque === 'function') {
           await registrarMovimentacaoEstoque({
