@@ -1,5 +1,16 @@
 require('dotenv').config();
 
+// Sentry — monitoramento de erros em produção (C5.3)
+const Sentry = require('@sentry/node');
+const _sentryDsn = process.env.SENTRY_DSN;
+if (_sentryDsn) {
+  Sentry.init({
+    dsn: _sentryDsn,
+    environment: process.env.NODE_ENV || 'production',
+    tracesSampleRate: 0.05, // 5% das requisições para performance
+  });
+}
+
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
@@ -6981,6 +6992,7 @@ async function start() {
   try {
     await initDb();
     await runMigrations(pool);
+    if (_sentryDsn) Sentry.setupExpressErrorHandler(app);
     app.listen(PORT, () => {
       console.log(`LF ERP Backend Online 🚀 porta ${PORT}`);
     });
