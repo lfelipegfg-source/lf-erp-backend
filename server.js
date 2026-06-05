@@ -1792,13 +1792,13 @@ async function initDb() {
     `
     UPDATE empresas
     SET plano_id = COALESCE(plano_id, (SELECT id FROM planos WHERE codigo = 'pro' LIMIT 1)),
-        assinatura_status = COALESCE(assinatura_status, 'trial'),
-        trial_inicio = COALESCE(trial_inicio, $1),
-        trial_fim = COALESCE(trial_fim, $2),
+        assinatura_status = 'ativo',
+        trial_fim = NULL,
+        bloqueada = FALSE,
         atualizado_em = NOW()
-    WHERE id = $3
+    WHERE id = $1
     `,
-    [hoje(), addDias(hoje(), 14), empresaSaaSId]
+    [empresaSaaSId]
   );
 
   await pool.query(
@@ -2225,7 +2225,7 @@ app.get('/me', auth, async (req, res) => {
     const nomeCompleto = user.nome_completo || user.usuario;
 
     let dias_restantes_trial = null;
-    if (user.trial_fim && user.assinatura_status === 'trial') {
+    if (!user.is_saas_owner && user.trial_fim && user.assinatura_status === 'trial') {
       dias_restantes_trial = Math.ceil(
         (new Date(`${user.trial_fim}T00:00:00`) - new Date(`${hoje()}T00:00:00`)) / 86400000
       );
