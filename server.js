@@ -7564,7 +7564,7 @@ app.get('/notificacoes', auth, async (req, res) => {
       ),
       // Contas a pagar vencendo hoje ou amanhã
       pool.query(
-        `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
+        `SELECT COUNT(*) AS total, COALESCE(SUM(valor), 0) AS valor_total
          FROM contas_pagar
          WHERE empresa_id = $1
            AND LOWER(COALESCE(status,'pendente')) = 'pendente'
