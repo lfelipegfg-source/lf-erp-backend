@@ -299,11 +299,26 @@ module.exports = ({
         idx++;
       }
 
-      sql += ` ORDER BY nome ASC`;
+      const limite = Math.min(normalizarInt(req.query.limit || 100), 500);
+      const offset = Math.max(normalizarInt(req.query.offset || 0), 0);
+      const filterParams = [...params];
+      const limIdx = filterParams.length + 1;
+      const offIdx = filterParams.length + 2;
 
-      const result = await pool.query(sql, params);
+      const [countResult, result] = await Promise.all([
+        pool.query(sql.replace('SELECT *', 'SELECT COUNT(*) AS total'), filterParams),
+        pool.query(
+          sql + ` ORDER BY nome ASC LIMIT $${limIdx} OFFSET $${offIdx}`,
+          [...filterParams, limite, offset]
+        )
+      ]);
 
-      return res.json(result.rows.map(normalizarCliente));
+      return res.json({
+        dados:  result.rows.map(normalizarCliente),
+        total:  Number(countResult.rows[0]?.total || 0),
+        limite,
+        offset
+      });
     } catch (error) {
       console.error('Erro real ao buscar clientes:', error);
       return erro(res, 500, 'Erro ao buscar clientes');

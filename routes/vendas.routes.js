@@ -1020,20 +1020,33 @@ module.exports = ({
         castDate: false
       });
 
-      sql += ` ORDER BY v.id DESC`;
+      const limite = Math.min(normalizarInt(req.query.limit || 100), 500);
+      const offset = Math.max(normalizarInt(req.query.offset || 0), 0);
+      const filterParams = [...params];
+      const limIdx = filterParams.length + 1;
+      const offIdx = filterParams.length + 2;
 
-      const result = await pool.query(sql, params);
+      const [countResult, result] = await Promise.all([
+        pool.query(sql.replace('SELECT v.*', 'SELECT COUNT(*) AS total'), filterParams),
+        pool.query(
+          sql + ` ORDER BY v.id DESC LIMIT $${limIdx} OFFSET $${offIdx}`,
+          [...filterParams, limite, offset]
+        )
+      ]);
 
-      return res.json(
-        result.rows.map((row) => ({
+      return res.json({
+        dados: result.rows.map((row) => ({
           ...row,
           subtotal: Number(row.subtotal || 0),
           desconto: Number(row.desconto || 0),
           acrescimo: Number(row.acrescimo || 0),
           total: Number(row.total || 0),
           parcelas: Number(row.parcelas || 1)
-        }))
-      );
+        })),
+        total:  Number(countResult.rows[0]?.total || 0),
+        limite,
+        offset
+      });
     } catch (error) {
       console.error('Erro real ao buscar vendas:', error);
       return erro(res, 500, 'Erro ao buscar vendas');
