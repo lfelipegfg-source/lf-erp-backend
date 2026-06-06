@@ -5878,7 +5878,7 @@ app.get('/dashboard/grafico', auth, async (req, res) => {
     const [vendasDiaResult, formaResult] = await Promise.all([
       pool.query(
         `SELECT
-           (data AT TIME ZONE 'America/Fortaleza')::date AS dia,
+           data::date AS dia,
            COALESCE(SUM(total), 0)  AS total,
            COUNT(*)                 AS quantidade
          FROM vendas

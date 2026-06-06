@@ -962,7 +962,7 @@ MAX(v.data) AS ultima_venda
 
       const vendasResult = await pool.query(`
         SELECT
-          TO_CHAR(v.data, 'YYYY-MM')              AS periodo,
+          TO_CHAR(v.data::date, 'YYYY-MM')        AS periodo,
           COALESCE(SUM(v.total), 0)               AS receita,
           COALESCE(SUM(vi_cmv.cmv), 0)            AS cmv
         FROM vendas v
@@ -973,7 +973,7 @@ MAX(v.data) AS ultima_venda
           GROUP BY venda_id
         ) vi_cmv ON vi_cmv.venda_id = v.id
         ${vendaWhere}
-        GROUP BY TO_CHAR(v.data, 'YYYY-MM')
+        GROUP BY TO_CHAR(v.data::date, 'YYYY-MM')
         ORDER BY 1
       `, vendaParams);
 
@@ -987,7 +987,7 @@ MAX(v.data) AS ultima_venda
 
       const lancResult = await pool.query(`
         SELECT
-          TO_CHAR(COALESCE(pagamento_data, vencimento), 'YYYY-MM') AS periodo,
+          TO_CHAR(COALESCE(pagamento_data, vencimento)::date, 'YYYY-MM') AS periodo,
           COALESCE(SUM(valor), 0) AS despesas
         FROM lancamentos_financeiros
         ${lancWhere}
@@ -1003,7 +1003,7 @@ MAX(v.data) AS ultima_venda
 
       const cpResult = await pool.query(`
         SELECT
-          TO_CHAR(data_pagamento, 'YYYY-MM') AS periodo,
+          TO_CHAR(data_pagamento::date, 'YYYY-MM') AS periodo,
           COALESCE(SUM(valor), 0) AS despesas
         FROM contas_pagar
         ${cpWhere}
