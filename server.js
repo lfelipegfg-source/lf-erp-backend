@@ -265,7 +265,8 @@ app.use(
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     atualizarStatusContasReceberPorEmpresa,
-    atualizarStatusContasPagarPorEmpresa
+    atualizarStatusContasPagarPorEmpresa,
+    podeGerenciarFinanceiro
   })
 );
 
@@ -4514,6 +4515,17 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
       `,
       [dataPagamento, id]
     );
+
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'baixa',
+      entidade: 'contas_pagar',
+      entidade_id: id,
+      descricao: `Baixa total da conta a pagar #${id}`,
+      valor: Number(conta.valor || 0),
+      usuario_id: req.user?.id
+    });
 
     await client.query('COMMIT');
 

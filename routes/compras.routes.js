@@ -110,6 +110,14 @@ module.exports = function ({
 
       const compra = compraResult.rows[0];
 
+      // Pré-busca todos os produtos em 1 SELECT FOR UPDATE com ids ordenados (evita deadlock)
+      const idsProdutos = [...new Set(itens.map(i => Number(i.produto_id)))].sort((a, b) => a - b);
+      const produtosResult = await client.query(
+        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
+        [idsProdutos, empresaResolvida.id]
+      );
+      const produtosMap = Object.fromEntries(produtosResult.rows.map(p => [Number(p.id), p]));
+
       for (const item of itens) {
         const produtoId = Number(item.produto_id);
         const quantidade = normalizarInt(item.quantidade);
@@ -118,17 +126,12 @@ module.exports = function ({
         );
         const subtotal = Number((quantidade * custoUnitario).toFixed(2));
 
-        const produtoResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-          [produtoId, empresaResolvida.id]
-        );
+        const produto = produtosMap[produtoId];
 
-        if (produtoResult.rowCount === 0) {
+        if (!produto) {
           await client.query('ROLLBACK');
           return erro(res, 404, `Produto ${produtoId} não encontrado`);
         }
-
-        const produto = produtoResult.rows[0];
 
         const estoqueAtual = normalizarInt(produto.estoque);
         const novoEstoque = estoqueAtual + quantidade;
@@ -144,8 +147,9 @@ module.exports = function ({
 
         const precoProduto = normalizarDecimal(produto.preco || 0);
         const lucroUnitario = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucro =
+        const margemLucroRaw =
           novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const margemLucro = Math.min(Math.max(margemLucroRaw, -9999), 9999); // cap para evitar distorção no BI
 
         await client.query(
           `INSERT INTO compra_itens
@@ -194,6 +198,9 @@ module.exports = function ({
           ]
         );
 
+        // Atualiza mapa para itens duplicados na mesma compra
+        produtosMap[produtoId] = { ...produto, estoque: novoEstoque, custo_medio: novoCustoMedio };
+
         if (typeof registrarMovimentacaoEstoque === 'function') {
           await registrarMovimentacaoEstoque({
             empresa: empresaResolvida.nome,
@@ -215,7 +222,7 @@ module.exports = function ({
           normalizarDataISO(primeiro_vencimento || data) || normalizarDataISO(data) || hoje();
 
         const intervaloDias = 30;
-        const valorBase = Math.floor((totalCalculado / parcelasFinal) * 100) / 100;
+        const valorBase = Number((totalCalculado / parcelasFinal).toFixed(2));
         let acumulado = 0;
 
         for (let i = 1; i <= parcelasFinal; i++) {
@@ -477,11 +484,9 @@ module.exports = function ({
           ? Number(((estoqueAtual * custoAtual + quantidade * custoUnitario) / novoEstoque).toFixed(2))
           : custoUnitario;
         const precoProduto  = normalizarDecimal(produto.preco || 0);
-        const lucroUnitario = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucro   = Math.min(
-          novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0,
-          999
-        );
+        const lucroUnitario  = Number((precoProduto - novoCustoMedio).toFixed(2));
+        const margemLucroRaw = novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const margemLucro    = Math.min(Math.max(margemLucroRaw, -9999), 9999);
 
         await client.query(
           `INSERT INTO compra_itens (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
@@ -510,7 +515,7 @@ module.exports = function ({
       // Recriar contas_pagar se necessário
       if (geraContaPagar) {
         const dataPrimeiroVencimento = normalizarDataISO(primeiro_vencimento || data) || normalizarDataISO(data) || hoje();
-        const valorBase = Math.floor((totalCalculado / parcelasFinal) * 100) / 100;
+        const valorBase = Number((totalCalculado / parcelasFinal).toFixed(2));
         let acumulado = 0;
         for (let i = 1; i <= parcelasFinal; i++) {
           let valorParcela = valorBase;
@@ -555,32 +560,49 @@ module.exports = function ({
   // Faz o parse de um XML de NF-e do fornecedor e retorna os dados estruturados.
   // Não cria nada no banco — apenas extrai e retorna para o frontend confirmar.
 
+  function xmlSanitize(xml) {
+    if (!xml) return '';
+    // Remove comentários XML
+    let s = xml.replace(/<!--[\s\S]*?-->/g, '');
+    // Expande seções CDATA: <![CDATA[content]]> → content
+    s = s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
+    return s;
+  }
+
   function xmlTag(xml, tag) {
     if (!xml) return null;
-    const open = xml.indexOf(`<${tag}`);
-    if (open === -1) return null;
-    const closeAngle = xml.indexOf('>', open);
+    const s = xmlSanitize(xml);
+    // Aceita tanto <tag> quanto <ns:tag> (namespace prefix)
+    const openRe = new RegExp(`<(?:[\\w.-]+:)?${tag}(?:[\\s>])`);
+    const openMatch = openRe.exec(s);
+    if (!openMatch) return null;
+    const closeAngle = s.indexOf('>', openMatch.index);
     if (closeAngle === -1) return null;
-    const end = xml.indexOf(`</${tag}>`, closeAngle);
-    if (end === -1) return null;
-    return xml.slice(closeAngle + 1, end).trim() || null;
+    // self-closing tag?
+    if (s[closeAngle - 1] === '/') return null;
+    const closeRe = new RegExp(`</(?:[\\w.-]+:)?${tag}>`);
+    const rest = s.slice(closeAngle + 1);
+    const closeMatch = closeRe.exec(rest);
+    if (!closeMatch) return null;
+    return rest.slice(0, closeMatch.index).trim() || null;
   }
 
   function xmlTagAll(xml, tag) {
     if (!xml) return [];
+    const s = xmlSanitize(xml);
     const results = [];
-    const openPrefix = `<${tag}`;
-    const closeTag   = `</${tag}>`;
-    let pos = 0;
-    while (pos < xml.length && results.length < 1000) {
-      const open = xml.indexOf(openPrefix, pos);
-      if (open === -1) break;
-      const closeAngle = xml.indexOf('>', open);
+    const openRe  = new RegExp(`<(?:[\\w.-]+:)?${tag}(?:[\\s>])`, 'g');
+    const closeRe = new RegExp(`</(?:[\\w.-]+:)?${tag}>`);
+    let openMatch;
+    while ((openMatch = openRe.exec(s)) !== null && results.length < 1000) {
+      const closeAngle = s.indexOf('>', openMatch.index);
       if (closeAngle === -1) break;
-      const end = xml.indexOf(closeTag, closeAngle);
-      if (end === -1) break;
-      results.push(xml.slice(closeAngle + 1, end).trim());
-      pos = end + closeTag.length;
+      if (s[closeAngle - 1] === '/') continue; // self-closing
+      const rest = s.slice(closeAngle + 1);
+      const closeMatch = closeRe.exec(rest);
+      if (!closeMatch) break;
+      results.push(rest.slice(0, closeMatch.index).trim());
+      openRe.lastIndex = closeAngle + 1 + closeMatch.index + closeMatch[0].length;
     }
     return results;
   }

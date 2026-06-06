@@ -13,13 +13,22 @@ module.exports = function ({
   validarAcessoEmpresa,
   adicionarFiltroEmpresaSaaS,
   atualizarStatusContasReceberPorEmpresa,
-  atualizarStatusContasPagarPorEmpresa
+  atualizarStatusContasPagarPorEmpresa,
+  podeGerenciarFinanceiro
 }) {
   function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
     return res.status(status).json({
       sucesso: false,
       erro: mensagem
     });
+  }
+
+  function checkFinanceiro(req, res) {
+    if (typeof podeGerenciarFinanceiro === 'function' && !podeGerenciarFinanceiro(req)) {
+      erro(res, 403, 'Acesso restrito a administradores e gerentes');
+      return false;
+    }
+    return true;
   }
 
   router.get('/financeiro/resumo/:empresa', auth, async (req, res) => {
@@ -311,6 +320,7 @@ module.exports = function ({
 
   router.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -559,6 +569,7 @@ module.exports = function ({
 
   router.get('/financeiro/contas-receber/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -630,6 +641,7 @@ module.exports = function ({
 
   router.get('/financeiro/contas-pagar/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -702,6 +714,7 @@ module.exports = function ({
 
   router.get('/financeiro/lucratividade/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
 
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -874,6 +887,7 @@ MAX(v.data) AS ultima_venda
   // ── INADIMPLÊNCIA ─────────────────────────────────────────────────────────
   router.get('/inadimplencia/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -947,6 +961,7 @@ MAX(v.data) AS ultima_venda
   // ── DRE — DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO ────────────────────────
   router.get('/dre/:empresa', auth, async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
