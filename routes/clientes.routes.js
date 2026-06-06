@@ -298,7 +298,8 @@ module.exports = ({
       const busca = (req.query.busca || '').trim().toLowerCase();
 
       let sql = `
-        SELECT *
+        SELECT id, empresa_id, nome, telefone, email, cpf, cpf_cnpj, endereco, nascimento,
+               tabela_preco_id, criado_em, atualizado_em
         FROM clientes
         WHERE empresa_id = $1
         AND deletado_em IS NULL

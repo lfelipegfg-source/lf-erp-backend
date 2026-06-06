@@ -170,70 +170,61 @@ module.exports = function ({
         castDate: false
       });
 
+      const FLUXO_LIMIT = 1000;
+
       const [movReceber, movPagar, movLanc, movInvest, movVendas, movCompras] = await Promise.all([
         pool.query(
-          `
-          SELECT id,'conta_receber' origem,'entrada' tipo,
+          `SELECT id,'conta_receber' origem,'entrada' tipo,
           COALESCE(cliente_nome,'Cliente') descricao,
           valor,data_pagamento data_movimento,forma_pagamento,
           venda_id referencia_id,observacao
-          FROM contas_receber
-          ${whereReceber}
-        `,
+          FROM contas_receber ${whereReceber}
+          ORDER BY data_pagamento DESC LIMIT ${FLUXO_LIMIT}`,
           paramsReceber
         ),
 
         pool.query(
-          `
-          SELECT id,'conta_pagar' origem,'saida' tipo,
+          `SELECT id,'conta_pagar' origem,'saida' tipo,
           COALESCE(descricao,fornecedor_nome,'Conta') descricao,
           valor,data_pagamento data_movimento,forma_pagamento,
           compra_id referencia_id,observacao
-          FROM contas_pagar
-          ${wherePagar}
-        `,
+          FROM contas_pagar ${wherePagar}
+          ORDER BY data_pagamento DESC LIMIT ${FLUXO_LIMIT}`,
           paramsPagar
         ),
 
         pool.query(
-          `
-          SELECT id,'lancamento' origem,
+          `SELECT id,'lancamento' origem,
           CASE WHEN tipo='receita' THEN 'entrada' ELSE 'saida' END tipo,
           descricao,valor,pagamento_data data_movimento,
           NULL forma_pagamento,NULL referencia_id,observacao
-          FROM lancamentos_financeiros
-          ${whereLanc}
-        `,
+          FROM lancamentos_financeiros ${whereLanc}
+          ORDER BY pagamento_data DESC LIMIT ${FLUXO_LIMIT}`,
           paramsLanc
         ),
 
         pool.query(
-          `
-          SELECT id,'investimento' origem,'saida' tipo,
+          `SELECT id,'investimento' origem,'saida' tipo,
           descricao,valor,data data_movimento,
           NULL forma_pagamento,NULL referencia_id,observacao
-          FROM investimentos
-          ${whereInvest}
-        `,
+          FROM investimentos ${whereInvest}
+          ORDER BY data DESC LIMIT ${FLUXO_LIMIT}`,
           paramsInvest
         ),
 
         pool.query(
-          `
-          SELECT v.id,'venda_direta' origem,'entrada' tipo,
+          `SELECT v.id,'venda_direta' origem,'entrada' tipo,
           COALESCE(v.cliente_nome,'Venda') descricao,
           v.total valor,v.data data_movimento,
           v.pagamento forma_pagamento,
           v.id referencia_id,NULL observacao
-          FROM vendas v
-          ${whereVendas}
-        `,
+          FROM vendas v ${whereVendas}
+          ORDER BY v.data DESC LIMIT ${FLUXO_LIMIT}`,
           paramsVendas
         ),
 
         pool.query(
-          `
-          SELECT c.id,'compra_direta' origem,'saida' tipo,
+          `SELECT c.id,'compra_direta' origem,'saida' tipo,
           COALESCE(f.nome,'Compra') descricao,
           c.total valor,c.data data_movimento,
           c.pagamento forma_pagamento,
@@ -241,10 +232,13 @@ module.exports = function ({
           FROM compras c
           LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
           ${whereCompras}
-        `,
+          ORDER BY c.data DESC LIMIT ${FLUXO_LIMIT}`,
           paramsCompras
         )
       ]);
+
+      const truncado = [movReceber, movPagar, movLanc, movInvest, movVendas, movCompras]
+        .some(r => r.rowCount >= FLUXO_LIMIT);
 
       const movimentos = [
         ...movReceber.rows,
@@ -269,6 +263,7 @@ module.exports = function ({
 
       return res.json({
         sucesso: true,
+        truncado,
         entradas,
         saidas,
         saldo: entradas - saidas,

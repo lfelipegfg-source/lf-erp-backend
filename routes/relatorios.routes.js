@@ -904,6 +904,17 @@ MAX(v.data) AS ultima_venda
         AND data_vencimento::date < CURRENT_DATE
       `;
 
+      const INADIMPLENCIA_LIMIT = 500;
+
+      // ── Contagem total (para saber se há mais que o limite) ──────────────
+      const countParams = [...params];
+      const countResult = await pool.query(`
+        SELECT COUNT(DISTINCT COALESCE(cliente_id::text, 'sem_cadastro')) AS total
+        FROM contas_receber
+        ${whereBase}
+      `, countParams);
+      const totalClientesInadimplentes = Number(countResult.rows[0]?.total || 0);
+
       // ── Por cliente ──────────────────────────────────────────────────────
       const clientesResult = await pool.query(`
         SELECT
@@ -920,6 +931,7 @@ MAX(v.data) AS ultima_venda
         ${whereBase}
         GROUP BY cliente_key, cliente_nome
         ORDER BY valor_total DESC
+        LIMIT ${INADIMPLENCIA_LIMIT}
       `, params);
 
       const clientes = clientesResult.rows.map((r) => ({
@@ -946,9 +958,11 @@ MAX(v.data) AS ultima_venda
 
       return res.json({
         sucesso: true,
-        total_clientes: clientes.length,
-        total_titulos:  totTitulos,
-        total_valor:    +totValor.toFixed(2),
+        total_clientes:            clientes.length,
+        total_clientes_base:       totalClientesInadimplentes,
+        truncado:                  totalClientesInadimplentes > INADIMPLENCIA_LIMIT,
+        total_titulos:             totTitulos,
+        total_valor:               +totValor.toFixed(2),
         aging,
         clientes
       });

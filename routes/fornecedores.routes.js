@@ -121,7 +121,7 @@ module.exports = function ({
       const busca = (req.query.busca || '').trim().toLowerCase();
 
       let sql = `
-        SELECT *
+        SELECT id, empresa_id, nome, cnpj, telefone, email, endereco, criado_em, atualizado_em
         FROM fornecedores
         WHERE empresa_id = $1
         AND deletado_em IS NULL
@@ -195,7 +195,7 @@ module.exports = function ({
       });
 
       const result = await pool.query(
-        `SELECT *
+        `SELECT id, empresa_id, empresa, nome, cnpj, telefone, email, endereco, criado_em, atualizado_em
         FROM fornecedores
         ${where}
         ORDER BY empresa ASC, nome ASC`,
