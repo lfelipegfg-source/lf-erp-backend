@@ -54,6 +54,7 @@ async function validarEstoqueKit(client, kitId, empresaId, qtdKits) {
      FROM kit_componentes kc
      JOIN produtos p ON p.id = kc.componente_id AND p.empresa_id = kc.empresa_id
      WHERE kc.kit_id = $1 AND kc.empresa_id = $2
+     ORDER BY p.id
      FOR UPDATE`,
     [kitId, empresaId]
   );
@@ -78,7 +79,8 @@ async function baixarComponentesKit({ client, kitId, empresaId, qtdKits, vendaId
     `SELECT kc.*, p.nome AS componente_nome, p.empresa
      FROM kit_componentes kc
      JOIN produtos p ON p.id = kc.componente_id AND p.empresa_id = kc.empresa_id
-     WHERE kc.kit_id = $1 AND kc.empresa_id = $2`,
+     WHERE kc.kit_id = $1 AND kc.empresa_id = $2
+     ORDER BY kc.componente_id ASC`,
     [kitId, empresaId]
   );
 
@@ -111,7 +113,8 @@ async function estornarComponentesKit({ client, kitId, empresaId, qtdKits, venda
     `SELECT kc.*, p.nome AS componente_nome, p.empresa
      FROM kit_componentes kc
      JOIN produtos p ON p.id = kc.componente_id AND p.empresa_id = kc.empresa_id
-     WHERE kc.kit_id = $1 AND kc.empresa_id = $2`,
+     WHERE kc.kit_id = $1 AND kc.empresa_id = $2
+     ORDER BY kc.componente_id ASC`,
     [kitId, empresaId]
   );
 

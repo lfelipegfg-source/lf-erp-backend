@@ -364,7 +364,9 @@ module.exports = function ({
       }
 
       const contasPagas = await client.query(
-        `SELECT COUNT(*) AS total FROM contas_pagar WHERE compra_id = $1 AND LOWER(status) = 'pago'`, [id]
+        `SELECT COUNT(*) AS total FROM contas_pagar
+         WHERE compra_id = $1 AND (empresa_id = $2 OR empresa = $3) AND LOWER(status) = 'pago'`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
       if (Number(contasPagas.rows[0].total) > 0) {
         await client.query('ROLLBACK');
@@ -414,7 +416,10 @@ module.exports = function ({
         `DELETE FROM movimentacoes_estoque WHERE referencia_tipo = 'compra' AND referencia_id = $1 AND (empresa_id = $2 OR empresa = $3)`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
-      await client.query(`DELETE FROM contas_pagar WHERE compra_id = $1 AND LOWER(status) != 'pago'`, [id]);
+      await client.query(
+        `DELETE FROM contas_pagar WHERE compra_id = $1 AND (empresa_id = $2 OR empresa = $3) AND LOWER(status) != 'pago'`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
+      );
 
       const totalCalculado = validarECalcularTotalItens(itens);
       if (totalCalculado === null) {

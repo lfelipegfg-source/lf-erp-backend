@@ -1,5 +1,3 @@
-const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
-
 module.exports = function ({
   auth,
   writeRateLimiter,
@@ -21,22 +19,11 @@ module.exports = function ({
     });
   }
 
-  function apenasAdmin(req, res, next) {
-    if (!req.user) {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Não autenticado'
-      });
-    }
-
-    if (req.user.tipo !== 'admin') {
-      return res.status(403).json({
-        sucesso: false,
-        erro: 'Acesso permitido apenas para administradores'
-      });
-    }
-
-    next();
+  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
+    return res.status(status).json({
+      sucesso: false,
+      erro: mensagem
+    });
   }
 
   function normalizarFornecedor(row) {
