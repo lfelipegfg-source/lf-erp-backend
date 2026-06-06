@@ -21,7 +21,9 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   function csvVal(v) {
     if (v == null) return '';
-    const s = String(v).replace(/"/g, '""');
+    let s = String(v).replace(/"/g, '""');
+    // Previne CSV injection: fórmulas Excel/Calc começam com =, +, -, @, tab, CR
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[;"\n]/.test(s) ? `"${s}"` : s;
   }
 

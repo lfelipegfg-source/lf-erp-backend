@@ -21,8 +21,10 @@ const { runMigrations } = require('./migrations/runner');
 const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
 
 // Rate limiter em memória para o endpoint /login
-const loginAttempts = new Map();
-const LOGIN_MAX_TENTATIVAS = 10;
+const loginAttempts     = new Map(); // por IP
+const loginUserAttempts = new Map(); // por username
+const LOGIN_MAX_TENTATIVAS      = 10; // tentativas por IP / 15 min
+const LOGIN_USER_MAX_TENTATIVAS = 15; // tentativas por username / 15 min
 const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
 
 // Rate limiter geral para endpoints de escrita (por userId + rota)
@@ -70,24 +72,30 @@ setInterval(() => {
 }, WRITE_JANELA_MS).unref();
 
 function loginRateLimiter(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  const agora = Date.now();
-  const entrada = loginAttempts.get(ip) || { count: 0, inicio: agora };
+  const ip       = req.ip || req.connection?.remoteAddress || 'unknown';
+  const username = (req.body?.usuario || '').toLowerCase().trim();
+  const agora    = Date.now();
 
-  if (agora - entrada.inicio > LOGIN_JANELA_MS) {
-    entrada.count = 0;
-    entrada.inicio = agora;
+  // Limite por IP (protege contra password spray)
+  const entradaIp = loginAttempts.get(ip) || { count: 0, inicio: agora };
+  if (agora - entradaIp.inicio > LOGIN_JANELA_MS) { entradaIp.count = 0; entradaIp.inicio = agora; }
+  entradaIp.count += 1;
+  loginAttempts.set(ip, entradaIp);
+  if (entradaIp.count > LOGIN_MAX_TENTATIVAS) {
+    const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaIp.inicio)) / 60000);
+    return res.status(429).json({ sucesso: false, erro: `Muitas tentativas de login. Tente novamente em ${restante} minuto(s).` });
   }
 
-  entrada.count += 1;
-  loginAttempts.set(ip, entrada);
-
-  if (entrada.count > LOGIN_MAX_TENTATIVAS) {
-    const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entrada.inicio)) / 60000);
-    return res.status(429).json({
-      sucesso: false,
-      erro: `Muitas tentativas de login. Tente novamente em ${restante} minuto(s).`
-    });
+  // Limite por username (protege contra ataques em redes corporativas / NAT compartilhado)
+  if (username) {
+    const entradaUser = loginUserAttempts.get(username) || { count: 0, inicio: agora };
+    if (agora - entradaUser.inicio > LOGIN_JANELA_MS) { entradaUser.count = 0; entradaUser.inicio = agora; }
+    entradaUser.count += 1;
+    loginUserAttempts.set(username, entradaUser);
+    if (entradaUser.count > LOGIN_USER_MAX_TENTATIVAS) {
+      const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaUser.inicio)) / 60000);
+      return res.status(429).json({ sucesso: false, erro: `Muitas tentativas para este usuário. Tente novamente em ${restante} minuto(s).` });
+    }
   }
 
   next();
@@ -96,9 +104,10 @@ function loginRateLimiter(req, res, next) {
 setInterval(() => {
   const agora = Date.now();
   for (const [ip, entrada] of loginAttempts) {
-    if (agora - entrada.inicio > LOGIN_JANELA_MS) {
-      loginAttempts.delete(ip);
-    }
+    if (agora - entrada.inicio > LOGIN_JANELA_MS) loginAttempts.delete(ip);
+  }
+  for (const [user, entrada] of loginUserAttempts) {
+    if (agora - entrada.inicio > LOGIN_JANELA_MS) loginUserAttempts.delete(user);
   }
 }, LOGIN_JANELA_MS).unref();
 
@@ -137,11 +146,27 @@ const filiaisRoutes          = require('./routes/filiais.routes');
 const biRoutes               = require('./routes/bi.routes');
 
 const app = express();
+
+// S-1: CORS — default seguro; sem ALLOWED_ORIGINS usa o domínio Vercel conhecido
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : '*';
+  : ['https://lf-erp-frontend.vercel.app'];
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '50mb' }));   // OFX/CSV/XML de bancos podem ter 5-10MB
+
+// S-2: Headers de segurança HTTP + redirect HTTPS em produção
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (req.header('x-forwarded-proto') === 'http') {
+      return res.redirect(301, `https://${req.header('host')}${req.url}`);
+    }
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const inicio = Date.now();
@@ -169,6 +194,10 @@ const PORT = process.env.PORT || 3001;
 
 if (!SECRET) {
   console.error('JWT_SECRET não definida.');
+  process.exit(1);
+}
+if (SECRET.length < 32) {
+  console.error('JWT_SECRET muito curta (mínimo 32 caracteres). Configure uma chave segura em produção.');
   process.exit(1);
 }
 

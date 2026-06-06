@@ -25,6 +25,23 @@ module.exports = ({
     });
   }
 
+  function validarCpf(cpf) {
+    if (!cpf) return true; // campo opcional
+    const nums = cpf.replace(/\D/g, '');
+    if (nums.length !== 11) return false;
+    if (/^(\d)\1{10}$/.test(nums)) return false; // sequências como 00000000000
+    let soma = 0;
+    for (let i = 0; i < 9; i++) soma += parseInt(nums[i]) * (10 - i);
+    let resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+    if (resto !== parseInt(nums[9])) return false;
+    soma = 0;
+    for (let i = 0; i < 10; i++) soma += parseInt(nums[i]) * (11 - i);
+    resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+    return resto === parseInt(nums[10]);
+  }
+
   function normalizarCliente(row) {
     return {
       ...row,
@@ -41,6 +58,10 @@ module.exports = ({
 
       if (!nome) {
         return erro(res, 400, 'Preencha os campos obrigatórios do cliente');
+      }
+
+      if (cpf && !validarCpf(cpf)) {
+        return erro(res, 400, 'CPF inválido. Verifique os dígitos informados.');
       }
 
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -390,6 +411,10 @@ module.exports = ({
 
       if (!nome) {
         return erro(res, 400, 'Preencha os campos obrigatórios do cliente');
+      }
+
+      if (cpf && !validarCpf(cpf)) {
+        return erro(res, 400, 'CPF inválido. Verifique os dígitos informados.');
       }
 
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
