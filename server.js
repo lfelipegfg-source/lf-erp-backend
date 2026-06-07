@@ -916,6 +916,20 @@ async function validarSenhaUsuario(senhaInformada, user) {
   return false;
 }
 
+// Valida força mínima: 8+ chars, 1 maiúscula, 1 número
+function validarForcaSenha(senha) {
+  if (!senha || senha.length < 8) {
+    return { valido: false, mensagem: 'A senha deve ter pelo menos 8 caracteres.' };
+  }
+  if (!/[A-Z]/.test(senha)) {
+    return { valido: false, mensagem: 'A senha deve conter pelo menos uma letra maiúscula.' };
+  }
+  if (!/[0-9]/.test(senha)) {
+    return { valido: false, mensagem: 'A senha deve conter pelo menos um número.' };
+  }
+  return { valido: true };
+}
+
 const tokenBlacklist = new Map(); // token → timestamp de revogação
 const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
 
@@ -2200,9 +2214,8 @@ app.put('/me/senha', auth, async (req, res) => {
       return jsonErro(res, 400, 'A nova senha e a confirmação não conferem');
     }
 
-    if (nova_senha.length < 6) {
-      return jsonErro(res, 400, 'A nova senha deve ter pelo menos 6 caracteres');
-    }
+    const forcaSenha = validarForcaSenha(nova_senha);
+    if (!forcaSenha.valido) return jsonErro(res, 400, forcaSenha.mensagem);
 
     const result = await pool.query(`SELECT senha FROM usuarios WHERE id = $1`, [req.user.id]);
     if (result.rowCount === 0) return jsonErro(res, 404, 'Usuário não encontrado');
@@ -2483,6 +2496,9 @@ app.post('/usuarios', auth, writeRateLimiter, async (req, res) => {
       return jsonErro(res, 400, 'Dados obrigatórios');
     }
 
+    const forcaSenha = validarForcaSenha(senha.trim());
+    if (!forcaSenha.valido) return jsonErro(res, 400, forcaSenha.mensagem);
+
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
     if (!empresaResolvida) {
@@ -2571,6 +2587,9 @@ app.put('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
     }
 
     if (senha && senha.trim()) {
+      const forcaSenha = validarForcaSenha(senha.trim());
+      if (!forcaSenha.valido) return jsonErro(res, 400, forcaSenha.mensagem);
+
       const senhaHash = await bcrypt.hash(senha.trim(), 10);
 
       await pool.query(
