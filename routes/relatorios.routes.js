@@ -7,6 +7,8 @@ const {
   adicionarFiltroPeriodoRange
 } = require('../utils/periodoUtils');
 
+const { requirePermissao } = require('../utils/permissoes');
+
 module.exports = function ({
   auth,
   pool,
@@ -712,7 +714,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/financeiro/lucratividade/:empresa', auth, async (req, res) => {
+  router.get('/financeiro/lucratividade/:empresa', auth, requirePermissao(pool, 'lucratividade', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -973,7 +975,7 @@ MAX(v.data) AS ultima_venda
   });
 
   // ── DRE — DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO ────────────────────────
-  router.get('/dre/:empresa', auth, async (req, res) => {
+  router.get('/dre/:empresa', auth, requirePermissao(pool, 'dre', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;

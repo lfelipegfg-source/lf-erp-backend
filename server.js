@@ -1952,6 +1952,73 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento_id ON contas_pagar (empresa_id, data_vencimento);
   `);
 
+  // ── Permissões granulares ─────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS permissoes_padrao (
+      id          SERIAL PRIMARY KEY,
+      tipo_usuario TEXT NOT NULL,
+      modulo       TEXT NOT NULL,
+      pode_ver     BOOLEAN NOT NULL DEFAULT false,
+      pode_criar   BOOLEAN NOT NULL DEFAULT false,
+      pode_editar  BOOLEAN NOT NULL DEFAULT false,
+      pode_deletar BOOLEAN NOT NULL DEFAULT false,
+      UNIQUE(tipo_usuario, modulo)
+    );
+
+    CREATE TABLE IF NOT EXISTS permissoes_usuario (
+      id          SERIAL PRIMARY KEY,
+      usuario_id  INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+      empresa_id  INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
+      modulo      TEXT NOT NULL,
+      pode_ver    BOOLEAN,
+      pode_criar  BOOLEAN,
+      pode_editar BOOLEAN,
+      pode_deletar BOOLEAN,
+      UNIQUE(usuario_id, empresa_id, modulo)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_perm_usuario_uid ON permissoes_usuario (usuario_id);
+    CREATE INDEX IF NOT EXISTS idx_perm_padrao_tipo ON permissoes_padrao (tipo_usuario);
+  `);
+
+  // Defaults por tipo — INSERT OR IGNORE (ON CONFLICT DO NOTHING)
+  const defaultsGerente = [
+    ['gerente', 'produtos',      true,  true,  true,  false],
+    ['gerente', 'clientes',      true,  true,  true,  false],
+    ['gerente', 'fornecedores',  true,  true,  true,  false],
+    ['gerente', 'compras',       true,  true,  true,  false],
+    ['gerente', 'vendas',        true,  true,  true,  false],
+    ['gerente', 'estoque',       true,  false, false, false],
+    ['gerente', 'financeiro',    true,  true,  true,  false],
+    ['gerente', 'relatorios',    true,  false, false, false],
+    ['gerente', 'dre',           false, false, false, false],
+    ['gerente', 'lucratividade', true,  false, false, false],
+    ['gerente', 'usuarios',      false, false, false, false],
+    ['gerente', 'configuracoes', false, false, false, false],
+  ];
+  const defaultsFuncionario = [
+    ['funcionario', 'produtos',      true,  false, false, false],
+    ['funcionario', 'clientes',      true,  true,  true,  false],
+    ['funcionario', 'fornecedores',  true,  false, false, false],
+    ['funcionario', 'compras',       true,  false, false, false],
+    ['funcionario', 'vendas',        true,  true,  false, false],
+    ['funcionario', 'estoque',       true,  false, false, false],
+    ['funcionario', 'financeiro',    false, false, false, false],
+    ['funcionario', 'relatorios',    false, false, false, false],
+    ['funcionario', 'dre',           false, false, false, false],
+    ['funcionario', 'lucratividade', false, false, false, false],
+    ['funcionario', 'usuarios',      false, false, false, false],
+    ['funcionario', 'configuracoes', false, false, false, false],
+  ];
+  for (const [tipo, modulo, ver, criar, editar, deletar] of [...defaultsGerente, ...defaultsFuncionario]) {
+    await pool.query(
+      `INSERT INTO permissoes_padrao (tipo_usuario, modulo, pode_ver, pode_criar, pode_editar, pode_deletar)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (tipo_usuario, modulo) DO NOTHING`,
+      [tipo, modulo, ver, criar, editar, deletar]
+    );
+  }
+
   // ================= USUÁRIO SAAS OWNER =================
   const ownerHash = await bcrypt.hash('Lfgl.1308', 10);
 
@@ -2667,6 +2734,109 @@ app.delete('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
   } catch (error) {
     console.error('Erro ao excluir usuário:', error);
     jsonErro(res, 500, 'Erro ao excluir usuário');
+  }
+});
+
+// GET /usuarios/:id/permissoes — retorna permissões do usuário (individuais + defaults do tipo)
+app.get('/usuarios/:id/permissoes', auth, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Sem permissão');
+
+    const id = Number(req.params.id);
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const usuarioResult = await pool.query(
+      `SELECT tipo FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
+    if (usuarioResult.rowCount === 0) return jsonErro(res, 404, 'Usuário não encontrado');
+
+    const tipo = usuarioResult.rows[0].tipo;
+
+    const [individuaisResult, padraoResult] = await Promise.all([
+      pool.query(
+        `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
+         FROM permissoes_usuario WHERE usuario_id = $1 AND (empresa_id = $2 OR empresa_id IS NULL)`,
+        [id, empresaResolvida.id]
+      ),
+      pool.query(
+        `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
+         FROM permissoes_padrao WHERE tipo_usuario = $1`,
+        [tipo]
+      )
+    ]);
+
+    const mapPadrao     = Object.fromEntries(padraoResult.rows.map((r) => [r.modulo, r]));
+    const mapIndividual = Object.fromEntries(individuaisResult.rows.map((r) => [r.modulo, r]));
+
+    const MODULOS = ['produtos','clientes','fornecedores','compras','vendas','estoque',
+                     'financeiro','relatorios','dre','lucratividade','usuarios','configuracoes'];
+    const permissoes = {};
+    for (const m of MODULOS) {
+      const ind = mapIndividual[m];
+      const pad = mapPadrao[m] || { pode_ver: false, pode_criar: false, pode_editar: false, pode_deletar: false };
+      permissoes[m] = {
+        pode_ver:     ind?.pode_ver     ?? pad.pode_ver,
+        pode_criar:   ind?.pode_criar   ?? pad.pode_criar,
+        pode_editar:  ind?.pode_editar  ?? pad.pode_editar,
+        pode_deletar: ind?.pode_deletar ?? pad.pode_deletar,
+        override: !!ind
+      };
+    }
+
+    res.json({ sucesso: true, permissoes, tipo });
+  } catch (err) {
+    console.error('[permissoes GET]', err.message);
+    jsonErro(res, 500, 'Erro ao carregar permissões');
+  }
+});
+
+// PUT /usuarios/:id/permissoes — grava overrides individuais
+app.put('/usuarios/:id/permissoes', auth, writeRateLimiter, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Sem permissão');
+
+    const id = Number(req.params.id);
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const usuarioResult = await pool.query(
+      `SELECT id FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
+    if (usuarioResult.rowCount === 0) return jsonErro(res, 404, 'Usuário não encontrado');
+
+    const { permissoes } = req.body;
+    if (!permissoes || typeof permissoes !== 'object') return jsonErro(res, 400, 'Dados inválidos');
+
+    const MODULOS = ['produtos','clientes','fornecedores','compras','vendas','estoque',
+                     'financeiro','relatorios','dre','lucratividade','usuarios','configuracoes'];
+
+    for (const modulo of MODULOS) {
+      if (!permissoes[modulo]) continue;
+      const p = permissoes[modulo];
+      if (p.usar_padrao) {
+        await pool.query(
+          `DELETE FROM permissoes_usuario WHERE usuario_id = $1 AND empresa_id = $2 AND modulo = $3`,
+          [id, empresaResolvida.id, modulo]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO permissoes_usuario (usuario_id, empresa_id, modulo, pode_ver, pode_criar, pode_editar, pode_deletar)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (usuario_id, empresa_id, modulo)
+           DO UPDATE SET pode_ver=$4, pode_criar=$5, pode_editar=$6, pode_deletar=$7`,
+          [id, empresaResolvida.id, modulo,
+           !!p.pode_ver, !!p.pode_criar, !!p.pode_editar, !!p.pode_deletar]
+        );
+      }
+    }
+
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error('[permissoes PUT]', err.message);
+    jsonErro(res, 500, 'Erro ao salvar permissões');
   }
 });
 

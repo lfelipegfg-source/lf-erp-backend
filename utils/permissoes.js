@@ -15,21 +15,22 @@ const ACOES_VALIDAS = new Set(['ver', 'criar', 'editar', 'deletar']);
 const MODULOS_VALIDOS = new Set([
   'produtos', 'clientes', 'fornecedores', 'compras',
   'vendas', 'estoque', 'financeiro', 'relatorios',
+  'dre', 'lucratividade',
   'usuarios', 'configuracoes'
 ]);
 
-function requirePermissao(modulo, acao) {
+// requirePermissao recebe pool explicitamente — o pool não é acessível via req.app.locals neste projeto
+function requirePermissao(pool, modulo, acao) {
   if (!MODULOS_VALIDOS.has(modulo)) throw new Error(`Módulo inválido: ${modulo}`);
   if (!ACOES_VALIDAS.has(acao))   throw new Error(`Ação inválida: ${acao}`);
 
   const coluna = `pode_${acao}`;
 
   return async (req, res, next) => {
-    if (req.user?.tipo === 'admin') return next();
+    if (req.user?.tipo === 'admin' || req.user?.is_saas_owner) return next();
 
-    const pool = req.app.locals.pool;
     const usuarioId = req.user?.id;
-    const empresaId = req.empresa_id || null;
+    const empresaId = req.user?.empresa_id || null;
 
     try {
       // 1. Override individual
