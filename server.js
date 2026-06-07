@@ -2842,6 +2842,136 @@ app.put('/usuarios/:id/permissoes', auth, writeRateLimiter, async (req, res) => 
   }
 });
 
+// ── Lixeira (soft delete recovery) ──────────────────────────────────────────
+
+const TABELAS_LIXEIRA = new Set(['produtos', 'clientes', 'fornecedores']);
+
+// GET /lixeira — lista registros deletados da empresa
+app.get('/lixeira', auth, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const eId   = empresaResolvida.id;
+    const eNome = empresaResolvida.nome;
+
+    const [produtosR, clientesR, fornecedoresR] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, categoria, deletado_em FROM produtos
+         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         ORDER BY deletado_em DESC LIMIT 200`,
+        [eId, eNome]
+      ),
+      pool.query(
+        `SELECT id, nome, telefone, email, deletado_em FROM clientes
+         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         ORDER BY deletado_em DESC LIMIT 200`,
+        [eId, eNome]
+      ),
+      pool.query(
+        `SELECT id, nome, telefone, email, deletado_em FROM fornecedores
+         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         ORDER BY deletado_em DESC LIMIT 200`,
+        [eId, eNome]
+      )
+    ]);
+
+    res.json({
+      sucesso: true,
+      produtos:     produtosR.rows,
+      clientes:     clientesR.rows,
+      fornecedores: fornecedoresR.rows,
+      total: produtosR.rowCount + clientesR.rowCount + fornecedoresR.rowCount
+    });
+  } catch (err) {
+    console.error('[lixeira GET]', err.message);
+    jsonErro(res, 500, 'Erro ao carregar lixeira');
+  }
+});
+
+// PUT /lixeira/recuperar/:tabela/:id — restaura registro (deletado_em = NULL)
+app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
+
+    const { tabela, id } = req.params;
+    if (!TABELAS_LIXEIRA.has(tabela)) return jsonErro(res, 400, 'Tabela inválida');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const eId   = empresaResolvida.id;
+    const eNome = empresaResolvida.nome;
+
+    const result = await pool.query(
+      `UPDATE ${tabela}
+       SET deletado_em = NULL, atualizado_em = NOW()
+       WHERE id = $1
+         AND (empresa_id = $2 OR empresa = $3)
+         AND deletado_em IS NOT NULL
+       RETURNING id, nome`,
+      [Number(id), eId, eNome]
+    );
+
+    if (result.rowCount === 0) return jsonErro(res, 404, 'Registro não encontrado na lixeira');
+
+    registrarAuditoria({
+      empresa: eNome, empresa_id: eId,
+      usuario_id: req.user.id, usuario_nome: req.user.nome || '',
+      modulo: tabela, acao: 'recuperar',
+      referencia_id: Number(id), req
+    });
+
+    res.json({ sucesso: true, registro: result.rows[0] });
+  } catch (err) {
+    console.error('[lixeira recuperar]', err.message);
+    jsonErro(res, 500, 'Erro ao recuperar registro');
+  }
+});
+
+// DELETE /lixeira/excluir/:tabela/:id — exclusão permanente (somente admin)
+app.delete('/lixeira/excluir/:tabela/:id', auth, writeRateLimiter, async (req, res) => {
+  try {
+    if (req.user.tipo !== 'admin' && !req.user.is_saas_owner) {
+      return jsonErro(res, 403, 'Exclusão permanente restrita a administradores');
+    }
+
+    const { tabela, id } = req.params;
+    if (!TABELAS_LIXEIRA.has(tabela)) return jsonErro(res, 400, 'Tabela inválida');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const eId   = empresaResolvida.id;
+    const eNome = empresaResolvida.nome;
+
+    const result = await pool.query(
+      `DELETE FROM ${tabela}
+       WHERE id = $1
+         AND (empresa_id = $2 OR empresa = $3)
+         AND deletado_em IS NOT NULL
+       RETURNING id`,
+      [Number(id), eId, eNome]
+    );
+
+    if (result.rowCount === 0) return jsonErro(res, 404, 'Registro não encontrado na lixeira');
+
+    registrarAuditoria({
+      empresa: eNome, empresa_id: eId,
+      usuario_id: req.user.id, usuario_nome: req.user.nome || '',
+      modulo: tabela, acao: 'exclusao_permanente',
+      referencia_id: Number(id), req
+    });
+
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error('[lixeira excluir]', err.message);
+    jsonErro(res, 500, 'Erro ao excluir permanentemente');
+  }
+});
+
 // ================= COMPRAS =================
 
 app.get('/compras/:empresa', auth, async (req, res) => {
