@@ -9,6 +9,8 @@
  *   GET  /devolucoes/venda/:vendaId — devoluções de uma venda específica
  */
 
+const { estornarPontosFidelidade } = require('../utils/fidelidade');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -195,6 +197,18 @@ module.exports = ({
       }
 
       await client.query('COMMIT');
+
+      // Estorna pontos de fidelidade em background (idempotente, não bloqueia a resposta)
+      if (venda.cliente_id) {
+        estornarPontosFidelidade(pool, {
+          empresaId:      emp.id,
+          clienteId:      venda.cliente_id,
+          vendaId:        Number(venda_id),
+          devolucaoId:    devolucao.id,
+          totalDevolvido: +totalDevolvido.toFixed(2),
+          vendaTotal:     Number(venda.total || 0)
+        }).catch((e) => console.error(`[fidelidade] falha estorno devolucao=${devolucao.id}:`, e.message));
+      }
 
       return ok(res, {
         devolucao: { ...devolucao, total_devolvido: +totalDevolvido.toFixed(2) },
