@@ -1950,6 +1950,8 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_mov_estoque_empresa_id ON movimentacoes_estoque (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_contas_receber_vencimento_id ON contas_receber (empresa_id, data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_contas_pagar_vencimento_id ON contas_pagar (empresa_id, data_vencimento);
+    CREATE INDEX IF NOT EXISTS idx_financeiro_logs_empresa_id ON financeiro_logs (empresa_id, criado_em DESC);
+    CREATE INDEX IF NOT EXISTS idx_financeiro_logs_tipo ON financeiro_logs (tipo);
   `);
 
   // ── Permissões granulares ─────────────────────────────────────────────────
@@ -5261,6 +5263,54 @@ app.get('/investimentos/:empresa', auth, async (req, res) => {
 });
 
 // ================= FLUXO DE CAIXA =================
+// GET /financeiro/auditoria — histórico de operações financeiras da empresa
+app.get('/financeiro/auditoria', auth, async (req, res) => {
+  try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
+
+    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
+    const { dataInicial, dataFinal } = obterPeriodo(req);
+    const { tipo, entidade, busca } = req.query;
+
+    const params = [empresaResolvida.id, empresaResolvida.nome];
+    let where = `WHERE (fl.empresa_id = $1 OR fl.empresa = $2)`;
+
+    if (tipo)    { params.push(tipo);    where += ` AND fl.tipo = $${params.length}`; }
+    if (entidade){ params.push(entidade); where += ` AND fl.entidade = $${params.length}`; }
+    if (busca)   { params.push(`%${busca}%`); where += ` AND fl.descricao ILIKE $${params.length}`; }
+
+    where += adicionarFiltroPeriodo({ campo: 'fl.criado_em', params, dataInicial, dataFinal });
+
+    const result = await pool.query(
+      `SELECT
+         fl.id,
+         fl.tipo,
+         fl.entidade,
+         fl.entidade_id,
+         fl.descricao,
+         fl.valor,
+         fl.criado_em,
+         COALESCE(u.nome_completo, u.usuario, 'Sistema') AS usuario_nome
+       FROM financeiro_logs fl
+       LEFT JOIN usuarios u ON u.id = fl.usuario_id
+       ${where}
+       ORDER BY fl.criado_em DESC
+       LIMIT 500`,
+      params
+    );
+
+    const total = result.rowCount;
+    const truncado = total >= 500;
+
+    res.json({ sucesso: true, logs: result.rows, total, truncado });
+  } catch (err) {
+    console.error('[auditoria financeira]', err.message);
+    jsonErro(res, 500, 'Erro ao buscar auditoria financeira');
+  }
+});
+
 app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
   try {
     const empresa = req.params.empresa;
