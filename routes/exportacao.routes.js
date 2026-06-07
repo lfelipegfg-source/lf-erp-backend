@@ -424,5 +424,207 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
     }
   });
 
+  // ── GET /exportacao/painel — KPIs contábeis em tempo real ────────────────
+
+  router.get('/painel', auth, async (req, res) => {
+    try {
+      const emp = await resolveEmpresa(req);
+      if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+
+      const { dataInicial, dataFinal } = obterPeriodo(req);
+      const mesInicio = dataInicial || (hoje().substring(0, 7) + '-01');
+      const mesFim    = dataFinal   || hoje();
+      const eId = emp.id; const eNome = emp.nome;
+
+      const [vendas, compras, crPendente, cpPendente, despesas, receitasExtra] = await Promise.all([
+        pool.query(
+          `SELECT COALESCE(SUM(total),0) AS total, COUNT(*) AS qtd
+           FROM vendas
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND data BETWEEN $3 AND $4`,
+          [eId, eNome, mesInicio, mesFim]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(total),0) AS total, COUNT(*) AS qtd
+           FROM compras
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND data BETWEEN $3 AND $4`,
+          [eId, eNome, mesInicio, mesFim]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(valor),0) AS total
+           FROM contas_receber
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')`,
+          [eId, eNome]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(valor),0) AS total
+           FROM contas_pagar
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')`,
+          [eId, eNome]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(valor),0) AS total
+           FROM lancamentos_financeiros
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND LOWER(tipo)='despesa'
+             AND COALESCE(pagamento_data,vencimento) BETWEEN $3 AND $4`,
+          [eId, eNome, mesInicio, mesFim]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(valor),0) AS total
+           FROM lancamentos_financeiros
+           WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2))
+             AND LOWER(tipo)='receita'
+             AND COALESCE(pagamento_data,vencimento) BETWEEN $3 AND $4`,
+          [eId, eNome, mesInicio, mesFim]
+        )
+      ]);
+
+      const totalVendas    = normalizarDecimal(vendas.rows[0].total);
+      const totalCompras   = normalizarDecimal(compras.rows[0].total);
+      const totalDespesas  = normalizarDecimal(despesas.rows[0].total);
+      const totalReceitas  = normalizarDecimal(receitasExtra.rows[0].total);
+      const resultado      = totalVendas + totalReceitas - totalCompras - totalDespesas;
+
+      return res.json({
+        sucesso: true,
+        painel: {
+          periodo:      { inicio: mesInicio, fim: mesFim },
+          vendas:       { total: totalVendas,   qtd: Number(vendas.rows[0].qtd) },
+          compras:      { total: totalCompras,  qtd: Number(compras.rows[0].qtd) },
+          cr_pendente:  normalizarDecimal(crPendente.rows[0].total),
+          cp_pendente:  normalizarDecimal(cpPendente.rows[0].total),
+          despesas:     totalDespesas,
+          receitas_extra: totalReceitas,
+          resultado,
+          atualizado_em: new Date().toLocaleString('sv-SE', { timeZone: 'America/Fortaleza' }).replace(' ', 'T')
+        }
+      });
+    } catch (err) {
+      console.error('[exportacao] painel:', err.message);
+      return res.status(500).json({ sucesso: false, erro: err.message });
+    }
+  });
+
+  // ── GET /exportacao/integracao — ler configuração ─────────────────────────
+
+  router.get('/integracao', auth, async (req, res) => {
+    try {
+      const emp = await resolveEmpresa(req);
+      if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+
+      const r = await pool.query(
+        `SELECT email_contador, webhook_url,
+                CASE WHEN webhook_secret IS NOT NULL AND webhook_secret <> '' THEN '***' ELSE '' END AS webhook_secret,
+                eventos_ativos, ativo
+         FROM contabilidade_config WHERE empresa_id = $1`,
+        [emp.id]
+      );
+
+      return res.json({
+        sucesso: true,
+        config: r.rows[0] || {
+          email_contador: '', webhook_url: '', webhook_secret: '',
+          eventos_ativos: ['venda.criada', 'recebimento.registrado', 'pagamento.registrado'],
+          ativo: true
+        }
+      });
+    } catch (err) {
+      console.error('[exportacao] integracao GET:', err.message);
+      return res.status(500).json({ sucesso: false, erro: err.message });
+    }
+  });
+
+  // ── PUT /exportacao/integracao — salvar configuração ─────────────────────
+
+  router.put('/integracao', auth, async (req, res) => {
+    try {
+      const emp = await resolveEmpresa(req);
+      if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+
+      const { email_contador, webhook_url, webhook_secret, eventos_ativos, ativo } = req.body;
+      const eventosValidos = ['venda.criada', 'recebimento.registrado', 'pagamento.registrado'];
+      const eventosFiltrados = Array.isArray(eventos_ativos)
+        ? eventos_ativos.filter((e) => eventosValidos.includes(e))
+        : eventosValidos;
+
+      await pool.query(
+        `INSERT INTO contabilidade_config
+           (empresa_id, email_contador, webhook_url, webhook_secret, eventos_ativos, ativo)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (empresa_id) DO UPDATE SET
+           email_contador  = EXCLUDED.email_contador,
+           webhook_url     = EXCLUDED.webhook_url,
+           webhook_secret  = COALESCE(NULLIF($4,'***'), contabilidade_config.webhook_secret),
+           eventos_ativos  = EXCLUDED.eventos_ativos,
+           ativo           = EXCLUDED.ativo,
+           atualizado_em   = NOW()`,
+        [
+          emp.id,
+          email_contador || null,
+          webhook_url    || null,
+          webhook_secret || null,
+          eventosFiltrados,
+          ativo !== false
+        ]
+      );
+
+      return res.json({ sucesso: true, mensagem: 'Configuração salva com sucesso.' });
+    } catch (err) {
+      console.error('[exportacao] integracao PUT:', err.message);
+      return res.status(500).json({ sucesso: false, erro: err.message });
+    }
+  });
+
+  // ── POST /exportacao/integracao/testar — dispara ping de teste ───────────
+
+  router.post('/integracao/testar', auth, async (req, res) => {
+    try {
+      const emp = await resolveEmpresa(req);
+      if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+
+      const r = await pool.query(
+        `SELECT webhook_url, webhook_secret FROM contabilidade_config WHERE empresa_id = $1`,
+        [emp.id]
+      );
+
+      if (!r.rowCount || !r.rows[0]?.webhook_url) {
+        return res.status(400).json({ sucesso: false, erro: 'Nenhuma URL de webhook configurada.' });
+      }
+
+      const { webhook_url, webhook_secret } = r.rows[0];
+      const payload = JSON.stringify({
+        evento: 'teste',
+        timestamp: new Date().toLocaleString('sv-SE', { timeZone: 'America/Fortaleza' }).replace(' ', 'T'),
+        empresa_id: emp.id,
+        dados: { mensagem: 'Teste de integração do LF ERP — webhook funcionando!' }
+      });
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (webhook_secret) headers['X-LF-Secret'] = webhook_secret;
+
+      const resp = await fetch(webhook_url, {
+        method: 'POST',
+        headers,
+        body: payload,
+        signal: AbortSignal.timeout(10000)
+      });
+
+      return res.json({
+        sucesso: true,
+        status_http: resp.status,
+        mensagem: resp.ok
+          ? `Webhook recebido! Servidor respondeu ${resp.status}.`
+          : `Servidor respondeu com status ${resp.status} — verifique a URL.`
+      });
+    } catch (err) {
+      console.error('[exportacao] integracao testar:', err.message);
+      return res.status(500).json({ sucesso: false, erro: `Falha ao disparar webhook: ${err.message}` });
+    }
+  });
+
   return router;
 };
