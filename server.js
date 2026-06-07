@@ -8006,20 +8006,46 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
     if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
     const empresa = empresaResult.rows[0];
 
-    const [clientes, produtos, vendas, contasReceber] = await Promise.all([
-      pool.query(`SELECT * FROM clientes WHERE empresa_id = $1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM produtos WHERE empresa_id = $1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM vendas WHERE empresa_id = $1 ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM contas_receber WHERE empresa_id = $1 ORDER BY id`, [id])
+    const [
+      clientesR, produtosR, fornecedoresR, vendasR, vendaItensR,
+      comprasR, compraItensR, crR, cpR, movimR, lancamentosR
+    ] = await Promise.all([
+      pool.query(`SELECT * FROM clientes WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM produtos WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM fornecedores WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM vendas WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE v.empresa_id=$1 ORDER BY vi.venda_id,vi.id`, [id]),
+      pool.query(`SELECT * FROM compras WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT ci.* FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE c.empresa_id=$1 ORDER BY ci.compra_id`, [id]),
+      pool.query(`SELECT * FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
+      pool.query(`SELECT * FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
+      pool.query(`SELECT * FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY data`, [id])
     ]);
 
-    res.json({
-      empresa: { id: empresa.id, nome: empresa.nome, exportado_em: new Date().toISOString() },
-      clientes: clientes.rows,
-      produtos: produtos.rows,
-      vendas: vendas.rows,
-      contas_receber: contasReceber.rows
-    });
+    const payload = {
+      exportacao: {
+        empresa:    { id: empresa.id, nome: empresa.nome },
+        gerado_em:  new Date().toISOString(),
+        gerado_por: 'admin'
+      },
+      clientes:               clientesR.rows,
+      produtos:               produtosR.rows,
+      fornecedores:           fornecedoresR.rows,
+      vendas:                 vendasR.rows,
+      venda_itens:            vendaItensR.rows,
+      compras:                comprasR.rows,
+      compra_itens:           compraItensR.rows,
+      contas_receber:         crR.rows,
+      contas_pagar:           cpR.rows,
+      movimentacoes_estoque:  movimR.rows,
+      lancamentos_financeiros: lancamentosR.rows
+    };
+
+    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_')}-${hoje()}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+    res.send(JSON.stringify(payload, null, 2));
   } catch (error) {
     console.error('Erro ao exportar empresa:', error);
     jsonErro(res, 500, 'Erro ao exportar dados da empresa');
