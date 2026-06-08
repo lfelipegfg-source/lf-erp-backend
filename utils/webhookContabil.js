@@ -1,8 +1,29 @@
 /**
  * Webhook de integração contábil — LF ERP
  * Dispara notificações HTTP para sistemas externos quando eventos financeiros ocorrem.
- * Todas as funções são fire-and-forget: lançar com .catch(() => {}) no chamador.
+ * Todas as funções são fire-and-forget: lançar com .catch(e => console.error(...)) no chamador.
  */
+
+const crypto = require('crypto');
+
+// IPs e ranges privados que não podem ser alvo de webhook (previne SSRF)
+const PRIVATE_IP_REGEX = /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1|0\.0\.0\.0|169\.254\.)/i;
+
+function validarUrlWebhook(urlStr) {
+  let url;
+  try { url = new URL(urlStr); } catch { return false; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  if (PRIVATE_IP_REGEX.test(url.hostname)) return false;
+  return true;
+}
+
+function timestampFortaleza() {
+  // Gera ISO 8601 com offset -03:00 (America/Fortaleza, sem horário de verão)
+  const d = new Date();
+  const off = -3 * 60;
+  const local = new Date(d.getTime() + off * 60 * 1000);
+  return local.toISOString().replace('Z', '-03:00');
+}
 
 async function dispararWebhook(pool, empresaId, evento, dados) {
   const r = await pool.query(
@@ -17,15 +38,27 @@ async function dispararWebhook(pool, empresaId, evento, dados) {
   const { webhook_url, webhook_secret, eventos_ativos } = r.rows[0];
   if (Array.isArray(eventos_ativos) && !eventos_ativos.includes(evento)) return;
 
+  if (!validarUrlWebhook(webhook_url)) {
+    console.warn(`[webhook-contabil] URL rejeitada (SSRF) empresa=${empresaId}`);
+    return;
+  }
+
   const payload = JSON.stringify({
+    api_version: '1',
     evento,
-    timestamp: new Date().toLocaleString('sv-SE', { timeZone: 'America/Fortaleza' }).replace(' ', 'T'),
+    timestamp: timestampFortaleza(),
     empresa_id: empresaId,
     dados
   });
 
   const headers = { 'Content-Type': 'application/json' };
-  if (webhook_secret) headers['X-LF-Secret'] = webhook_secret;
+  if (webhook_secret) {
+    // HMAC-SHA256 para verificação de integridade pelo receptor
+    headers['X-LF-Signature'] = crypto
+      .createHmac('sha256', webhook_secret)
+      .update(payload)
+      .digest('hex');
+  }
 
   await fetch(webhook_url, {
     method: 'POST',
@@ -35,4 +68,4 @@ async function dispararWebhook(pool, empresaId, evento, dados) {
   });
 }
 
-module.exports = { dispararWebhook };
+module.exports = { dispararWebhook, validarUrlWebhook };

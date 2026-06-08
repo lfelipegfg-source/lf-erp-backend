@@ -606,7 +606,7 @@ module.exports = ({
       dispararWebhook(pool, empresaResolvida.id, 'venda.criada', {
         id: venda.id, total: totalFinal,
         cliente: clienteNomeFinal, pagamento: pagamentoPrincipal || 'Dinheiro'
-      }).catch(() => {});
+      }).catch((e) => console.error(`[webhook-contabil] venda=${venda.id}:`, e.message));
 
       return res.json({
         sucesso: true,

@@ -3978,7 +3978,7 @@ VALUES (
     // Notifica integração contábil em background
     dispararWebhook(pool, empresaResolvida.id, 'recebimento.registrado', {
       id, valor: valorPago, cliente: conta.cliente_nome, status: novoStatus
-    }).catch(() => {});
+    }).catch((e) => console.error(`[webhook-contabil] recebimento=${id}:`, e.message));
 
     await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 
@@ -4879,7 +4879,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
     // Notifica integração contábil em background
     dispararWebhook(pool, empresaResolvida.id, 'pagamento.registrado', {
       id, valor: Number(conta.valor || 0), fornecedor: conta.fornecedor
-    }).catch(() => {});
+    }).catch((e) => console.error(`[webhook-contabil] pagamento=${id}:`, e.message));
 
     await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
 

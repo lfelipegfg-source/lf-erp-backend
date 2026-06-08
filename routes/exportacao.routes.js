@@ -16,6 +16,7 @@
 
 module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPeriodo, obterPeriodo, normalizarDecimal, hoje }) {
   const router = require('express').Router();
+  const { requirePermissao } = require('../utils/permissoes');
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -259,38 +260,31 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       const { dataInicial, dataFinal } = obterPeriodo(req);
       const eId = emp.id; const eNome = emp.nome;
 
-      // Receita bruta de vendas
-      const vparam = [eId, eNome];
-      let vwhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`;
-      vwhere += adicionarFiltroPeriodo({ campo: 'data', params: vparam, dataInicial, dataFinal, castDate: false });
-      const vr = await pool.query(`SELECT COALESCE(SUM(total),0) AS total, COALESCE(SUM(desconto),0) AS desconto FROM vendas ${vwhere}`, vparam);
+      // Monta params/where para cada grupo de queries
+      const vparam  = [eId, eNome]; let vwhere  = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`;
+      const cmvparam= [eId, eNome];
+      const dparam  = [eId, eNome]; let dwhere  = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'despesa'`;
+      const cpparam = [eId, eNome]; let cpwhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(COALESCE(status,'pendente')) = 'pago'`;
+      const rparam  = [eId, eNome]; let rwhere  = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'receita'`;
+      vwhere  += adicionarFiltroPeriodo({ campo: 'data',                              params: vparam,   dataInicial, dataFinal, castDate: false });
+      dwhere  += adicionarFiltroPeriodo({ campo: `COALESCE(pagamento_data,vencimento)`,params: dparam,   dataInicial, dataFinal, castDate: false });
+      cpwhere += adicionarFiltroPeriodo({ campo: 'data_pagamento',                    params: cpparam,  dataInicial, dataFinal, castDate: false });
+      rwhere  += adicionarFiltroPeriodo({ campo: `COALESCE(pagamento_data,vencimento)`,params: rparam,   dataInicial, dataFinal, castDate: false });
 
-      // CMV
-      const cmvr = await pool.query(
-        `SELECT COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario,0)),0) AS cmv
-         FROM venda_itens vi
-         JOIN vendas v ON v.id = vi.venda_id
-         WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
-         ${adicionarFiltroPeriodo({ campo: 'v.data', params: [eId, eNome], dataInicial, dataFinal, castDate: false })}`,
-        [eId, eNome]
-      );
-
-      // Despesas (lançamentos tipo despesa + contas_pagar pagas)
-      const dparam = [eId, eNome];
-      let dwhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'despesa'`;
-      dwhere += adicionarFiltroPeriodo({ campo: `COALESCE(pagamento_data, vencimento)`, params: dparam, dataInicial, dataFinal, castDate: false });
-      const dr = await pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM lancamentos_financeiros ${dwhere}`, dparam);
-
-      const cpparam = [eId, eNome];
-      let cpwhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(COALESCE(status,'pendente')) = 'pago'`;
-      cpwhere += adicionarFiltroPeriodo({ campo: 'data_pagamento', params: cpparam, dataInicial, dataFinal, castDate: false });
-      const cpr = await pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM contas_pagar ${cpwhere}`, cpparam);
-
-      // Receitas extras (lançamentos receita)
-      const rparam = [eId, eNome];
-      let rwhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'receita'`;
-      rwhere += adicionarFiltroPeriodo({ campo: `COALESCE(pagamento_data, vencimento)`, params: rparam, dataInicial, dataFinal, castDate: false });
-      const rr = await pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM lancamentos_financeiros ${rwhere}`, rparam);
+      // 5 queries em paralelo — reduz latência de 5 round-trips para 1
+      const [vr, cmvr, dr, cpr, rr] = await Promise.all([
+        pool.query(`SELECT COALESCE(SUM(total),0) AS total, COALESCE(SUM(desconto),0) AS desconto FROM vendas ${vwhere}`, vparam),
+        pool.query(
+          `SELECT COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario,0)),0) AS cmv
+           FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id
+           WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
+           ${adicionarFiltroPeriodo({ campo: 'v.data', params: cmvparam, dataInicial, dataFinal, castDate: false })}`,
+          cmvparam
+        ),
+        pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM lancamentos_financeiros ${dwhere}`, dparam),
+        pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM contas_pagar ${cpwhere}`, cpparam),
+        pool.query(`SELECT COALESCE(SUM(valor),0) AS total FROM lancamentos_financeiros ${rwhere}`, rparam)
+      ]);
 
       const receitaBruta   = normalizarDecimal(vr.rows[0].total);
       const descontoVendas = normalizarDecimal(vr.rows[0].desconto);
@@ -424,9 +418,22 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
     }
   });
 
+  // Rate limiter local para endpoints pesados de leitura (max 20 req/min por IP)
+  const rateMap = new Map();
+  function readRateLimit(req, res, next) {
+    const key = `${req.ip}-${req.user?.id || 'anon'}`;
+    const now = Date.now();
+    const entry = rateMap.get(key) || { count: 0, start: now };
+    if (now - entry.start > 60_000) { entry.count = 0; entry.start = now; }
+    entry.count++;
+    rateMap.set(key, entry);
+    if (entry.count > 20) return res.status(429).json({ sucesso: false, erro: 'Muitas requisições. Aguarde 1 minuto.' });
+    next();
+  }
+
   // ── GET /exportacao/painel — KPIs contábeis em tempo real ────────────────
 
-  router.get('/painel', auth, async (req, res) => {
+  router.get('/painel', auth, readRateLimit, async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -511,7 +518,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/integracao — ler configuração ─────────────────────────
 
-  router.get('/integracao', auth, async (req, res) => {
+  router.get('/integracao', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -540,7 +547,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── PUT /exportacao/integracao — salvar configuração ─────────────────────
 
-  router.put('/integracao', auth, async (req, res) => {
+  router.put('/integracao', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -581,7 +588,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── POST /exportacao/integracao/testar — dispara ping de teste ───────────
 
-  router.post('/integracao/testar', auth, async (req, res) => {
+  router.post('/integracao/testar', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -622,7 +629,12 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       });
     } catch (err) {
       console.error('[exportacao] integracao testar:', err.message);
-      return res.status(500).json({ sucesso: false, erro: `Falha ao disparar webhook: ${err.message}` });
+      const erroMsg = err.name === 'AbortError'
+        ? 'Timeout: servidor não respondeu em 10 segundos.'
+        : err.name === 'TypeError'
+          ? 'URL inválida ou host inacessível.'
+          : 'Falha ao disparar webhook.';
+      return res.status(500).json({ sucesso: false, erro: erroMsg });
     }
   });
 

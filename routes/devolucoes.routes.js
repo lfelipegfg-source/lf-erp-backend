@@ -96,8 +96,8 @@ module.exports = ({
 
       // Carrega venda e seus itens originais
       const vendaRes = await client.query(
-        `SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`,
-        [Number(venda_id), emp.id]
+        `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [Number(venda_id), emp.id, emp.nome]
       );
       if (vendaRes.rowCount === 0) { await client.query('ROLLBACK'); return erro(res, 404, 'Venda não encontrada'); }
       const venda = vendaRes.rows[0];
@@ -137,9 +137,9 @@ module.exports = ({
 
       if (itensValidados.length === 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Nenhum item válido para devolução'); }
 
-      // Próximo número de devolução
+      // Próximo número de devolução — FOR UPDATE previne race condition em devoluções simultâneas
       const numRes = await client.query(
-        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes WHERE empresa_id = $1`,
+        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes WHERE empresa_id = $1 FOR UPDATE`,
         [emp.id]
       );
       const numero = numRes.rows[0].proximo;
@@ -185,7 +185,7 @@ module.exports = ({
         await client.query(
           `INSERT INTO lancamentos_financeiros
              (empresa, empresa_id, tipo, descricao, valor, vencimento, status, categoria, observacao)
-           VALUES ($1,$2,'despesa',$3,$4,NOW(),'pendente','Devoluções',$5)`,
+           VALUES ($1,$2,'despesa',$3,$4,NOW() + INTERVAL '3 days','pendente','Devoluções',$5)`,
           [
             emp.nome,
             emp.id,
