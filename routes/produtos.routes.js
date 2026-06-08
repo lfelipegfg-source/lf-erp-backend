@@ -239,6 +239,47 @@ module.exports = ({
     }
   });
 
+  // Deve ficar ANTES de /:empresa para não ser engolido pelo parâmetro genérico
+  router.get('/etiquetas-hoje/:empresa', auth, async (req, res) => {
+    try {
+      const empresa = req.params.empresa;
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const { rows } = await pool.query(`
+        SELECT DISTINCT p.id, p.nome, p.preco, p.codigo_barras, p.categoria
+        FROM produtos p
+        WHERE p.deletado_em IS NULL
+          AND (p.empresa_id = $1 OR (p.empresa_id IS NULL AND p.empresa = $2))
+          AND (
+            (p.criado_em AT TIME ZONE 'America/Fortaleza')::date
+              = (NOW() AT TIME ZONE 'America/Fortaleza')::date
+            OR EXISTS (
+              SELECT 1 FROM compra_itens ci
+              JOIN compras c ON c.id = ci.compra_id
+              WHERE ci.produto_id = p.id
+                AND (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
+                AND (c.criado_em AT TIME ZONE 'America/Fortaleza')::date
+                  = (NOW() AT TIME ZONE 'America/Fortaleza')::date
+            )
+            OR EXISTS (
+              SELECT 1 FROM movimentacoes_estoque me
+              WHERE me.produto_id = p.id
+                AND (me.empresa_id = $1 OR (me.empresa_id IS NULL AND me.empresa = $2))
+                AND (me.data_movimentacao AT TIME ZONE 'America/Fortaleza')::date
+                  = (NOW() AT TIME ZONE 'America/Fortaleza')::date
+            )
+          )
+        ORDER BY p.nome
+      `, [empresaResolvida.id, empresaResolvida.nome]);
+
+      return ok(res, { dados: rows.map(normalizarProduto) });
+    } catch (error) {
+      console.error('Erro real ao buscar etiquetas de hoje:', error);
+      return erro(res, 500, 'Erro ao buscar produtos de hoje');
+    }
+  });
+
   router.get('/:empresa', auth, async (req, res) => {
     try {
       const empresa = req.params.empresa;
