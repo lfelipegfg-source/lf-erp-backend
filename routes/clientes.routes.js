@@ -144,7 +144,7 @@ module.exports = ({
       );
       if (clienteResult.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
 
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
       const [parcelasResult, resumoResult] = await Promise.all([
         pool.query(
@@ -219,6 +219,16 @@ module.exports = ({
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
+      // Período configurável via query string; padrão últimos 12 meses
+      const { dataInicial, dataFinal } = obterPeriodo(req);
+      const periodoParams = [empresaResolvida.id, empresaResolvida.nome];
+      let periodoWhere = '';
+      if (dataInicial) { periodoParams.push(dataInicial); periodoWhere += ` AND v.data >= $${periodoParams.length}`; }
+      if (dataFinal)   { periodoParams.push(dataFinal);   periodoWhere += ` AND v.data <= $${periodoParams.length}`; }
+      if (!dataInicial && !dataFinal) {
+        periodoWhere = ` AND v.data >= (NOW() - INTERVAL '12 months')::date`;
+      }
+
       const result = await pool.query(
         `WITH receita AS (
            SELECT
@@ -230,6 +240,7 @@ module.exports = ({
            LEFT JOIN clientes c ON c.id = v.cliente_id
            WHERE (v.empresa_id = $1 OR v.empresa = $2)
              AND v.cliente_id IS NOT NULL
+             ${periodoWhere}
            GROUP BY v.cliente_id, c.nome, v.cliente_nome
          ),
          geral AS (
@@ -259,8 +270,9 @@ module.exports = ({
              ELSE 'C'
            END AS classe
          FROM ranqueado
-         ORDER BY receita_total DESC`,
-        [empresaResolvida.id, empresaResolvida.nome]
+         ORDER BY receita_total DESC
+         LIMIT 2000`,
+        periodoParams
       );
 
       const rows = result.rows;

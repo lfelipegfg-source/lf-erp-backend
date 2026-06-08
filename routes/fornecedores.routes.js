@@ -135,7 +135,6 @@ module.exports = function ({
         sql += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(contato, '')) LIKE $${idx}
             OR LOWER(COALESCE(telefone, '')) LIKE $${idx}
             OR LOWER(COALESCE(email, '')) LIKE $${idx}
           )
@@ -180,7 +179,6 @@ module.exports = function ({
         where += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${params.length}
-            OR LOWER(COALESCE(contato, '')) LIKE $${params.length}
             OR LOWER(COALESCE(telefone, '')) LIKE $${params.length}
             OR LOWER(COALESCE(email, '')) LIKE $${params.length}
           )

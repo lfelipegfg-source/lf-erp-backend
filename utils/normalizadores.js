@@ -1,9 +1,8 @@
 function hoje() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function agoraISO() {
-  return new Date().toISOString();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Fortaleza',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
 }
 
 function normalizarDecimal(valor) {
@@ -72,7 +71,6 @@ function validarECalcularTotalItens(itens) {
 
 module.exports = {
   hoje,
-  agoraISO,
   normalizarDecimal,
   normalizarInt,
   addDias,
