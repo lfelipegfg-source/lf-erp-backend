@@ -3976,7 +3976,7 @@ VALUES (
     await client.query('COMMIT');
 
     // Notifica integração contábil em background
-    dispararWebhook(pool, empresaResolvida.id, 'recebimento.registrado', {
+    dispararWebhookComRetry(pool, empresaResolvida.id, 'recebimento.registrado', {
       id, valor: valorPago, cliente: conta.cliente_nome, status: novoStatus
     }).catch((e) => console.error(`[webhook-contabil] recebimento=${id}:`, e.message));
 
@@ -4877,7 +4877,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
     await client.query('COMMIT');
 
     // Notifica integração contábil em background
-    dispararWebhook(pool, empresaResolvida.id, 'pagamento.registrado', {
+    dispararWebhookComRetry(pool, empresaResolvida.id, 'pagamento.registrado', {
       id, valor: Number(conta.valor || 0), fornecedor: conta.fornecedor
     }).catch((e) => console.error(`[webhook-contabil] pagamento=${id}:`, e.message));
 
@@ -6613,7 +6613,7 @@ app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
 
 const { resolverClienteAsaas, criarBoleto: criarBoletoAsaas, consultarBoleto: consultarBoletoAsaas } = require('./utils/asaas');
 const { enviarEmailBoasVindas, getSaasSmtp, criarTransporter } = require('./utils/email');
-const { dispararWebhook } = require('./utils/webhookContabil');
+const { dispararWebhookComRetry } = require('./utils/webhookContabil');
 
 async function getAsaasConfig(empresaResolvida) {
   const cfg = await pool.query(

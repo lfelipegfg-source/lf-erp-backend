@@ -2,7 +2,7 @@ const { resolverPreco } = require('../utils/resolverPreco');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
 const { calcularComissaoVenda } = require('../utils/comissoes');
 const { acumularPontosFidelidade } = require('../utils/fidelidade');
-const { dispararWebhook } = require('../utils/webhookContabil');
+const { dispararWebhookComRetry } = require('../utils/webhookContabil');
 
 module.exports = ({
   auth,
@@ -602,8 +602,8 @@ module.exports = ({
         }).catch((e) => console.error(`[fidelidade] falha venda=${venda.id}:`, e.message));
       }
 
-      // Notifica integração contábil em background
-      dispararWebhook(pool, empresaResolvida.id, 'venda.criada', {
+      // Notifica integração contábil em background (com 1 retry após 5s em falha transitória)
+      dispararWebhookComRetry(pool, empresaResolvida.id, 'venda.criada', {
         id: venda.id, total: totalFinal,
         cliente: clienteNomeFinal, pagamento: pagamentoPrincipal || 'Dinheiro'
       }).catch((e) => console.error(`[webhook-contabil] venda=${venda.id}:`, e.message));

@@ -68,4 +68,19 @@ async function dispararWebhook(pool, empresaId, evento, dados) {
   });
 }
 
-module.exports = { dispararWebhook, validarUrlWebhook };
+// Erros transitórios que justificam retry (rede/timeout); erros permanentes relançam imediatamente
+const TRANSIENT_ERRORS = new Set(['AbortError', 'TypeError']);
+
+async function dispararWebhookComRetry(pool, empresaId, evento, dados) {
+  try {
+    await dispararWebhook(pool, empresaId, evento, dados);
+  } catch (e) {
+    if (!TRANSIENT_ERRORS.has(e.name)) throw e;
+    // 1 retry após 5s para falhas transitórias (timeout, queda momentânea de rede)
+    await new Promise((r) => setTimeout(r, 5000));
+    console.warn(`[webhook-contabil] retry evento=${evento} empresa=${empresaId}`);
+    await dispararWebhook(pool, empresaId, evento, dados);
+  }
+}
+
+module.exports = { dispararWebhook, dispararWebhookComRetry, validarUrlWebhook };
