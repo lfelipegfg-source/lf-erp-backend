@@ -185,18 +185,16 @@ module.exports = ({
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
 
-      const { usuario_id, status, periodo } = req.query;
+      const { usuario_id, status } = req.query;
+      const { dataInicial, dataFinal } = obterPeriodo(req);
       const params = [emp.id];
       let where = 'WHERE c.empresa_id = $1';
       let idx = 2;
 
-      if (usuario_id) { where += ` AND c.usuario_id = $${idx++}`; params.push(Number(usuario_id)); }
-      if (status)     { where += ` AND c.status = $${idx++}`;     params.push(status); }
-      if (periodo) {
-        const { dataInicio, dataFim } = obterPeriodo(periodo, req.query.data_inicio, req.query.data_fim);
-        where += ` AND c.criado_em >= $${idx++} AND c.criado_em <= $${idx++}`;
-        params.push(dataInicio, dataFim);
-      }
+      if (usuario_id)  { where += ` AND c.usuario_id = $${idx++}`;         params.push(Number(usuario_id)); }
+      if (status)      { where += ` AND c.status = $${idx++}`;              params.push(status); }
+      if (dataInicial) { where += ` AND DATE(c.criado_em) >= $${idx++}`;    params.push(dataInicial); }
+      if (dataFinal)   { where += ` AND DATE(c.criado_em) <= $${idx++}`;    params.push(dataFinal); }
 
       const result = await pool.query(
         `SELECT c.*,
@@ -228,15 +226,13 @@ module.exports = ({
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
 
-      const { periodo } = req.query;
+      const { dataInicial, dataFinal } = obterPeriodo(req);
       const params = [emp.id];
       let filtro = '';
+      let idx = 2;
 
-      if (periodo) {
-        const { dataInicio, dataFim } = obterPeriodo(periodo, req.query.data_inicio, req.query.data_fim);
-        filtro = ` AND c.criado_em >= $2 AND c.criado_em <= $3`;
-        params.push(dataInicio, dataFim);
-      }
+      if (dataInicial) { filtro += ` AND DATE(c.criado_em) >= $${idx++}`; params.push(dataInicial); }
+      if (dataFinal)   { filtro += ` AND DATE(c.criado_em) <= $${idx++}`; params.push(dataFinal); }
 
       const result = await pool.query(
         `SELECT
