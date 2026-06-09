@@ -96,11 +96,12 @@ ${filtroEmpresa}
         dataFinal
       });
 
-      sql += ` ORDER BY m.id DESC`;
+      sql += ` ORDER BY m.id DESC LIMIT 2000`;
 
       const result = await pool.query(sql, params);
+      const truncado = result.rows.length === 2000;
 
-      return res.json({ sucesso: true, dados: result.rows.map(normalizarMov) });
+      return res.json({ sucesso: true, dados: result.rows.map(normalizarMov), truncado });
     } catch (error) {
       console.error('Erro real ao buscar movimentações:', error);
       return erro(res, 500, 'Erro ao buscar movimentações de estoque');

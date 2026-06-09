@@ -113,21 +113,22 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       where += adicionarFiltroPeriodo({ campo: 'c.data', params, dataInicial, dataFinal, castDate: false });
 
       const result = await pool.query(
-        `SELECT c.id, c.data, c.fornecedor_nome, c.subtotal, c.desconto, c.total,
+        `SELECT c.id, c.data, f.nome AS fornecedor_nome, c.total,
                 c.status, c.observacao,
                 COUNT(ci.id) AS qtd_itens
          FROM compras c
+         LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
          LEFT JOIN compra_itens ci ON ci.compra_id = c.id
          ${where}
-         GROUP BY c.id
+         GROUP BY c.id, f.nome
          ORDER BY c.data, c.id`,
         params
       );
 
-      const header = csvRow(['ID','Data','Fornecedor','Subtotal','Desconto','Total','Status','Qtd Itens','Observação']);
+      const header = csvRow(['ID','Data','Fornecedor','Total','Status','Qtd Itens','Observação']);
       const linhas = result.rows.map((r) => csvRow([
         r.id, dataBR(r.data), r.fornecedor_nome,
-        brlNum(r.subtotal), brlNum(r.desconto), brlNum(r.total),
+        brlNum(r.total),
         r.status, r.qtd_itens, r.observacao
       ]));
 
@@ -152,18 +153,20 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       where += adicionarFiltroPeriodo({ campo: 'data_vencimento', params, dataInicial, dataFinal, castDate: false });
 
       const result = await pool.query(
-        `SELECT id, data_vencimento, data_pagamento, cliente_nome, descricao,
-                parcela, total_parcelas, valor, valor_pago, status, forma_pagamento, observacao
+        `SELECT id, data_vencimento, data_pagamento, cliente_nome,
+                parcela, total_parcelas, valor,
+                CASE WHEN data_pagamento IS NOT NULL THEN valor ELSE 0 END AS valor_pago,
+                status, forma_pagamento, observacao
          FROM contas_receber
          ${where}
          ORDER BY data_vencimento, id`,
         params
       );
 
-      const header = csvRow(['ID','Vencimento','Pagamento','Cliente','Descrição','Parcela','Total Parcelas','Valor','Valor Pago','Status','Forma Pagamento','Observação']);
+      const header = csvRow(['ID','Vencimento','Pagamento','Cliente','Parcela','Total Parcelas','Valor','Valor Pago','Status','Forma Pagamento','Observação']);
       const linhas = result.rows.map((r) => csvRow([
         r.id, dataBR(r.data_vencimento), dataBR(r.data_pagamento),
-        r.cliente_nome, r.descricao, r.parcela, r.total_parcelas,
+        r.cliente_nome, r.parcela, r.total_parcelas,
         brlNum(r.valor), brlNum(r.valor_pago), r.status, r.forma_pagamento, r.observacao
       ]));
 
@@ -188,8 +191,10 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       where += adicionarFiltroPeriodo({ campo: 'data_vencimento', params, dataInicial, dataFinal, castDate: false });
 
       const result = await pool.query(
-        `SELECT id, data_vencimento, data_pagamento, fornecedor, descricao,
-                parcela, total_parcelas, valor, valor_pago, status, forma_pagamento, categoria, observacao
+        `SELECT id, data_vencimento, data_pagamento, fornecedor_nome, descricao,
+                parcela, total_parcelas, valor,
+                CASE WHEN data_pagamento IS NOT NULL THEN valor ELSE 0 END AS valor_pago,
+                status, forma_pagamento, categoria, observacao
          FROM contas_pagar
          ${where}
          ORDER BY data_vencimento, id`,
@@ -199,7 +204,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       const header = csvRow(['ID','Vencimento','Pagamento','Fornecedor','Descrição','Parcela','Total Parcelas','Valor','Valor Pago','Status','Forma Pagamento','Categoria','Observação']);
       const linhas = result.rows.map((r) => csvRow([
         r.id, dataBR(r.data_vencimento), dataBR(r.data_pagamento),
-        r.fornecedor, r.descricao, r.parcela, r.total_parcelas,
+        r.fornecedor_nome, r.descricao, r.parcela, r.total_parcelas,
         brlNum(r.valor), brlNum(r.valor_pago), r.status, r.forma_pagamento, r.categoria, r.observacao
       ]));
 
