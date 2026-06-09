@@ -2237,6 +2237,28 @@ app.post('/login', loginRateLimiter, async (req, res) => {
   }
 });
 
+app.post('/auth/refresh', auth, (req, res) => {
+  const u = req.user;
+  const novoToken = jwt.sign(
+    {
+      id:               u.id,
+      usuario:          u.usuario,
+      tipo:             u.tipo,
+      is_saas_owner:    Boolean(u.is_saas_owner),
+      empresa:          u.empresa          || null,
+      empresa_id:       u.empresa_id       || null,
+      empresa_nome:     u.empresa_nome     || null,
+      nome_completo:    u.nome_completo    || u.usuario,
+      plano_codigo:     u.plano_codigo     || null,
+      plano_nome:       u.plano_nome       || null,
+      assinatura_status: u.assinatura_status || null
+    },
+    SECRET,
+    { expiresIn: '12h' }
+  );
+  res.json({ sucesso: true, dados: { token: novoToken, authToken: novoToken } });
+});
+
 app.post('/logout', auth, (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
