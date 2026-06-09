@@ -2022,7 +2022,12 @@ async function initDb() {
   }
 
   // ================= USUÁRIO SAAS OWNER =================
-  const ownerHash = await bcrypt.hash('Lfgl.1308', 10);
+  const ownerSenhaEnv = process.env.SAAS_OWNER_SENHA;
+  if (!ownerSenhaEnv) {
+    console.warn('[init] SAAS_OWNER_SENHA não definida — senha do owner não será alterada');
+    return;
+  }
+  const ownerHash = await bcrypt.hash(ownerSenhaEnv, 10);
 
   // Migra nome antigo 'Lfelipeg' → 'lfelipeg' se existir
   await pool.query(
@@ -2076,7 +2081,7 @@ app.get('/', (req, res) => {
 
 app.post('/reset-dados', auth, async (req, res) => {
   try {
-    if (req.user.tipo !== 'admin') {
+    if (!req.user.is_saas_owner) {
       return jsonErro(res, 403, 'Sem permissão');
     }
 
@@ -3189,6 +3194,9 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
+    const empresaResolvida = await validarAcessoEmpresa(req, req.user.empresa || null);
+    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
+
     const compraResult = await pool.query(
       `
       SELECT
@@ -3197,8 +3205,9 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
       FROM compras c
       LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
       WHERE c.id = $1
+        AND (c.empresa_id = $2 OR (c.empresa_id IS NULL AND c.empresa = $3))
       `,
-      [id]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     if (compraResult.rowCount === 0) {
@@ -3206,11 +3215,6 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
     }
 
     const compra = compraResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, compra.empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
 
     const itensResult = await pool.query(
       `SELECT * FROM compra_itens WHERE compra_id = $1 ORDER BY id ASC`,

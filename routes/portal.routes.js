@@ -229,11 +229,16 @@ module.exports = ({ auth, pool }) => {
 
       const hash = await bcrypt.hash(String(senha), SALT_ROUNDS);
 
+      const empresaId = req.user.empresa_id || null;
+      const empresaNome = req.user.empresa || null;
+
       const r = await pool.query(
-        `UPDATE clientes SET senha_portal = $1, portal_ativo = true, atualizado_em = NOW()
+        `UPDATE clientes
+         SET senha_portal = $1, portal_ativo = true, atualizado_em = NOW()
          WHERE id = $2
+           AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
          RETURNING id, nome, portal_ativo`,
-        [hash, clienteId]
+        [hash, clienteId, empresaId, empresaNome]
       );
 
       if (r.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
@@ -252,12 +257,16 @@ module.exports = ({ auth, pool }) => {
     try {
       const clienteId = Number(req.params.id);
 
+      const empresaId = req.user.empresa_id || null;
+      const empresaNome = req.user.empresa || null;
+
       const r = await pool.query(
         `UPDATE clientes
          SET portal_ativo = NOT portal_ativo, atualizado_em = NOW()
          WHERE id = $1
+           AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
          RETURNING id, nome, portal_ativo`,
-        [clienteId]
+        [clienteId, empresaId, empresaNome]
       );
 
       if (r.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
