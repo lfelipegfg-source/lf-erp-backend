@@ -1292,6 +1292,7 @@ async function criarParcelasContasReceber({
         parcela,
         total_parcelas,
         valor,
+        valor_original,
         data_vencimento,
         data_pagamento,
         status,
@@ -1301,7 +1302,7 @@ async function criarParcelasContasReceber({
         criado_em,
         atualizado_em
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, 'pendente', $10, $11, $12, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, NULL, 'pendente', $10, $11, $12, NOW(), NOW())
       RETURNING *`,
       [
         empresa,
@@ -1789,6 +1790,11 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_receber_id INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS valor_original NUMERIC(12,2);
+    ALTER TABLE contas_pagar   ADD COLUMN IF NOT EXISTS valor_original NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -3932,6 +3938,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, async (req, res) =
       `
       UPDATE contas_receber
       SET status = $1,
+          valor_original = COALESCE(valor_original, valor),
           valor = $2,
           data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
@@ -4221,14 +4228,12 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       return jsonErro(res, 400, 'Este recebimento parcial já foi estornado');
     }
 
-    const match = String(lancamento.descricao || '').match(/conta #(\d+)/i);
+    const contaId = Number(lancamento.conta_receber_id || 0);
 
-    if (!match) {
+    if (!contaId) {
       await client.query('ROLLBACK');
       return jsonErro(res, 400, 'Não foi possível identificar a conta vinculada');
     }
-
-    const contaId = Number(match[1]);
 
     const contaResult = await client.query(
       `
@@ -4460,6 +4465,7 @@ app.post('/contas-receber/manual', auth, writeRateLimiter, async (req, res) => {
   cliente_nome,
   observacao,
   valor,
+  valor_original,
   status,
   parcela,
   total_parcelas,
@@ -4468,7 +4474,7 @@ app.post('/contas-receber/manual', auth, writeRateLimiter, async (req, res) => {
   atualizado_em
 )
 VALUES (
-  $1,$2,$3,$4,$5,$6,
+  $1,$2,$3,$4,$5,$6,$6,
   'pendente',
   1,
   1,
@@ -4877,26 +4883,36 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
     }
 
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
+    const valorAtualCP = normalizarDecimal(conta.valor || 0);
+    const valorPagoCP = normalizarDecimal(req.body?.valor_pago || 0);
+    const valorPagoFinal = valorPagoCP > 0 ? Math.min(valorPagoCP, valorAtualCP) : valorAtualCP;
+    const pagamentoTotalCP = valorPagoFinal >= valorAtualCP;
+    const novoValorCP = pagamentoTotalCP ? valorAtualCP : Number((valorAtualCP - valorPagoFinal).toFixed(2));
+    const novoStatusCP = pagamentoTotalCP ? 'pago' : 'parcial';
 
     await client.query(
       `
       UPDATE contas_pagar
-      SET status = 'pago',
-          data_pagamento = $1,
+      SET status = $1,
+          valor_original = COALESCE(valor_original, valor),
+          valor = $2,
+          data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
-      WHERE id = $2
+      WHERE id = $4
       `,
-      [dataPagamento, id]
+      [novoStatusCP, novoValorCP, dataPagamento, id]
     );
 
     await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
       empresa_id: empresaResolvida.id,
-      tipo: 'baixa',
+      tipo: pagamentoTotalCP ? 'baixa' : 'baixa_parcial',
       entidade: 'contas_pagar',
       entidade_id: id,
-      descricao: `Baixa total da conta a pagar #${id}`,
-      valor: Number(conta.valor || 0),
+      descricao: pagamentoTotalCP
+        ? `Baixa total da conta a pagar #${id}`
+        : `Baixa parcial da conta a pagar #${id}`,
+      valor: valorPagoFinal,
       usuario_id: req.user?.id
     });
 
@@ -4904,7 +4920,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
 
     // Notifica integração contábil em background
     dispararWebhookComRetry(pool, empresaResolvida.id, 'pagamento.registrado', {
-      id, valor: Number(conta.valor || 0), fornecedor: conta.fornecedor
+      id, valor: valorPagoFinal, fornecedor: conta.fornecedor
     }).catch((e) => console.error(`[webhook-contabil] pagamento=${id}:`, e.message));
 
     await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
@@ -4915,6 +4931,10 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
         *,
         CASE
           WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial'
+            AND data_vencimento IS NOT NULL
+            AND data_vencimento < $2 THEN 'parcial_atrasado'
+          WHEN LOWER(COALESCE(status, 'pendente')) = 'parcial' THEN 'parcial'
           WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
@@ -4928,10 +4948,11 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
 
     res.json({
       sucesso: true,
-      mensagem: 'Conta paga com sucesso',
+      mensagem: pagamentoTotalCP ? 'Conta paga com sucesso' : 'Baixa parcial registrada com sucesso',
       conta: {
         ...contaAtualizada,
         valor: Number(contaAtualizada.valor || 0),
+        valor_original: Number(contaAtualizada.valor_original || 0),
         parcela: Number(contaAtualizada.parcela || 1),
         total_parcelas: Number(contaAtualizada.total_parcelas || 1),
         status: contaAtualizada.status_exibicao
