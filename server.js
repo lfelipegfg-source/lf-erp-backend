@@ -152,7 +152,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : ['https://lf-erp-frontend.vercel.app'];
 app.use(cors({ origin: allowedOrigins }));
-app.use(express.json({ limit: '50mb' }));   // OFX/CSV/XML de bancos podem ter 5-10MB
+app.use(express.json({ limit: '1mb' }));
+const jsonUpload = express.json({ limit: '50mb' }); // usado só em rotas de importação
 
 // S-2: Headers de segurança HTTP + redirect HTTPS em produção
 app.use((req, res, next) => {
@@ -208,7 +209,7 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: true } : false,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000
@@ -930,15 +931,36 @@ function validarForcaSenha(senha) {
   return { valido: true };
 }
 
-const tokenBlacklist = new Map(); // token → timestamp de revogação
+const tokenBlacklist = new Map(); // hash → timestamp de revogação (L1 cache)
 const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
+
+function _tokenHash(tok) {
+  return crypto.createHash('sha256').update(tok).digest('hex');
+}
 
 setInterval(() => {
   const limite = Date.now() - JWT_EXPIRY_MS;
-  for (const [token, ts] of tokenBlacklist) {
-    if (ts < limite) tokenBlacklist.delete(token);
+  for (const [hash, ts] of tokenBlacklist) {
+    if (ts < limite) tokenBlacklist.delete(hash);
   }
+  pool.query('DELETE FROM jwt_blacklist WHERE expires_at < NOW()').catch(() => {});
 }, 60 * 60 * 1000).unref();
+
+async function loadBlacklistFromDb() {
+  try {
+    const result = await pool.query(
+      `SELECT token_hash, revoked_at FROM jwt_blacklist WHERE expires_at > NOW()`
+    );
+    for (const row of result.rows) {
+      tokenBlacklist.set(row.token_hash, new Date(row.revoked_at).getTime());
+    }
+    if (result.rowCount > 0) {
+      console.log(`[blacklist] ${result.rowCount} tokens carregados do banco`);
+    }
+  } catch (e) {
+    console.warn('[blacklist] Falha ao carregar do banco:', e.message);
+  }
+}
 
 function auth(req, res, next) {
   let authHeader = req.headers.authorization;
@@ -962,7 +984,7 @@ function auth(req, res, next) {
     return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
   }
 
-  if (tokenBlacklist.has(token)) {
+  if (tokenBlacklist.has(_tokenHash(token))) {
     return res.status(403).json({ sucesso: false, erro: 'Token revogado', codigo: 'TOKEN_REVOGADO' });
   }
 
@@ -2077,6 +2099,15 @@ async function initDb() {
     [premiumPlanoId]
   );
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS jwt_blacklist (
+      token_hash TEXT PRIMARY KEY,
+      revoked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMP NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jwt_blacklist_expires ON jwt_blacklist (expires_at);
+  `);
+
   await atualizarStatusContasReceberGlobal();
   await atualizarStatusContasPagarGlobal();
 }
@@ -2248,32 +2279,59 @@ app.post('/login', loginRateLimiter, async (req, res) => {
   }
 });
 
-app.post('/auth/refresh', auth, (req, res) => {
-  const u = req.user;
-  const novoToken = jwt.sign(
-    {
-      id:               u.id,
-      usuario:          u.usuario,
-      tipo:             u.tipo,
-      is_saas_owner:    Boolean(u.is_saas_owner),
-      empresa:          u.empresa          || null,
-      empresa_id:       u.empresa_id       || null,
-      empresa_nome:     u.empresa_nome     || null,
-      nome_completo:    u.nome_completo    || u.usuario,
-      plano_codigo:     u.plano_codigo     || null,
-      plano_nome:       u.plano_nome       || null,
-      assinatura_status: u.assinatura_status || null
-    },
-    SECRET,
-    { expiresIn: '12h' }
-  );
-  res.json({ sucesso: true, dados: { token: novoToken, authToken: novoToken } });
+app.post('/auth/refresh', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.*, e.id AS empresa_id_real, e.nome AS empresa_nome_real,
+              e.assinatura_status, e.bloqueada,
+              p.codigo AS plano_codigo, p.nome AS plano_nome
+       FROM usuarios u
+       LEFT JOIN empresas e ON e.id = u.empresa_id
+       LEFT JOIN planos p ON p.id = e.plano_id
+       WHERE u.id = $1 AND u.ativo = true
+       LIMIT 1`,
+      [req.user.id]
+    );
+    if (result.rowCount === 0) return jsonErro(res, 403, 'Usuário inativo ou não encontrado');
+    const u = result.rows[0];
+    if (!u.is_saas_owner && u.bloqueada) return jsonErro(res, 403, 'Empresa bloqueada');
+    const novoToken = jwt.sign(
+      {
+        id:               u.id,
+        usuario:          u.usuario,
+        tipo:             u.tipo,
+        is_saas_owner:    Boolean(u.is_saas_owner),
+        empresa:          u.empresa               || null,
+        empresa_id:       u.empresa_id_real        || u.empresa_id || null,
+        empresa_nome:     u.empresa_nome_real      || u.empresa    || null,
+        nome_completo:    u.nome_completo          || u.usuario,
+        plano_codigo:     u.plano_codigo           || null,
+        plano_nome:       u.plano_nome             || null,
+        assinatura_status: u.assinatura_status     || null
+      },
+      SECRET,
+      { expiresIn: '12h' }
+    );
+    res.json({ sucesso: true, dados: { token: novoToken, authToken: novoToken } });
+  } catch (error) {
+    console.error('Erro ao renovar token:', error);
+    jsonErro(res, 500, 'Erro ao renovar token');
+  }
 });
 
 app.post('/logout', auth, (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
-  if (token) tokenBlacklist.set(token, Date.now());
+  if (token) {
+    const hash = _tokenHash(token);
+    tokenBlacklist.set(hash, Date.now());
+    const expiresAt = new Date(Date.now() + JWT_EXPIRY_MS).toISOString();
+    pool.query(
+      `INSERT INTO jwt_blacklist (token_hash, revoked_at, expires_at)
+       VALUES ($1, NOW(), $2) ON CONFLICT DO NOTHING`,
+      [hash, expiresAt]
+    ).catch((e) => console.warn('[blacklist] Falha ao persistir logout:', e.message));
+  }
 
   registrarAuditoria({
     empresa: req.empresa_nome || null,
@@ -6961,7 +7019,7 @@ function parseCSV(texto) {
 }
 
 // POST /conciliacao/importar
-app.post('/conciliacao/importar', auth, writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/importar', jsonUpload, auth, writeRateLimiter, async (req, res) => {
   try {
     const { conteudo, tipo, nome, conta } = req.body;
     if (!conteudo || !tipo || !nome) return jsonErro(res, 400, 'Campos obrigatórios: conteudo, tipo, nome');
@@ -7481,6 +7539,7 @@ async function start() {
   try {
     await initDb();
     await runMigrations(pool);
+    await loadBlacklistFromDb();
     if (_sentryDsn) Sentry.setupExpressErrorHandler(app);
     app.listen(PORT, () => {
       console.log(`LF ERP Backend Online 🚀 porta ${PORT}`);

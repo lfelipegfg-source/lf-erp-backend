@@ -31,6 +31,19 @@ module.exports = ({ auth, pool }) => {
     return res.status(status).json({ sucesso: false, erro: msg });
   }
 
+  // ── Rate limiter por IP para login do portal (10 req/min) ─────────────────
+  const _portalLoginBuckets = new Map();
+  function portalLoginRateLimiter(req, res, next) {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    const bucket = _portalLoginBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+    if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
+    bucket.count++;
+    _portalLoginBuckets.set(key, bucket);
+    if (bucket.count > 10) return erro(res, 429, 'Muitas tentativas. Aguarde 1 minuto.');
+    next();
+  }
+
   // ── Middleware exclusivo para tokens de cliente ───────────────────────────
   function authCliente(req, res, next) {
     const header = req.headers.authorization || '';
@@ -50,7 +63,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // POST /portal/login
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/login', async (req, res) => {
+  router.post('/login', portalLoginRateLimiter, async (req, res) => {
     try {
       const { cpf_cnpj, senha } = req.body;
       if (!cpf_cnpj || !senha) return erro(res, 400, 'Informe CPF/CNPJ e senha');
@@ -223,8 +236,8 @@ module.exports = ({ auth, pool }) => {
       const clienteId = Number(req.params.id);
       const { senha } = req.body;
 
-      if (!senha || String(senha).length < 4) {
-        return erro(res, 400, 'A senha deve ter ao menos 4 caracteres');
+      if (!senha || String(senha).length < 8) {
+        return erro(res, 400, 'A senha deve ter ao menos 8 caracteres');
       }
 
       const hash = await bcrypt.hash(String(senha), SALT_ROUNDS);

@@ -31,6 +31,24 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
     return { page, limit, offset: (page - 1) * limit };
   }
 
+  // ── Rate limiter por empresa (100 req/min) ────────────────────────────────
+
+  const _apiRateBuckets = new Map();
+  function apiRateLimiter(req, res, next) {
+    const key = req.apiEmpresaId || req.ip;
+    const now = Date.now();
+    const bucket = _apiRateBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+    if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
+    bucket.count++;
+    _apiRateBuckets.set(key, bucket);
+    if (bucket.count > 100) return erro(res, 429, 'Limite de requisições atingido. Aguarde 1 minuto.');
+    next();
+  }
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, b] of _apiRateBuckets) { if (now > b.resetAt + 120_000) _apiRateBuckets.delete(k); }
+  }, 5 * 60_000).unref();
+
   // ── Middleware de autenticação via API Key ────────────────────────────────
 
   async function authApiKey(req, res, next) {
@@ -62,7 +80,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── GET /api/v1/produtos ──────────────────────────────────────────────────
 
-  router.get('/produtos', authApiKey, async (req, res) => {
+  router.get('/produtos', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const { page, limit, offset } = paginacao(req);
       const { busca, categoria } = req.query;
@@ -96,7 +114,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
     }
   });
 
-  router.get('/produtos/:id', authApiKey, async (req, res) => {
+  router.get('/produtos/:id', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT p.*,
@@ -116,7 +134,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── GET /api/v1/clientes ──────────────────────────────────────────────────
 
-  router.get('/clientes', authApiKey, async (req, res) => {
+  router.get('/clientes', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const { page, limit, offset } = paginacao(req);
       const { busca } = req.query;
@@ -142,7 +160,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
     }
   });
 
-  router.get('/clientes/:id', authApiKey, async (req, res) => {
+  router.get('/clientes/:id', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT c.*,
@@ -162,7 +180,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── GET /api/v1/vendas ────────────────────────────────────────────────────
 
-  router.get('/vendas', authApiKey, async (req, res) => {
+  router.get('/vendas', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const { page, limit, offset } = paginacao(req);
       const { inicio, fim, status } = req.query;
@@ -192,7 +210,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── POST /api/v1/vendas ───────────────────────────────────────────────────
 
-  router.post('/vendas', authApiKey, writeRateLimiter, async (req, res) => {
+  router.post('/vendas', authApiKey, apiRateLimiter, writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
     try {
       const eId   = req.apiEmpresaId;
@@ -262,7 +280,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── GET /api/v1/estoque ───────────────────────────────────────────────────
 
-  router.get('/estoque', authApiKey, async (req, res) => {
+  router.get('/estoque', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const { page, limit, offset } = paginacao(req);
       const { abaixo_minimo } = req.query;
