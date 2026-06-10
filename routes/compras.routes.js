@@ -1,4 +1,5 @@
 const express = require('express');
+const { requirePermissao } = require('../utils/permissoes');
 
 const {
   normalizarDecimal,
@@ -35,7 +36,7 @@ module.exports = function ({
     });
   }
 
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
     const client = await pool.connect();
 
     try {
@@ -344,7 +345,7 @@ module.exports = function ({
     }
   });
 
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'editar'), async (req, res) => {
     const client = await pool.connect();
     try {
       if (!podeGerenciarCompras(req)) return erro(res, 403, 'Sem permissão para compras');
@@ -614,7 +615,7 @@ module.exports = function ({
     '14': 'duplicata mercantil', '15': 'boleto', '17': 'pix', '90': 'sem pagamento', '99': 'outros'
   };
 
-  router.post('/importar-xml', auth, async (req, res) => {
+  router.post('/importar-xml', auth, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');

@@ -1,3 +1,5 @@
+const { requirePermissao } = require('../utils/permissoes');
+
 module.exports = function ({
   auth,
   writeRateLimiter,
@@ -36,7 +38,7 @@ module.exports = function ({
 
   // ================= FORNECEDORES =================
 
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'fornecedores', 'criar'), async (req, res) => {
     try {
       const { empresa, nome, cnpj, telefone, email, endereco, observacao } = req.body;
 
@@ -109,7 +111,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/:empresa', auth, async (req, res) => {
+  router.get('/:empresa', auth, requirePermissao(pool, 'fornecedores', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -207,7 +209,7 @@ module.exports = function ({
     }
   });
 
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'fornecedores', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
 
@@ -287,7 +289,7 @@ module.exports = function ({
     }
   });
 
-  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, requirePermissao(pool, 'fornecedores', 'deletar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresa = req.query.empresa || req.body.empresa || null;

@@ -1,3 +1,5 @@
+const { requirePermissao } = require('../utils/permissoes');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -52,7 +54,7 @@ module.exports = ({
 
   // ================= CLIENTES =================
 
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'clientes', 'criar'), async (req, res) => {
     try {
       const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
 
@@ -129,7 +131,7 @@ module.exports = ({
 
   // ── GET /clientes/segmentacao-abc ─────────────────────────────────────────
   // ── Extrato financeiro do cliente ────────────────────────────────────────────
-  router.get('/:id/extrato', auth, async (req, res) => {
+  router.get('/:id/extrato', auth, requirePermissao(pool, 'clientes', 'ver'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!id) return erro(res, 400, 'Cliente inválido');
@@ -214,7 +216,7 @@ module.exports = ({
   //   B = entre 80% e 95%
   //   C = abaixo de 95%
 
-  router.get('/segmentacao-abc', auth, async (req, res) => {
+  router.get('/segmentacao-abc', auth, requirePermissao(pool, 'clientes', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -298,7 +300,7 @@ module.exports = ({
     }
   });
 
-  router.get('/:empresa', auth, async (req, res) => {
+  router.get('/:empresa', auth, requirePermissao(pool, 'clientes', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -413,7 +415,7 @@ module.exports = ({
     }
   });
 
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { empresa, nome, endereco, telefone, nascimento, cpf } = req.body;
@@ -485,7 +487,7 @@ module.exports = ({
     }
   });
 
-  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, requirePermissao(pool, 'clientes', 'deletar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresa = req.query.empresa || req.body.empresa || null;

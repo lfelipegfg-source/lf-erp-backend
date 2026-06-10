@@ -1,3 +1,5 @@
+const { requirePermissao } = require('../utils/permissoes');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -34,7 +36,7 @@ module.exports = ({
 
   // ================= MOVIMENTAÇÕES DE ESTOQUE =================
 
-  router.get('/movimentacoes/:empresa', auth, async (req, res) => {
+  router.get('/movimentacoes/:empresa', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
 
@@ -108,7 +110,7 @@ ${filtroEmpresa}
     }
   });
 
-  router.post('/ajuste', auth, writeRateLimiter, async (req, res) => {
+  router.post('/ajuste', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
     const client = await pool.connect();
 
     try {
@@ -199,7 +201,7 @@ ${filtroEmpresa}
   });
 
   // ── Sugestão automática de compra ────────────────────────────────────────────
-  router.get('/sugestao-compra', auth, async (req, res) => {
+  router.get('/sugestao-compra', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
       if (!empresaResolvida) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });

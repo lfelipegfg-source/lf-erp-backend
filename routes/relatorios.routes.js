@@ -33,7 +33,7 @@ module.exports = function ({
     return true;
   }
 
-  router.get('/financeiro/resumo/:empresa', auth, async (req, res) => {
+  router.get('/financeiro/resumo/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -320,7 +320,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
+  router.get('/financeiro/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -569,7 +569,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/financeiro/contas-receber/:empresa', auth, async (req, res) => {
+  router.get('/financeiro/contas-receber/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -641,7 +641,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/financeiro/contas-pagar/:empresa', auth, async (req, res) => {
+  router.get('/financeiro/contas-pagar/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -887,7 +887,7 @@ MAX(v.data) AS ultima_venda
   });
 
   // ── INADIMPLÊNCIA ─────────────────────────────────────────────────────────
-  router.get('/inadimplencia/:empresa', auth, async (req, res) => {
+  router.get('/inadimplencia/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -1094,7 +1094,7 @@ MAX(v.data) AS ultima_venda
   });
 
   // ── VENDAS POR VARIAÇÃO DE GRADE ─────────────────────────────────────────
-  router.get('/vendas/por-grade/:empresa', auth, async (req, res) => {
+  router.get('/vendas/por-grade/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);

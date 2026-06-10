@@ -1,3 +1,4 @@
+const { requirePermissao } = require('../utils/permissoes');
 const { resolverPreco } = require('../utils/resolverPreco');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
 const { calcularComissaoVenda } = require('../utils/comissoes');
@@ -402,7 +403,7 @@ module.exports = ({
     }
   }
 
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'criar'), async (req, res) => {
     const client = await pool.connect();
 
     try {
@@ -621,7 +622,7 @@ module.exports = ({
     }
   });
 
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'editar'), async (req, res) => {
     const client = await pool.connect();
 
     try {
@@ -878,7 +879,7 @@ module.exports = ({
     }
   });
 
-  router.patch('/:id/observacao', auth, async (req, res) => {
+  router.patch('/:id/observacao', auth, requirePermissao(pool, 'vendas', 'editar'), async (req, res) => {
     try {
       if (!podeGerenciarVendas(req)) {
         return erro(res, 403, 'Sem permissão para editar vendas');
@@ -966,7 +967,7 @@ module.exports = ({
     }
   });
 
-  router.get('/:empresa', auth, async (req, res) => {
+  router.get('/:empresa', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -1066,7 +1067,7 @@ module.exports = ({
     }
   });
 
-  router.get('/detalhe/:id', auth, async (req, res) => {
+  router.get('/detalhe/:id', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const id = Number(req.params.id);
 
@@ -1155,7 +1156,7 @@ ORDER BY parcela ASC
     }
   });
 
-  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'deletar'), async (req, res) => {
     const client = await pool.connect();
 
     try {

@@ -2611,7 +2611,7 @@ app.get('/empresa/status', auth, async (req, res) => {
 // ================= USUÁRIOS =================
 
 // LISTAR USUÁRIOS
-app.get('/usuarios/:empresa', auth, async (req, res) => {
+app.get('/usuarios/:empresa', auth, requirePermissao(pool, 'usuarios', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
 
@@ -2650,7 +2650,7 @@ app.get('/usuarios/:empresa', auth, async (req, res) => {
 });
 
 // CRIAR USUÁRIO
-app.post('/usuarios', auth, writeRateLimiter, async (req, res) => {
+app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios', 'criar'), async (req, res) => {
   try {
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
 
@@ -2715,7 +2715,7 @@ app.post('/usuarios', auth, writeRateLimiter, async (req, res) => {
 });
 
 // ATUALIZAR USUÁRIO
-app.put('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
+app.put('/usuarios/:id', auth, writeRateLimiter, requirePermissao(pool, 'usuarios', 'editar'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { empresa, empresa_id, nome, usuario, senha, tipo } = req.body;
@@ -2792,7 +2792,7 @@ app.put('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
 });
 
 // EXCLUIR USUÁRIO
-app.delete('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/usuarios/:id', auth, writeRateLimiter, requirePermissao(pool, 'usuarios', 'deletar'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const empresa = req.query.empresa || null;
@@ -2832,7 +2832,7 @@ app.delete('/usuarios/:id', auth, writeRateLimiter, async (req, res) => {
 });
 
 // GET /usuarios/:id/permissoes — retorna permissões do usuário (individuais + defaults do tipo)
-app.get('/usuarios/:id/permissoes', auth, async (req, res) => {
+app.get('/usuarios/:id/permissoes', auth, requirePermissao(pool, 'usuarios', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Sem permissão');
 
@@ -2887,7 +2887,7 @@ app.get('/usuarios/:id/permissoes', auth, async (req, res) => {
 });
 
 // PUT /usuarios/:id/permissoes — grava overrides individuais
-app.put('/usuarios/:id/permissoes', auth, writeRateLimiter, async (req, res) => {
+app.put('/usuarios/:id/permissoes', auth, writeRateLimiter, requirePermissao(pool, 'usuarios', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Sem permissão');
 
@@ -3066,7 +3066,7 @@ app.delete('/lixeira/excluir/:tabela/:id', auth, writeRateLimiter, async (req, r
 
 // ================= COMPRAS =================
 
-app.get('/compras/:empresa', auth, async (req, res) => {
+app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3131,7 +3131,7 @@ app.get('/compras/:empresa', auth, async (req, res) => {
   }
 });
 
-app.delete('/compras/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'deletar'), async (req, res) => {
   const empresa = req.query.empresa || req.body.empresa || null;
   const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -3255,7 +3255,7 @@ app.delete('/compras/:id', auth, writeRateLimiter, async (req, res) => {
   }
 });
 
-app.get('/compras-detalhe/:id', auth, async (req, res) => {
+app.get('/compras-detalhe/:id', auth, requirePermissao(pool, 'compras', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -3315,7 +3315,7 @@ app.get('/compras-detalhe/:id', auth, async (req, res) => {
 });
 
 // ================= LISTAGENS OPERACIONAIS AUXILIARES =================
-app.get('/estoque/resumo/:empresa', auth, async (req, res) => {
+app.get('/estoque/resumo/:empresa', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3452,7 +3452,7 @@ app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
   }
 });
 
-app.get('/contas-receber/:empresa', auth, async (req, res) => {
+app.get('/contas-receber/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3924,7 +3924,7 @@ THEN 'atrasado'
   }
 });
 
-app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, async (req, res) => {
+app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   const id = Number(req.params.id);
   if (!id || isNaN(id)) return jsonErro(res, 400, 'ID inválido');
 
@@ -4159,7 +4159,7 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
   }
 });
 
-app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, async (req, res) => {
+app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -4365,7 +4365,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
   }
 });
 
-app.delete('/contas-receber/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'deletar'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -4455,7 +4455,7 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, async (req, res) => {
 });
 
 // ================= CRIAÇÃO MANUAL DE CONTA A RECEBER =================
-app.post('/contas-receber/manual', auth, writeRateLimiter, async (req, res) => {
+app.post('/contas-receber/manual', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     const {
       empresa,
@@ -4599,7 +4599,7 @@ app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
   }
 });
 
-app.get('/contas-pagar/:empresa', auth, async (req, res) => {
+app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -4883,7 +4883,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => {
+app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   const id = Number(req.params.id);
   if (!id || isNaN(id)) return jsonErro(res, 400, 'ID inválido');
 
@@ -5004,7 +5004,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, async (req, res) => 
 });
 
 // ================= LANÇAMENTOS FINANCEIROS =================
-app.post('/financeiro/lancamentos', auth, writeRateLimiter, async (req, res) => {
+app.post('/financeiro/lancamentos', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5101,7 +5101,7 @@ app.post('/financeiro/lancamentos', auth, writeRateLimiter, async (req, res) => 
   }
 });
 
-app.get('/financeiro/lancamentos/:empresa', auth, async (req, res) => {
+app.get('/financeiro/lancamentos/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -5241,7 +5241,7 @@ app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
   }
 });
 
-app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, res) => {
+app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5331,7 +5331,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, res) 
   }
 });
 
-app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, async (req, res) => {
+app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5372,7 +5372,7 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, async (req
   }
 });
 
-app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'deletar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');

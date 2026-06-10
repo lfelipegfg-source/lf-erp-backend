@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
+const { requirePermissao } = require('../utils/permissoes');
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 
 const { normalizarFormaPagamentoFluxo } = require('../utils/financeiroUtils');
@@ -22,7 +23,7 @@ module.exports = function ({
 
   // ================= FLUXO DE CAIXA =================
 
-  router.get('/fluxo-caixa/:empresa', auth, async (req, res) => {
+  router.get('/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -277,7 +278,7 @@ module.exports = function ({
 
   // ── Cashflow futuro ───────────────────────────────────────────────────────────
   // GET /financeiro/cashflow-futuro?dias=30|60|90
-  router.get('/cashflow-futuro', auth, async (req, res) => {
+  router.get('/cashflow-futuro', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
