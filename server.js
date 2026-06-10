@@ -3550,20 +3550,30 @@ THEN 'atrasado'
       castDate: false
     });
 
-    const pagina = normalizarInt(req.query.page || 0);
-    const limite = Math.min(normalizarInt(req.query.limit || 100), 500);
+    const pagina = Math.max(1, normalizarInt(req.query.page || 1));
+    const limite = Math.min(normalizarInt(req.query.limit || 50), 200);
 
-    let sqlPaginado = sql + ` ORDER BY cr.id DESC`;
+    const filterParamsCR = [...params];
+    const resumoGlobalSqlCR = `
+      SELECT
+        COUNT(*)::int AS total,
+        COALESCE(SUM(q.valor),0)::numeric AS total_valor,
+        COALESCE(SUM(CASE WHEN q.status_exibicao='pago' THEN q.valor ELSE 0 END),0)::numeric AS total_pago,
+        COALESCE(SUM(CASE WHEN q.status_exibicao IN ('atrasado','parcial_atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_atrasado,
+        COALESCE(SUM(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado','parcial_atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_pendente,
+        COUNT(CASE WHEN q.status_exibicao='pago' THEN 1 END)::int AS qtd_pago,
+        COUNT(CASE WHEN q.status_exibicao IN ('atrasado','parcial_atrasado') THEN 1 END)::int AS qtd_atrasado,
+        COUNT(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado','parcial_atrasado') THEN 1 END)::int AS qtd_pendente
+      FROM (${sql}) AS q
+    `;
 
-    if (pagina > 0) {
-      const offset = (pagina - 1) * limite;
-      sqlPaginado += ` LIMIT $${idx} OFFSET $${idx + 1}`;
-      params.push(limite, offset);
-    }
+    const offset = (pagina - 1) * limite;
+    const sqlPaginado = sql + ` ORDER BY cr.id DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    params.push(limite, offset);
 
-    const [result, countResult] = await Promise.all([
+    const [result, resumoGlobalResult] = await Promise.all([
       pool.query(sqlPaginado, params),
-      pagina > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_receber cr WHERE cr.empresa = $1 AND (cr.empresa_id IS NULL OR cr.empresa_id = $2)`, [empresaResolvida.nome, empresaResolvida.id]) : Promise.resolve(null)
+      pool.query(resumoGlobalSqlCR, filterParamsCR)
     ]);
 
     const recebidosParciaisResult = await pool.query(
@@ -3600,53 +3610,29 @@ THEN 'atrasado'
       status: row.status_exibicao
     }));
 
-    const resumo = contas.reduce(
-      (acc, conta) => {
-        acc.total += conta.valor;
+    const rg = resumoGlobalResult.rows[0];
+    const resumo = {
+      total:                 Number(rg.total_valor || 0),
+      total_pago:            Number(rg.total_pago || 0),
+      total_pendente:        Number(rg.total_pendente || 0),
+      total_atrasado:        Number(rg.total_atrasado || 0),
+      total_recebido_parcial: Number(recebidosParciaisResult.rows[0].total || 0),
+      qtd_pago:              Number(rg.qtd_pago || 0),
+      qtd_pendente:          Number(rg.qtd_pendente || 0),
+      qtd_atrasado:          Number(rg.qtd_atrasado || 0)
+    };
 
-        if (conta.status === 'pago') {
-          acc.total_pago += conta.valor;
-          acc.qtd_pago++;
-        } else if (conta.status === 'parcial') {
-          acc.total_pendente += conta.valor;
-          acc.qtd_pendente++;
-        } else if (conta.status === 'parcial_atrasado') {
-          acc.total_atrasado += conta.valor;
-          acc.qtd_atrasado++;
-        } else if (conta.status === 'atrasado') {
-          acc.total_atrasado += conta.valor;
-          acc.qtd_atrasado++;
-        } else {
-          acc.total_pendente += conta.valor;
-          acc.qtd_pendente++;
-        }
-
-        return acc;
-      },
-      {
-        total: 0,
-        total_pago: 0,
-        total_pendente: 0,
-        total_atrasado: 0,
-        total_recebido_parcial: Number(recebidosParciaisResult.rows[0].total || 0),
-        qtd_pago: 0,
-        qtd_pendente: 0,
-        qtd_atrasado: 0
-      }
-    );
-
-    const totalRegistros = countResult ? Number(countResult.rows[0].total || 0) : contas.length;
-    const resposta = { contas, resumo };
-    if (pagina > 0) {
-      resposta.paginacao = {
+    const totalRegistros = Number(rg.total || 0);
+    res.json({
+      contas,
+      resumo,
+      paginacao: {
         pagina,
         limite,
         total: totalRegistros,
-        total_paginas: Math.ceil(totalRegistros / limite)
-      };
-    }
-
-    res.json(resposta);
+        total_paginas: Math.ceil(totalRegistros / limite) || 1
+      }
+    });
   } catch (error) {
     console.error('Erro ao buscar contas a receber:', error);
     jsonErro(res, 500, 'Erro ao buscar contas a receber');
@@ -4701,20 +4687,30 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
       castDate: false
     });
 
-    const paginaCP = normalizarInt(req.query.page || 0);
-    const limiteCP = Math.min(normalizarInt(req.query.limit || 100), 500);
+    const paginaCP = Math.max(1, normalizarInt(req.query.page || 1));
+    const limiteCP = Math.min(normalizarInt(req.query.limit || 50), 200);
 
-    let sqlPaginadoCP = sql + ` ORDER BY cp.id DESC`;
+    const filterParamsCP = [...params];
+    const resumoGlobalSqlCP = `
+      SELECT
+        COUNT(*)::int AS total,
+        COALESCE(SUM(q.valor),0)::numeric AS total_valor,
+        COALESCE(SUM(CASE WHEN q.status_exibicao='pago' THEN q.valor ELSE 0 END),0)::numeric AS total_pago,
+        COALESCE(SUM(CASE WHEN q.status_exibicao='atrasado' THEN q.valor ELSE 0 END),0)::numeric AS total_atrasado,
+        COALESCE(SUM(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_pendente,
+        COUNT(CASE WHEN q.status_exibicao='pago' THEN 1 END)::int AS qtd_pago,
+        COUNT(CASE WHEN q.status_exibicao='atrasado' THEN 1 END)::int AS qtd_atrasado,
+        COUNT(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado') THEN 1 END)::int AS qtd_pendente
+      FROM (${sql}) AS q
+    `;
 
-    if (paginaCP > 0) {
-      const offsetCP = (paginaCP - 1) * limiteCP;
-      sqlPaginadoCP += ` LIMIT $${idx} OFFSET $${idx + 1}`;
-      params.push(limiteCP, offsetCP);
-    }
+    const offsetCP = (paginaCP - 1) * limiteCP;
+    const sqlPaginadoCP = sql + ` ORDER BY cp.id DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    params.push(limiteCP, offsetCP);
 
-    const [resultCP, countResultCP] = await Promise.all([
+    const [resultCP, resumoGlobalResultCP] = await Promise.all([
       pool.query(sqlPaginadoCP, params),
-      paginaCP > 0 ? pool.query(`SELECT COUNT(*) AS total FROM contas_pagar cp WHERE cp.empresa = $1 AND (cp.empresa_id IS NULL OR cp.empresa_id = $2)`, [empresaResolvida.nome, empresaResolvida.id]) : Promise.resolve(null)
+      pool.query(resumoGlobalSqlCP, filterParamsCP)
     ]);
 
     const result = resultCP;
@@ -4728,46 +4724,27 @@ app.get('/contas-pagar/:empresa', auth, async (req, res) => {
       status: row.status_exibicao
     }));
 
-    const resumo = contas.reduce(
-      (acc, conta) => {
-        acc.total += conta.valor;
+    const rgCP = resumoGlobalResultCP.rows[0];
+    const resumo = {
+      total:          Number(rgCP.total_valor || 0),
+      total_pago:     Number(rgCP.total_pago || 0),
+      total_pendente: Number(rgCP.total_pendente || 0),
+      total_atrasado: Number(rgCP.total_atrasado || 0),
+      qtd_pago:       Number(rgCP.qtd_pago || 0),
+      qtd_pendente:   Number(rgCP.qtd_pendente || 0),
+      qtd_atrasado:   Number(rgCP.qtd_atrasado || 0)
+    };
 
-        if (conta.status === 'pago') {
-          acc.total_pago += conta.valor;
-          acc.qtd_pago++;
-        } else if (conta.status === 'atrasado') {
-          acc.total_atrasado += conta.valor;
-          acc.qtd_atrasado++;
-        } else {
-          acc.total_pendente += conta.valor;
-          acc.qtd_pendente++;
-        }
-
-        return acc;
-      },
-      {
-        total: 0,
-        total_pago: 0,
-        total_pendente: 0,
-        total_atrasado: 0,
-        qtd_pago: 0,
-        qtd_pendente: 0,
-        qtd_atrasado: 0
-      }
-    );
-
-    const totalRegistrosCP = countResultCP ? Number(countResultCP.rows[0].total || 0) : contas.length;
-    const respostaCP = { contas, resumo };
-    if (paginaCP > 0) {
-      respostaCP.paginacao = {
+    res.json({
+      contas,
+      resumo,
+      paginacao: {
         pagina: paginaCP,
         limite: limiteCP,
-        total: totalRegistrosCP,
-        total_paginas: Math.ceil(totalRegistrosCP / limiteCP)
-      };
-    }
-
-    res.json(respostaCP);
+        total: Number(rgCP.total || 0),
+        total_paginas: Math.ceil(Number(rgCP.total || 0) / limiteCP) || 1
+      }
+    });
   } catch (error) {
     console.error('Erro ao buscar contas a pagar:', error);
     jsonErro(res, 500, 'Erro ao buscar contas a pagar');
@@ -5189,17 +5166,47 @@ app.get('/financeiro/lancamentos/:empresa', auth, async (req, res) => {
       castDate: false
     });
 
-    sql += ` ORDER BY id DESC`;
+    const paginaL = Math.max(1, normalizarInt(req.query.page || 1));
+    const limiteL = Math.min(normalizarInt(req.query.limit || 50), 200);
+    const filterParamsL = [...params];
 
-    const result = await pool.query(sql, params);
+    const offsetL = (paginaL - 1) * limiteL;
+    const sqlPaginado = sql + ` ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const paramsPaginado = [...params, limiteL, offsetL];
 
-    res.json(
-      result.rows.map((row) => ({
+    const resumoSqlL = `
+      SELECT
+        COUNT(*)::int AS total,
+        COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0)::float AS receitas,
+        COALESCE(SUM(CASE WHEN tipo != 'receita' THEN valor ELSE 0 END), 0)::float AS despesas
+      FROM (${sql}) AS q`;
+
+    const [result, resumoResultL] = await Promise.all([
+      pool.query(sqlPaginado, paramsPaginado),
+      pool.query(resumoSqlL, filterParamsL)
+    ]);
+
+    const rgL = resumoResultL.rows[0];
+    const totalL = Number(rgL.total || 0);
+
+    res.json({
+      itens: result.rows.map((row) => ({
         ...row,
         valor: Number(row.valor || 0),
         recorrente: Boolean(row.recorrente)
-      }))
-    );
+      })),
+      resumo: {
+        receitas: Number(rgL.receitas || 0),
+        despesas: Number(rgL.despesas || 0),
+        saldo: Number(rgL.receitas || 0) - Number(rgL.despesas || 0)
+      },
+      paginacao: {
+        pagina: paginaL,
+        limite: limiteL,
+        total: totalL,
+        total_paginas: Math.ceil(totalL / limiteL) || 1
+      }
+    });
   } catch (error) {
     console.error('Erro ao buscar lançamentos financeiros:', error);
     jsonErro(res, 500, 'Erro ao buscar lançamentos financeiros');
