@@ -218,12 +218,12 @@ ${filtroEmpresa}
            f.nome AS fornecedor_preferencial
          FROM produtos p
          LEFT JOIN fornecedores f ON f.id = p.fornecedor_id AND f.empresa_id = p.empresa_id
-         WHERE p.empresa_id = $1
+         WHERE (p.empresa_id = $1 OR (p.empresa_id IS NULL AND p.empresa = $2))
            AND p.deletado_em IS NULL
            AND p.estoque_minimo > 0
            AND p.estoque < p.estoque_minimo
          ORDER BY (p.estoque_minimo - p.estoque) DESC, p.nome`,
-        [empresaResolvida.id]
+        [empresaResolvida.id, empresaResolvida.nome]
       );
 
       const itens = result.rows.map((r) => ({

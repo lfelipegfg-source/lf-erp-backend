@@ -574,7 +574,8 @@ function normalizarDataISO(valor) {
   }
   const d = new Date(valor);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+  // Usar timezone Fortaleza para evitar shift de data ao converter Date → string
+  return d.toLocaleDateString('sv-SE', { timeZone: 'America/Fortaleza' });
 }
 
 function obterPeriodo(req) {

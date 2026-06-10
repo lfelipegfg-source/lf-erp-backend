@@ -238,7 +238,7 @@ module.exports = ({
              SUM(v.total)        AS receita_total
            FROM vendas v
            LEFT JOIN clientes c ON c.id = v.cliente_id
-           WHERE (v.empresa_id = $1 OR v.empresa = $2)
+           WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
              AND v.cliente_id IS NOT NULL
              ${periodoWhere}
            GROUP BY v.cliente_id, c.nome, v.cliente_nome
