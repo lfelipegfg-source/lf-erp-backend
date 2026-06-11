@@ -452,8 +452,8 @@ module.exports = function ({
 
       // Atualizar compra
       await client.query(
-        `UPDATE compras SET fornecedor_id=$1, data=$2, total=$3, observacao=$4, pagamento=$5, gerar_conta_pagar=$6, atualizado_em=NOW() WHERE id=$7`,
-        [fornecedor_id, normalizarDataISO(data) || hoje(), totalCalculado, observacao || '', pagamentoNormalizado, geraContaPagar, id]
+        `UPDATE compras SET fornecedor_id=$1, data=$2, total=$3, observacao=$4, pagamento=$5, gerar_conta_pagar=$6, atualizado_em=NOW() WHERE id=$7 AND empresa_id=$8`,
+        [fornecedor_id, normalizarDataISO(data) || hoje(), totalCalculado, observacao || '', pagamentoNormalizado, geraContaPagar, id, empresaResolvida.id]
       );
 
       // Aplicar novos itens — pré-busca todos em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)

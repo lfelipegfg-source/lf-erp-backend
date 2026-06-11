@@ -165,8 +165,8 @@ module.exports = ({
       if (gradeId) {
         // Restaura estoque na grade específica
         await client.query(
-          `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2`,
-          [quantidade, gradeId]
+          `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+          [quantidade, gradeId, empresaResolvida.id]
         );
         await client.query(
           `UPDATE produtos SET estoque = (

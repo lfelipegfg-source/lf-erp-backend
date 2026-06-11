@@ -968,8 +968,8 @@ async function loadBlacklistFromDb() {
 function auth(req, res, next) {
   let authHeader = req.headers.authorization;
 
-  // EventSource não suporta headers — aceita token via query param apenas em GETs
-  if (!authHeader && req.method === 'GET' && req.query.token) {
+  // EventSource não suporta headers — aceita token via query param SOMENTE para SSE
+  if (!authHeader && req.method === 'GET' && req.query.token && req.path === '/sse-notificacoes') {
     authHeader = `Bearer ${req.query.token}`;
   }
 
@@ -4001,9 +4001,9 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
           valor = $2,
           data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
-      WHERE id = $4
+      WHERE id = $4 AND (empresa_id = $5 OR empresa = $6)
       `,
-      [novoStatus, novoValor, dataPagamento, id]
+      [novoStatus, novoValor, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     if (!pagamentoTotal) {
@@ -4207,9 +4207,9 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       SET status = $1,
           data_pagamento = NULL,
           atualizado_em = NOW()
-      WHERE id = $2
+      WHERE id = $2 AND (empresa_id = $3 OR empresa = $4)
       `,
-      [novoStatus, id]
+      [novoStatus, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await registrarLogFinanceiro({
@@ -4768,6 +4768,9 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
 app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const _cpEmpresaId = req.is_saas_owner ? null : (req.empresa_id || null);
+    const _cpEmpresaWhere = _cpEmpresaId ? 'AND cp.empresa_id = $3' : '';
+    const _cpParams = _cpEmpresaId ? [id, hoje(), _cpEmpresaId] : [id, hoje()];
 
     const contaResult = await pool.query(
       `
@@ -4779,10 +4782,10 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
             ELSE 'pendente'
           END AS status_exibicao
         FROM contas_pagar cp
-        WHERE cp.id = $1
+        WHERE cp.id = $1 ${_cpEmpresaWhere}
         LIMIT 1
         `,
-      [id, hoje()]
+      _cpParams
     );
 
     if (contaResult.rowCount === 0) {
@@ -5381,9 +5384,9 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
       SET status = 'pago',
           pagamento_data = $1,
           atualizado_em = NOW()
-      WHERE id = $2
+      WHERE id = $2 AND (empresa_id = $3 OR empresa = $4)
       `,
-      [normalizarDataISO(req.body?.pagamento_data) || hoje(), id]
+      [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json({ sucesso: true });
