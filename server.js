@@ -5063,6 +5063,11 @@ app.post('/financeiro/lancamentos', auth, writeRateLimiter, requirePermissao(poo
       return jsonErro(res, 400, 'Tipo de lançamento inválido');
     }
 
+    const _statusesValidos = ['pendente', 'pago', 'atrasado'];
+    const statusFinal = _statusesValidos.includes(String(status || '').toLowerCase())
+      ? String(status).toLowerCase()
+      : 'pendente';
+
     const valorFinal = normalizarDecimal(valor);
     if (valorFinal <= 0) {
       return jsonErro(res, 400, 'Valor inválido');
@@ -5102,7 +5107,7 @@ app.post('/financeiro/lancamentos', auth, writeRateLimiter, requirePermissao(poo
         valorFinal,
         normalizarDataISO(vencimento) || null,
         normalizarDataISO(pagamento_data) || null,
-        status || 'pendente',
+        statusFinal,
         forma_pagamento || '',
         Boolean(recorrente),
         frequencia || '',
