@@ -23,7 +23,8 @@ module.exports = ({
   validarAcessoEmpresa,
   normalizarDecimal,
   normalizarInt,
-  registrarMovimentacaoEstoque
+  registrarMovimentacaoEstoque,
+  requirePermissao
 }) => {
   const router = require('express').Router();
 
@@ -54,7 +55,7 @@ module.exports = ({
   // ─────────────────────────────────────────────
 
   // GET /grades/produto/:produtoId
-  router.get('/produto/:produtoId', auth, async (req, res) => {
+  router.get('/produto/:produtoId', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
     try {
       const produtoId = Number(req.params.produtoId);
       if (!produtoId) return erro(res, 400, 'ID de produto inválido');
@@ -83,7 +84,7 @@ module.exports = ({
   });
 
   // POST /grades/produto/:produtoId
-  router.post('/produto/:produtoId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/produto/:produtoId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'criar'), async (req, res) => {
     try {
       const produtoId = Number(req.params.produtoId);
       if (!produtoId) return erro(res, 400, 'ID de produto inválido');
@@ -105,8 +106,8 @@ module.exports = ({
       // Garante que o produto está em modo grade
       if (!produto.tem_grade) {
         await pool.query(
-          `UPDATE produtos SET tem_grade = true, atualizado_em = NOW() WHERE id = $1`,
-          [produtoId]
+          `UPDATE produtos SET tem_grade = true, atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          [produtoId, empresaResolvida.id]
         );
       }
 
@@ -160,7 +161,7 @@ module.exports = ({
   });
 
   // PUT /grades/:gradeId
-  router.put('/:gradeId', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:gradeId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const gradeId = Number(req.params.gradeId);
       if (!gradeId) return erro(res, 400, 'ID de grade inválido');
@@ -195,7 +196,7 @@ module.exports = ({
            estoque_minimo = COALESCE($8, estoque_minimo),
            ativo         = COALESCE($9, ativo),
            atualizado_em = NOW()
-         WHERE id = $10
+         WHERE id = $10 AND empresa_id = $11
          RETURNING *`,
         [
           atributo1 || null,
@@ -207,7 +208,8 @@ module.exports = ({
           estoqueNovo,
           estoque_minimo != null ? normalizarInt(estoque_minimo) : null,
           ativo != null ? Boolean(ativo) : null,
-          gradeId
+          gradeId,
+          empresaResolvida.id
         ]
       );
 
@@ -238,7 +240,7 @@ module.exports = ({
   });
 
   // DELETE /grades/:gradeId
-  router.delete('/:gradeId', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:gradeId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'deletar'), async (req, res) => {
     try {
       const gradeId = Number(req.params.gradeId);
       if (!gradeId) return erro(res, 400, 'ID de grade inválido');
@@ -265,7 +267,7 @@ module.exports = ({
         return erro(res, 400, 'Não é possível excluir grade com vendas registradas. Inative-a em vez de excluir.');
       }
 
-      await pool.query(`DELETE FROM produto_grades WHERE id = $1`, [gradeId]);
+      await pool.query(`DELETE FROM produto_grades WHERE id = $1 AND empresa_id = $2`, [gradeId, empresaResolvida.id]);
       await sincronizarEstoqueProduto(pool, grade.produto_id, empresaResolvida.id);
 
       return ok(res, { mensagem: 'Grade excluída com sucesso' });
@@ -276,7 +278,7 @@ module.exports = ({
   });
 
   // PATCH /grades/produto/:produtoId/toggle — ativa/desativa modo grade
-  router.patch('/produto/:produtoId/toggle', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/produto/:produtoId/toggle', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const produtoId = Number(req.params.produtoId);
       if (!produtoId) return erro(res, 400, 'ID inválido');
@@ -321,7 +323,7 @@ module.exports = ({
   // ─────────────────────────────────────────────
 
   // GET /grades/atributos
-  router.get('/atributos', auth, async (req, res) => {
+  router.get('/atributos', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT * FROM produto_atributos WHERE empresa_id = $1 ORDER BY nome`,
@@ -335,7 +337,7 @@ module.exports = ({
   });
 
   // POST /grades/atributos
-  router.post('/atributos', auth, writeRateLimiter, async (req, res) => {
+  router.post('/atributos', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'criar'), async (req, res) => {
     try {
       const { nome, valores } = req.body;
       if (!nome) return erro(res, 400, 'Informe o nome do atributo');
@@ -359,7 +361,7 @@ module.exports = ({
   });
 
   // PUT /grades/atributos/:id
-  router.put('/atributos/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/atributos/:id', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { nome, valores } = req.body;
@@ -382,7 +384,7 @@ module.exports = ({
   });
 
   // DELETE /grades/atributos/:id
-  router.delete('/atributos/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/atributos/:id', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'deletar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const result = await pool.query(

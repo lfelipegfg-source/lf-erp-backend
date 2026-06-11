@@ -307,6 +307,17 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   router.post('/p/:token/webhook', async (req, res) => {
     try {
+      const _webhookToken = process.env.ASAAS_WEBHOOK_TOKEN;
+      if (_webhookToken) {
+        const _headerToken = req.headers['asaas-access-token'] || '';
+        const _bufA = Buffer.from(_webhookToken);
+        const _bufB = Buffer.from(_headerToken);
+        if (_bufA.length !== _bufB.length || !crypto.timingSafeEqual(_bufA, _bufB)) {
+          console.warn('[checkout-webhook] Token Asaas invalido — rejeitado IP:', req.ip);
+          return res.status(401).json({ erro: 'Unauthorized' });
+        }
+      }
+
       const { event, payment } = req.body;
 
       if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {

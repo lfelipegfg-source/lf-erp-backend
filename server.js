@@ -386,7 +386,8 @@ app.use(
     validarAcessoEmpresa,
     normalizarDecimal,
     normalizarInt,
-    registrarMovimentacaoEstoque
+    registrarMovimentacaoEstoque,
+    requirePermissao
   })
 );
 
@@ -4255,7 +4256,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
   }
 });
 
-app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimiter, async (req, res) => {
+app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   const lancamentoId = Number(req.params.lancamentoId);
   if (!lancamentoId || isNaN(lancamentoId)) return jsonErro(res, 400, 'ID inválido');
 
@@ -5942,21 +5943,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
   }
 });
 
-app.get('/debug/vendas-colunas', auth, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_name = 'vendas'
-      ORDER BY ordinal_position
-    `);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Erro ao listar colunas de vendas:', error);
-    jsonErro(res, 500, 'Erro ao listar colunas de vendas');
-  }
-});
+// Endpoint de debug removido da produção (expunha schema do banco)
 
 // ================= DASHBOARD =================
 app.get('/dashboard', auth, async (req, res) => {
@@ -6605,7 +6592,7 @@ app.get('/pagamentos/pix/config', auth, async (req, res) => {
 });
 
 // PUT /pagamentos/pix/config
-app.put('/pagamentos/pix/config', auth, writeRateLimiter, async (req, res) => {
+app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -6804,7 +6791,7 @@ app.get('/pagamentos/boleto/config', auth, async (req, res) => {
 });
 
 // PUT /pagamentos/boleto/config
-app.put('/pagamentos/boleto/config', auth, writeRateLimiter, async (req, res) => {
+app.put('/pagamentos/boleto/config', auth, writeRateLimiter, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -6961,9 +6948,31 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
   }
 });
 
+// Verifica o header asaas-access-token nos webhooks Asaas.
+// Se ASAAS_WEBHOOK_TOKEN não estiver configurado, aceita com aviso (ativação gradual).
+// Se estiver configurado, rejeita 401 qualquer requisição sem o token correto.
+function verificarWebhookAsaas(req, res) {
+  const token = process.env.ASAAS_WEBHOOK_TOKEN;
+  if (!token) {
+    console.warn('[webhook-asaas] ASAAS_WEBHOOK_TOKEN nao configurado — validacao de origem desativada');
+    return true;
+  }
+  const headerToken = req.headers['asaas-access-token'] || '';
+  const bufA = Buffer.from(token);
+  const bufB = Buffer.from(headerToken);
+  if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) {
+    console.warn('[webhook-asaas] Token invalido — requisicao rejeitada IP:', req.ip);
+    res.status(401).json({ erro: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
 // POST /pagamentos/boleto/webhook — notificações Asaas (PAYMENT_RECEIVED, etc.)
 app.post('/pagamentos/boleto/webhook', async (req, res) => {
   try {
+    if (!verificarWebhookAsaas(req, res)) return;
+
     const { event, payment } = req.body || {};
 
     if (!payment?.externalReference) return res.status(200).json({ ok: true });
@@ -7246,7 +7255,7 @@ app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
 // ================= CONFIGURAÇÕES =================
 
 // BUSCAR CONFIGURAÇÕES
-app.get('/configuracoes/:empresa', auth, async (req, res) => {
+app.get('/configuracoes/:empresa', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -7269,7 +7278,13 @@ app.get('/configuracoes/:empresa', auth, async (req, res) => {
       return res.json(novo.rows[0]);
     }
 
-    res.json(result.rows[0]);
+    // Mascarar credenciais sensíveis — gerenciadas via endpoints dedicados /pagamentos/*/config
+    const row = { ...result.rows[0] };
+    if (row.pix_client_secret !== undefined) row.pix_client_secret = row.pix_client_secret ? '****' : null;
+    if (row.pix_certificado !== undefined)   row.pix_certificado   = row.pix_certificado   ? 'configurado' : null;
+    if (row.asaas_api_key !== undefined)     row.asaas_api_key     = row.asaas_api_key     ? '****' : null;
+
+    res.json(row);
   } catch (error) {
     console.error('Erro ao buscar configurações:', error);
     jsonErro(res, 500, 'Erro ao buscar configurações');
@@ -7277,7 +7292,7 @@ app.get('/configuracoes/:empresa', auth, async (req, res) => {
 });
 
 // SALVAR CONFIGURAÇÕES
-app.put('/configuracoes', auth, async (req, res) => {
+app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
     const { empresa, nome_empresa, taxa_multa, taxa_juros_dia } = req.body;
 
@@ -7560,6 +7575,8 @@ app.get('/admin/billing/status/:empresaId', auth, apenasAdmin, async (req, res) 
 // POST /admin/billing/webhook-assinatura — Asaas notifica pagamento de assinatura
 app.post('/admin/billing/webhook-assinatura', async (req, res) => {
   try {
+    if (!verificarWebhookAsaas(req, res)) return;
+
     const { event, payment } = req.body || {};
     const ref = payment?.externalReference || '';
 
