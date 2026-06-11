@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const { gerarPixCopiaCola } = require('../utils/pix');
 const { resolverClienteAsaas, criarBoleto } = require('../utils/asaas');
+const { decryptField } = require('../utils/pixCrypto');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }) {
   const router = require('express').Router();
@@ -267,7 +268,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       if (!link.asaas_api_key) return erro(res, 400, 'Boleto não disponível para este link');
 
-      const apiKey  = link.asaas_api_key;
+      const apiKey  = decryptField(link.asaas_api_key);
       const sandbox = link.asaas_sandbox !== false;
 
       const { nome, email, telefone } = req.body;

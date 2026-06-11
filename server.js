@@ -6800,7 +6800,7 @@ async function getAsaasConfig(empresaResolvida) {
   );
   const row = cfg.rows[0] || {};
   return {
-    apiKey:  row.asaas_api_key  || null,
+    apiKey:  decryptField(row.asaas_api_key) || null,
     sandbox: row.asaas_sandbox !== false   // default true (sandbox)
   };
 }
@@ -6834,6 +6834,9 @@ app.put('/pagamentos/boleto/config', auth, writeRateLimiter, requirePermissao(po
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     const { asaas_api_key, asaas_sandbox } = req.body;
+    const _asaasKeyParaSalvar = (asaas_api_key && asaas_api_key !== '****')
+      ? encryptField(asaas_api_key)
+      : (asaas_api_key || null);
 
     await pool.query(
       `UPDATE configuracoes
@@ -6841,7 +6844,7 @@ app.put('/pagamentos/boleto/config', auth, writeRateLimiter, requirePermissao(po
            asaas_sandbox = $4,
            atualizado_em = NOW()
        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
-      [empresaResolvida.id, empresaResolvida.nome, asaas_api_key || null, asaas_sandbox !== false]
+      [empresaResolvida.id, empresaResolvida.nome, _asaasKeyParaSalvar, asaas_sandbox !== false]
     );
 
     res.json({ sucesso: true });
@@ -7469,7 +7472,7 @@ app.get('/alertas/:empresa', auth, async (req, res) => {
 async function getSaasAsaasConfig() {
   const r = await pool.query(`SELECT asaas_api_key, asaas_sandbox FROM saas_config LIMIT 1`);
   const row = r.rows[0] || {};
-  return { apiKey: row.asaas_api_key || null, sandbox: row.asaas_sandbox !== false };
+  return { apiKey: decryptField(row.asaas_api_key) || null, sandbox: row.asaas_sandbox !== false };
 }
 
 // GET /admin/billing/config — retorna config Asaas do SaaS owner
@@ -7490,11 +7493,14 @@ app.get('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
 app.put('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
   try {
     const { asaas_api_key, asaas_sandbox } = req.body;
+    const _saasKeyParaSalvar = (asaas_api_key && asaas_api_key !== '****')
+      ? encryptField(asaas_api_key)
+      : (asaas_api_key || null);
     await pool.query(
       `UPDATE saas_config
        SET asaas_api_key = COALESCE(NULLIF($1,'****'), asaas_api_key),
            asaas_sandbox = $2, atualizado_em = NOW()`,
-      [asaas_api_key || null, asaas_sandbox !== false]
+      [_saasKeyParaSalvar, asaas_sandbox !== false]
     );
     res.json({ sucesso: true });
   } catch (err) {
