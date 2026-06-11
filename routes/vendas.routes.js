@@ -1172,12 +1172,10 @@ ORDER BY parcela ASC
 
       await client.query('BEGIN');
 
-      const vendaResult = req.user.is_saas_owner
-        ? await client.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id])
-        : await client.query(
-            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
-            [id, req.user.empresa_id || 0, req.user.empresa || '']
-          );
+      const vendaResult = await client.query(
+        `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+        [id, req.user.empresa_id || 0, req.user.empresa || '']
+      );
 
       if (vendaResult.rowCount === 0) {
         await client.query('ROLLBACK');

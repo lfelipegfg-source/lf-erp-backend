@@ -30,27 +30,29 @@ function encryptField(plaintext) {
 
 // Descriptografa um campo. Se não começar com enc:v1:, retorna como está
 // (suporte a dados legados em texto puro gravados antes da criptografia).
+// Lança erro se o formato for inválido ou a chave estiver ausente/errada —
+// nunca retorna silenciosamente o texto criptografado para o chamador.
 function decryptField(value) {
   if (value === null || value === undefined) return value;
   const str = String(value);
   if (!str.startsWith(PREFIX)) return str; // texto puro ou dado legado
 
-  try {
-    const key = getKey();
-    if (!key) return str;
+  const key = getKey();
+  if (!key) throw new Error('PIX_ENCRYPTION_KEY não configurada — não é possível descriptografar credencial PIX');
 
-    const parts = str.slice(PREFIX.length).split(':');
-    const iv = Buffer.from(parts[0], 'hex');
-    const tag = Buffer.from(parts[1], 'hex');
-    const ciphertext = Buffer.from(parts[2], 'base64');
+  const parts = str.slice(PREFIX.length).split(':');
+  if (parts.length !== 3) throw new Error('Formato de campo PIX criptografado inválido');
 
-    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
-  } catch {
-    // Falha na descriptografia — retorna o valor original sem quebrar
-    return str;
-  }
+  const iv = Buffer.from(parts[0], 'hex');
+  const tag = Buffer.from(parts[1], 'hex');
+  const ciphertext = Buffer.from(parts[2], 'base64');
+
+  if (iv.length !== 12) throw new Error('IV inválido no campo PIX criptografado');
+  if (tag.length !== 16) throw new Error('AuthTag inválido no campo PIX criptografado');
+
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
 module.exports = { encryptField, decryptField };

@@ -2127,7 +2127,9 @@ app.post('/reset-dados', auth, async (req, res) => {
     const resetToken = process.env.RESET_SECRET;
     const headerToken = req.headers['x-reset-token'];
 
-    if (!resetToken || !headerToken || headerToken !== resetToken) {
+    const _bufReset = Buffer.from(resetToken);
+    const _bufHeader = Buffer.from(headerToken || '');
+    if (!resetToken || !headerToken || _bufReset.length !== _bufHeader.length || !crypto.timingSafeEqual(_bufReset, _bufHeader)) {
       return jsonErro(res, 403, 'Token de reset inválido ou ausente');
     }
 
@@ -3644,6 +3646,13 @@ app.get('/contas-receber/detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
+    let _detParams = [id, hoje()];
+    let _detEmpresaWhere = '';
+    if (!req.user.is_saas_owner) {
+      _detParams = [..._detParams, req.user.empresa_id || 0, req.user.empresa || ''];
+      _detEmpresaWhere = `AND (cr.empresa_id = $3 OR (cr.empresa_id IS NULL AND cr.empresa = $4))`;
+    }
+
     const contaResult = await pool.query(
       `
         SELECT
@@ -3667,10 +3676,10 @@ THEN 'atrasado'
 ELSE 'pendente'
           END AS status_exibicao
         FROM contas_receber cr
-        WHERE cr.id = $1
+        WHERE cr.id = $1 ${_detEmpresaWhere}
         LIMIT 1
         `,
-      [id, hoje()]
+      _detParams
     );
 
     if (contaResult.rowCount === 0) {
@@ -3700,9 +3709,12 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`, [
-      id
-    ]);
+    const contaResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`, [id])
+      : await pool.query(
+          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
@@ -4799,7 +4811,12 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_pagar WHERE id = $1 LIMIT 1`, [id]);
+    const contaResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM contas_pagar WHERE id = $1 LIMIT 1`, [id])
+      : await pool.query(
+          `SELECT * FROM contas_pagar WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
@@ -5307,7 +5324,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
           frequencia = $10,
           observacao = $11,
           atualizado_em = NOW()
-      WHERE id = $12
+      WHERE id = $12 AND (empresa_id = $13 OR empresa = $14)
       `,
       [
         String(tipo).toLowerCase(),
@@ -5321,7 +5338,9 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
         Boolean(recorrente),
         frequencia || '',
         observacao || '',
-        id
+        id,
+        empresaResolvida.id,
+        empresaResolvida.nome
       ]
     );
 
