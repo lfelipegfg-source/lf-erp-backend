@@ -19,6 +19,7 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
 const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
+const { encryptField, decryptField } = require('./utils/pixCrypto');
 
 // Rate limiter em memória para o endpoint /login
 const loginAttempts     = new Map(); // por IP
@@ -6550,6 +6551,17 @@ async function efiAuth(config) {
   return { accessToken: res.body.access_token, base, agentOpts };
 }
 
+// Descriptografa os campos sensíveis do PIX antes de usar nas chamadas à EFÍ
+function resolvePixConfig(config) {
+  if (!config) return {};
+  return {
+    ...config,
+    pix_client_id:     decryptField(config.pix_client_id),
+    pix_client_secret: decryptField(config.pix_client_secret),
+    pix_certificado:   decryptField(config.pix_certificado)
+  };
+}
+
 // GET /pagamentos/pix/config
 app.get('/pagamentos/pix/config', auth, async (req, res) => {
   try {
@@ -6564,7 +6576,9 @@ app.get('/pagamentos/pix/config', auth, async (req, res) => {
       [empresaResolvida.id, empresaResolvida.nome]
     );
 
-    res.json(result.rows[0] || { pix_gateway: 'efi', pix_sandbox: true });
+    const row = result.rows[0] || { pix_gateway: 'efi', pix_sandbox: true };
+    if (row.pix_client_id) row.pix_client_id = decryptField(row.pix_client_id);
+    res.json(row);
   } catch (error) {
     console.error('Erro ao buscar config PIX:', error);
     jsonErro(res, 500, 'Erro ao buscar configuração PIX');
@@ -6579,6 +6593,11 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, async (req, res) => {
 
     const { pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox } = req.body;
 
+    const encClientSecret = pix_client_secret && pix_client_secret !== '****'
+      ? encryptField(pix_client_secret) : pix_client_secret;
+    const encCertificado = pix_certificado && pix_certificado !== 'configurado'
+      ? encryptField(pix_certificado) : pix_certificado;
+
     await pool.query(
       `UPDATE configuracoes
        SET pix_gateway       = 'efi',
@@ -6589,7 +6608,9 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, async (req, res) => {
            pix_sandbox       = $7,
            atualizado_em     = NOW()
        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
-      [empresaResolvida.id, empresaResolvida.nome, pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox ?? true]
+      [empresaResolvida.id, empresaResolvida.nome,
+       encryptField(pix_client_id), encClientSecret, encCertificado,
+       pix_chave, pix_sandbox ?? true]
     );
 
     res.json({ sucesso: true });
@@ -6612,7 +6633,7 @@ app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, async (req, res) => {
       `SELECT * FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
       [empresaResolvida.id, empresaResolvida.nome]
     );
-    const config = cfg.rows[0] || {};
+    const config = resolvePixConfig(cfg.rows[0] || {});
 
     const expiracao = new Date(Date.now() + 30 * 60 * 1000); // 30 min
     let txid, pixCopiaECola, qrImage;
@@ -6701,7 +6722,7 @@ app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
       `SELECT * FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
       [empresaResolvida.id, empresaResolvida.nome]
     );
-    const config = cfg.rows[0] || {};
+    const config = resolvePixConfig(cfg.rows[0] || {});
 
     if (config.pix_sandbox || !config.pix_client_id || txid.startsWith('SANDBOX_')) {
       return res.json({ status: 'ATIVA', sandbox: true });
