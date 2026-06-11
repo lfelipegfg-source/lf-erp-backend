@@ -245,7 +245,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── POST /checkout/p/:token/boleto — gera boleto Asaas ───────────────────
 
-  router.post('/p/:token/boleto', async (req, res) => {
+  router.post('/p/:token/boleto', writeRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT cl.*, e.nome AS empresa_nome,

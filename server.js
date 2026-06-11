@@ -531,7 +531,7 @@ async function registrarLogFinanceiro({
   valor,
   usuario_id
 }) {
-  pool.query(
+  return pool.query(
     `
     INSERT INTO financeiro_logs
     (empresa, empresa_id, tipo, entidade, entidade_id, descricao, valor, usuario_id, criado_em)
@@ -4271,6 +4271,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       FROM lancamentos_financeiros
       WHERE id = $1
       LIMIT 1
+      FOR UPDATE
       `,
       [lancamentoId]
     );
@@ -5348,6 +5349,17 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
       ]
     );
 
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'edicao',
+      entidade: 'lancamentos_financeiros',
+      entidade_id: id,
+      descricao: `Lançamento editado: ${descricao}`,
+      valor: valorFinal,
+      usuario_id: req.user?.id
+    });
+
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao atualizar lançamento financeiro:', error);
@@ -5389,6 +5401,17 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
       [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
     );
 
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'pagamento',
+      entidade: 'lancamentos_financeiros',
+      entidade_id: id,
+      descricao: `Lançamento pago: ${atual.descricao || ''}`,
+      valor: Number(atual.valor || 0),
+      usuario_id: req.user?.id
+    });
+
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao pagar lançamento financeiro:', error);
@@ -5423,6 +5446,17 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
       `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa = $2 OR empresa_id = $3)`,
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
+
+    await registrarLogFinanceiro({
+      empresa: empresaResolvida.nome,
+      empresa_id: empresaResolvida.id,
+      tipo: 'exclusao',
+      entidade: 'lancamentos_financeiros',
+      entidade_id: id,
+      descricao: `Lançamento excluído: ${atual.descricao || ''}`,
+      valor: Number(atual.valor || 0),
+      usuario_id: req.user?.id
+    });
 
     res.json({ sucesso: true });
   } catch (error) {
