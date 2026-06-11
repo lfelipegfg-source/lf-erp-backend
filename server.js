@@ -156,11 +156,14 @@ app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
 const jsonUpload = express.json({ limit: '50mb' }); // usado só em rotas de importação
 
+app.disable('x-powered-by');
+
 // S-2: Headers de segurança HTTP + redirect HTTPS em produção
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (req.header('x-forwarded-proto') === 'http') {
@@ -1288,7 +1291,7 @@ async function criarParcelasContasReceber({
 
   if (parcelas <= 0) return [];
 
-  const valorBase = Math.floor((valorTotal / parcelas) * 100) / 100;
+  const valorBase = Math.round((valorTotal / parcelas) * 100) / 100;
   let acumulado = 0;
   const parcelasGeradas = [];
 
@@ -3815,9 +3818,13 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       return jsonErro(res, 400, 'Cliente inválido');
     }
 
+    const _chEmpresaId = req.is_saas_owner ? null : (req.empresa_id || null);
+    const _chEmpresaWhere = _chEmpresaId ? 'AND empresa_id = $2' : '';
+    const _chParams = _chEmpresaId ? [clienteId, _chEmpresaId] : [clienteId];
+
     const clienteResult = await pool.query(
-      `SELECT * FROM clientes WHERE id = $1 AND deletado_em IS NULL LIMIT 1`,
-      [clienteId]
+      `SELECT * FROM clientes WHERE id = $1 AND deletado_em IS NULL ${_chEmpresaWhere} LIMIT 1`,
+      _chParams
     );
 
     if (clienteResult.rowCount === 0) {
