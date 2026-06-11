@@ -141,7 +141,7 @@ ${filtroEmpresa}
       await client.query('BEGIN');
 
       const produtoResult = await client.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
         [produto_id, empresaResolvida.id]
       );
 

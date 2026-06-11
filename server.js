@@ -4213,6 +4213,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       UPDATE contas_receber
       SET status = $1,
           data_pagamento = NULL,
+          valor = COALESCE(valor_original, valor),
           atualizado_em = NOW()
       WHERE id = $2 AND (empresa_id = $3 OR empresa = $4)
       `,
@@ -4428,12 +4429,10 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
       empresa = $1
       OR empresa_id = $2
     )
-      AND LOWER(COALESCE(tipo, '')) = 'receita'
       AND LOWER(COALESCE(status, '')) = 'pago'
-      AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
-      AND descricao = $3
+      AND conta_receber_id = $3
     `,
-        [empresaResolvida.nome, empresaResolvida.id, `Recebimento parcial da conta #${id}`]
+        [empresaResolvida.nome, empresaResolvida.id, id]
       );
 
       if (Number(recebimentosAtivosResult.rows[0].total || 0) > 0) {
@@ -5297,6 +5296,10 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
 
     if (!empresaResolvida) {
       return jsonErro(res, 403, 'Sem acesso');
+    }
+
+    if (atual.conta_receber_id) {
+      return jsonErro(res, 400, 'Lançamentos vinculados a contas a receber não podem ser editados diretamente');
     }
 
     const {
