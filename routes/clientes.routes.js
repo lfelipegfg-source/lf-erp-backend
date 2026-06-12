@@ -312,11 +312,19 @@ module.exports = ({
       const busca = (req.query.busca || '').trim().toLowerCase();
 
       let sql = `
-        SELECT id, empresa_id, nome, telefone, email, cpf, cpf_cnpj, endereco, nascimento,
-               tabela_preco_id, criado_em, atualizado_em
-        FROM clientes
-        WHERE empresa_id = $1
-        AND deletado_em IS NULL
+        SELECT c.id, c.empresa_id, c.nome, c.telefone, c.email, c.cpf, c.cpf_cnpj,
+               c.endereco, c.nascimento, c.tabela_preco_id, c.criado_em, c.atualizado_em,
+               COALESCE((
+                 SELECT SUM(cr.valor)
+                 FROM contas_receber cr
+                 WHERE cr.cliente_id = c.id
+                   AND cr.empresa_id = c.empresa_id
+                   AND LOWER(COALESCE(cr.status, 'pendente')) NOT IN ('pago')
+                   AND cr.deletado_em IS NULL
+               ), 0) AS total_em_aberto
+        FROM clientes c
+        WHERE c.empresa_id = $1
+        AND c.deletado_em IS NULL
       `;
 
       const params = [empresaResolvida.id];
@@ -326,9 +334,9 @@ module.exports = ({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(cpf, '')) LIKE $${idx}
-            OR LOWER(COALESCE(telefone, '')) LIKE $${idx}
+            LOWER(COALESCE(c.nome, '')) LIKE $${idx}
+            OR LOWER(COALESCE(c.cpf, '')) LIKE $${idx}
+            OR LOWER(COALESCE(c.telefone, '')) LIKE $${idx}
           )
         `;
         params.push(`%${buscaEsc}%`);
