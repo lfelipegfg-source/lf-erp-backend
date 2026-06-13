@@ -123,10 +123,19 @@ module.exports = function ({
       const busca = (req.query.busca || '').trim().toLowerCase();
 
       let sql = `
-        SELECT id, empresa_id, nome, cnpj, telefone, email, endereco, criado_em, atualizado_em
-        FROM fornecedores
-        WHERE empresa_id = $1
-        AND deletado_em IS NULL
+        SELECT f.id, f.empresa_id, f.nome, f.cnpj, f.telefone, f.email, f.endereco,
+               f.criado_em, f.atualizado_em,
+               COALESCE((
+                 SELECT COUNT(*) FROM compras c
+                 WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
+               ), 0) AS total_compras,
+               COALESCE((
+                 SELECT SUM(c.total) FROM compras c
+                 WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
+               ), 0) AS valor_total_compras
+        FROM fornecedores f
+        WHERE f.empresa_id = $1
+        AND f.deletado_em IS NULL
       `;
 
       const params = [empresaResolvida.id];
@@ -136,16 +145,16 @@ module.exports = function ({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(telefone, '')) LIKE $${idx}
-            OR LOWER(COALESCE(email, '')) LIKE $${idx}
+            LOWER(COALESCE(f.nome, '')) LIKE $${idx}
+            OR LOWER(COALESCE(f.telefone, '')) LIKE $${idx}
+            OR LOWER(COALESCE(f.email, '')) LIKE $${idx}
           )
         `;
         params.push(`%${buscaEsc}%`);
         idx++;
       }
 
-      sql += ` ORDER BY nome ASC`;
+      sql += ` ORDER BY f.nome ASC`;
 
       const result = await pool.query(sql, params);
 
