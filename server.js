@@ -7004,13 +7004,14 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
 });
 
 // Verifica o header asaas-access-token nos webhooks Asaas.
-// Se ASAAS_WEBHOOK_TOKEN não estiver configurado, aceita com aviso (ativação gradual).
-// Se estiver configurado, rejeita 401 qualquer requisição sem o token correto.
+// Se ASAAS_WEBHOOK_TOKEN não estiver configurado, REJEITA a requisição (fail-closed).
+// Sem essa validação, qualquer requisição forjada poderia marcar boletos como pagos.
 function verificarWebhookAsaas(req, res) {
   const token = process.env.ASAAS_WEBHOOK_TOKEN;
   if (!token) {
-    console.warn('[webhook-asaas] ASAAS_WEBHOOK_TOKEN nao configurado — validacao de origem desativada');
-    return true;
+    console.error('[webhook-asaas] ASAAS_WEBHOOK_TOKEN nao configurado — requisicao rejeitada por seguranca');
+    res.status(503).json({ erro: 'Webhook nao configurado' });
+    return false;
   }
   const headerToken = req.headers['asaas-access-token'] || '';
   const bufA = Buffer.from(token);
