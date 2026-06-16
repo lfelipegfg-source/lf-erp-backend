@@ -266,6 +266,8 @@ module.exports = ({
     );
     const produtosMap = Object.fromEntries(produtosRows.rows.map(p => [p.id, p]));
 
+    let somaItens = 0;
+
     for (const item of itens) {
       const produtoId = Number(item.produto_id);
       const quantidade = normalizarInt(item.quantidade);
@@ -306,6 +308,7 @@ module.exports = ({
         const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || grade.preco || produto.preco);
         const custoUnitario = normalizarDecimal(item.custo_unitario || grade.custo || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+        somaItens += totalItem;
 
         await client.query(
           `INSERT INTO venda_itens
@@ -339,6 +342,7 @@ module.exports = ({
         const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || produto.preco);
         const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+        somaItens += totalItem;
 
         await client.query(
           `INSERT INTO venda_itens
@@ -364,6 +368,7 @@ module.exports = ({
         const precoUnitario = normalizarDecimal(item.preco_unitario || precoPorTabela || produto.preco);
         const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
+        somaItens += totalItem;
 
         await client.query(
           `INSERT INTO venda_itens
@@ -401,6 +406,8 @@ module.exports = ({
         });
       }
     }
+
+    return somaItens;
   }
 
   router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'criar'), async (req, res) => {
@@ -507,7 +514,7 @@ module.exports = ({
 
       const venda = vendaResult.rows[0];
 
-      await inserirItensVendaEBaixarEstoque({
+      const somaItens = await inserirItensVendaEBaixarEstoque({
         client,
         vendaId: venda.id,
         empresaResolvida,
@@ -515,6 +522,14 @@ module.exports = ({
         usuarioId: req.user.id,
         clienteId: cliente_id ? Number(cliente_id) : null
       });
+
+      // Confere se o total informado bate com a soma real dos itens (com tolerância de arredondamento)
+      const totalEsperado = Number((somaItens - descontoFinal + acrescimoFinal).toFixed(2));
+      const toleranciaTotal = Math.max(0.05, itens.length * 0.01);
+      if (Math.abs(totalEsperado - totalFinal) > toleranciaTotal) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, `Total da venda (R$ ${totalFinal.toFixed(2)}) não corresponde à soma dos itens com desconto/acréscimo (R$ ${totalEsperado.toFixed(2)}).`);
+      }
 
       // Gera contas a receber apenas para a parcela Promissória do split
       if (totalPromissoria > 0) {
@@ -797,7 +812,7 @@ module.exports = ({
         return erro(res, 404, 'Venda não encontrada para atualização');
       }
 
-      await inserirItensVendaEBaixarEstoque({
+      const somaItens = await inserirItensVendaEBaixarEstoque({
         client,
         vendaId: id,
         empresaResolvida,
@@ -805,6 +820,14 @@ module.exports = ({
         usuarioId: req.user.id,
         clienteId: clienteIdFinal ? Number(clienteIdFinal) : null
       });
+
+      // Confere se o total informado bate com a soma real dos itens (com tolerância de arredondamento)
+      const totalEsperadoEdicao = Number((somaItens - descontoFinal + acrescimoFinal).toFixed(2));
+      const toleranciaTotalEdicao = Math.max(0.05, itens.length * 0.01);
+      if (Math.abs(totalEsperadoEdicao - totalFinal) > toleranciaTotalEdicao) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, `Total da venda (R$ ${totalFinal.toFixed(2)}) não corresponde à soma dos itens com desconto/acréscimo (R$ ${totalEsperadoEdicao.toFixed(2)}).`);
+      }
 
       if (
         deveGerarFinanceiroVenda({

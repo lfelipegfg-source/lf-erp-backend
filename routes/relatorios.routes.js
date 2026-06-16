@@ -220,8 +220,8 @@ module.exports = function ({
           `
           SELECT
             COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN valor ELSE 0 END),0) AS pago,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) IN ('pendente','parcial') THEN COALESCE(valor_atualizado, valor) ELSE 0 END),0) AS pendente,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) IN ('atrasado','parcial_atrasado') THEN COALESCE(valor_atualizado, valor) ELSE 0 END),0) AS atrasado
           FROM contas_receber
           ${whereReceber}
         `,
@@ -232,8 +232,8 @@ module.exports = function ({
           `
           SELECT
             COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'pago' THEN valor ELSE 0 END),0) AS pago,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'pendente' THEN valor ELSE 0 END),0) AS pendente,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) = 'atrasado' THEN valor ELSE 0 END),0) AS atrasado
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) IN ('pendente','parcial') THEN valor ELSE 0 END),0) AS pendente,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(status, 'pendente')) IN ('atrasado','parcial_atrasado') THEN valor ELSE 0 END),0) AS atrasado
           FROM contas_pagar
           ${wherePagar}
         `,

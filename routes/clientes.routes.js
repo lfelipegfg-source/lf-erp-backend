@@ -315,7 +315,7 @@ module.exports = ({
         SELECT c.id, c.empresa_id, c.nome, c.telefone, c.email, c.cpf, c.cpf_cnpj,
                c.endereco, c.nascimento, c.tabela_preco_id, c.criado_em, c.atualizado_em,
                COALESCE((
-                 SELECT SUM(cr.valor)
+                 SELECT SUM(COALESCE(cr.valor_atualizado, cr.valor))
                  FROM contas_receber cr
                  WHERE cr.cliente_id = c.id
                    AND cr.empresa_id = c.empresa_id

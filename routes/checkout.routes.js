@@ -194,9 +194,23 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   // ROTAS PÚBLICAS (sem autenticação)
   // ═════════════════════════════════════════════════════════════════════════
 
+  // ── Rate limiter por IP para a página pública de checkout (30 req/min) ────
+  // Protege contra varredura/enumeração de tokens de pagamento
+  const _checkoutPublicoBuckets = new Map();
+  function checkoutPublicoRateLimiter(req, res, next) {
+    const key = req.ip || 'unknown';
+    const now = Date.now();
+    const bucket = _checkoutPublicoBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+    if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
+    bucket.count++;
+    _checkoutPublicoBuckets.set(key, bucket);
+    if (bucket.count > 30) return erro(res, 429, 'Muitas requisições. Aguarde 1 minuto.');
+    next();
+  }
+
   // ── GET /checkout/p/:token — dados para a página pública ──────────────────
 
-  router.get('/p/:token', async (req, res) => {
+  router.get('/p/:token', checkoutPublicoRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT cl.*, e.nome AS empresa_nome, e.cidade AS empresa_cidade,
@@ -246,7 +260,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── POST /checkout/p/:token/boleto — gera boleto Asaas ───────────────────
 
-  router.post('/p/:token/boleto', writeRateLimiter, async (req, res) => {
+  router.post('/p/:token/boleto', checkoutPublicoRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT cl.*, e.nome AS empresa_nome,

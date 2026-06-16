@@ -250,8 +250,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       // Verifica se há movimentos vinculados
       const [v, c] = await Promise.all([
-        pool.query(`SELECT COUNT(*) FROM vendas  WHERE filial_id = $1`, [id]),
-        pool.query(`SELECT COUNT(*) FROM compras WHERE filial_id = $1`, [id])
+        pool.query(`SELECT COUNT(*) FROM vendas  WHERE filial_id = $1 AND empresa_id = $2`, [id, e.id]),
+        pool.query(`SELECT COUNT(*) FROM compras WHERE filial_id = $1 AND empresa_id = $2`, [id, e.id])
       ]);
 
       const totalMovs = Number(v.rows[0].count) + Number(c.rows[0].count);

@@ -44,6 +44,20 @@ module.exports = ({ auth, pool }) => {
     next();
   }
 
+  // ── Rate limiter por cliente para consultas do portal (60 req/min) ────────
+  // Protege contra scraping de dados financeiros caso um token JWT seja comprometido
+  const _portalConsultaBuckets = new Map();
+  function portalConsultaRateLimiter(req, res, next) {
+    const key = req.cliente?.id || req.ip || 'unknown';
+    const now = Date.now();
+    const bucket = _portalConsultaBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+    if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
+    bucket.count++;
+    _portalConsultaBuckets.set(key, bucket);
+    if (bucket.count > 60) return erro(res, 429, 'Muitas requisições. Aguarde 1 minuto.');
+    next();
+  }
+
   // ── Middleware exclusivo para tokens de cliente ───────────────────────────
   function authCliente(req, res, next) {
     const header = req.headers.authorization || '';
@@ -124,14 +138,14 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // GET /portal/resumo
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/resumo', authCliente, async (req, res) => {
+  router.get('/resumo', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
       const { id: clienteId, empresa_id: empresaId } = req.cliente;
 
       const result = await pool.query(
         `SELECT
-           COALESCE(SUM(CASE WHEN LOWER(status) IN ('pendente','parcial') THEN valor ELSE 0 END), 0)     AS total_aberto,
-           COALESCE(SUM(CASE WHEN LOWER(status) IN ('atrasado','parcial_atrasado') THEN valor ELSE 0 END), 0) AS total_atrasado,
+           COALESCE(SUM(CASE WHEN LOWER(status) IN ('pendente','parcial') THEN COALESCE(valor_atualizado, valor) ELSE 0 END), 0)     AS total_aberto,
+           COALESCE(SUM(CASE WHEN LOWER(status) IN ('atrasado','parcial_atrasado') THEN COALESCE(valor_atualizado, valor) ELSE 0 END), 0) AS total_atrasado,
            COALESCE(SUM(CASE WHEN LOWER(status) = 'pago' THEN valor ELSE 0 END), 0)                      AS total_pago,
            COUNT(CASE WHEN LOWER(status) IN ('pendente','parcial','atrasado','parcial_atrasado') THEN 1 END) AS total_titulos_abertos
          FROM contas_receber
@@ -166,7 +180,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // GET /portal/titulos
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/titulos', authCliente, async (req, res) => {
+  router.get('/titulos', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
       const { id: clienteId, empresa_id: empresaId } = req.cliente;
       const { status } = req.query;
@@ -201,7 +215,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // GET /portal/vendas
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/vendas', authCliente, async (req, res) => {
+  router.get('/vendas', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
       const { id: clienteId, empresa_id: empresaId } = req.cliente;
 

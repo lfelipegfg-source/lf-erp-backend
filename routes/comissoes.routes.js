@@ -282,13 +282,14 @@ module.exports = ({
            forma_pagamento = $2,
            observacao      = COALESCE($3, observacao),
            atualizado_em   = NOW()
-         WHERE id = $4
+         WHERE id = $4 AND empresa_id = $5
          RETURNING *`,
         [
           data_pagamento ? normalizarDataISO(data_pagamento) : new Date().toISOString().slice(0, 10),
           forma_pagamento || 'Dinheiro',
           observacao || null,
-          id
+          id,
+          emp.id
         ]
       );
 

@@ -253,8 +253,8 @@ module.exports = ({
     if (!pedido) return erro(res, 404, 'Pedido não encontrado');
     if (!statusPermitidos.includes(pedido.status)) return erro(res, 400, `Pedido no status "${pedido.status}" não pode ser alterado`);
     const r = await pool.query(
-      `UPDATE pedidos SET status = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
-      [novoStatus, id]
+      `UPDATE pedidos SET status = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3 RETURNING *`,
+      [novoStatus, id, empresaResolvida.id]
     );
     return ok(res, { pedido: r.rows[0] });
   }
@@ -388,7 +388,7 @@ module.exports = ({
 
       // Marca pedido como convertido
       await client.query(
-        `UPDATE pedidos SET status = 'convertido', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`, [id]
+        `UPDATE pedidos SET status = 'convertido', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`, [id, empresaResolvida.id]
       );
 
       await client.query('COMMIT');
