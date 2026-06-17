@@ -349,10 +349,12 @@ module.exports = ({
       const limIdx = filterParams.length + 1;
       const offIdx = filterParams.length + 2;
 
+      const countSql = `SELECT COUNT(*) AS total FROM (${sql}) AS contagem`;
+
       const [countResult, result] = await Promise.all([
-        pool.query(sql.replace('SELECT *', 'SELECT COUNT(*) AS total'), filterParams),
+        pool.query(countSql, filterParams),
         pool.query(
-          sql + ` ORDER BY nome ASC LIMIT $${limIdx} OFFSET $${offIdx}`,
+          sql + ` ORDER BY c.nome ASC LIMIT $${limIdx} OFFSET $${offIdx}`,
           [...filterParams, limite, offset]
         )
       ]);
