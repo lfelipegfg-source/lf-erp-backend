@@ -1270,6 +1270,31 @@ async function atualizarStatusContasPagarGlobal() {
   );
 }
 
+function agendarAtualizacaoNoturna() {
+  function msAteMeianoite() {
+    const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Fortaleza' }));
+    const meia = new Date(agora);
+    meia.setDate(meia.getDate() + 1);
+    meia.setHours(0, 0, 0, 0);
+    return Math.max(60000, meia - agora); // mínimo 1 min para evitar loop imediato
+  }
+
+  async function rodar() {
+    try {
+      await atualizarStatusContasReceberGlobal();
+      await atualizarStatusContasPagarGlobal();
+      console.log('[scheduler] Status financeiro atualizado (meia-noite Fortaleza)');
+    } catch (err) {
+      console.error('[scheduler] Erro na atualização noturna:', err.message);
+    }
+    setTimeout(rodar, 24 * 60 * 60 * 1000).unref();
+  }
+
+  const delay = msAteMeianoite();
+  setTimeout(rodar, delay).unref();
+  console.log(`[scheduler] Próxima atualização noturna em ${Math.round(delay / 60000)} min`);
+}
+
 async function criarParcelasContasReceber({
   client,
   empresa,
@@ -7669,6 +7694,7 @@ async function start() {
     if (_sentryDsn) Sentry.setupExpressErrorHandler(app);
     app.listen(PORT, () => {
       console.log(`LF ERP Backend Online 🚀 porta ${PORT}`);
+      agendarAtualizacaoNoturna();
     });
   } catch (error) {
     console.error('Erro ao iniciar backend:', error);
