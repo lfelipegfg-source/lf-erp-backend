@@ -128,10 +128,12 @@ module.exports = function ({
                COALESCE((
                  SELECT COUNT(*) FROM compras c
                  WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
+                   AND LOWER(COALESCE(c.status, '')) != 'cancelada'
                ), 0) AS total_compras,
                COALESCE((
                  SELECT SUM(c.total) FROM compras c
                  WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
+                   AND LOWER(COALESCE(c.status, '')) != 'cancelada'
                ), 0) AS valor_total_compras
         FROM fornecedores f
         WHERE f.empresa_id = $1
@@ -154,11 +156,28 @@ module.exports = function ({
         idx++;
       }
 
-      sql += ` ORDER BY f.nome ASC`;
+      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+      const limIdx = idx;
+      const offIdx = idx + 1;
 
-      const result = await pool.query(sql, params);
+      const countSql = `SELECT COUNT(*) AS total FROM (${sql}) AS contagem`;
 
-      return res.json({ sucesso: true, dados: result.rows.map(normalizarFornecedor) });
+      const [countResult, result] = await Promise.all([
+        pool.query(countSql, params),
+        pool.query(
+          sql + ` ORDER BY f.nome ASC LIMIT $${limIdx} OFFSET $${offIdx}`,
+          [...params, limite, offset]
+        )
+      ]);
+
+      return res.json({
+        sucesso: true,
+        dados: result.rows.map(normalizarFornecedor),
+        total: Number(countResult.rows[0]?.total || 0),
+        limite,
+        offset
+      });
     } catch (error) {
       console.error('Erro real ao buscar fornecedores:', error);
       return erro(res, 500, 'Erro ao buscar fornecedores');

@@ -322,9 +322,28 @@ ${adicionarFiltroEmpresaSaaS({
 
       sql += ` ORDER BY nome ASC`;
 
-      const result = await pool.query(sql, params);
+      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+      const limIdx = idx;
+      const offIdx = idx + 1;
 
-      return res.json({ sucesso: true, dados: result.rows.map(normalizarProduto) });
+      const countSql = `SELECT COUNT(*) AS total FROM (${sql}) AS contagem`;
+
+      const [countResult, result] = await Promise.all([
+        pool.query(countSql, params),
+        pool.query(
+          sql + ` LIMIT $${limIdx} OFFSET $${offIdx}`,
+          [...params, limite, offset]
+        )
+      ]);
+
+      return res.json({
+        sucesso: true,
+        dados: result.rows.map(normalizarProduto),
+        total: Number(countResult.rows[0]?.total || 0),
+        limite,
+        offset
+      });
     } catch (error) {
       console.error('Erro real ao buscar produtos:', error);
       return erro(res, 500, 'Erro ao buscar produtos');
@@ -419,108 +438,126 @@ ${adicionarFiltroEmpresaSaaS({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const atualResult = await pool.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      if (atualResult.rowCount === 0) {
-        return erro(res, 404, 'Produto não encontrado');
-      }
+        // SELECT ... FOR UPDATE trava a linha do produto até o COMMIT, evitando que
+        // duas edições concorrentes calculem a diferença de estoque com base no
+        // mesmo valor "atual" e uma delas sobrescreva o resultado da outra.
+        const atualResult = await client.query(
+          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id]
+        );
 
-      const atual = atualResult.rows[0];
+        if (atualResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 404, 'Produto não encontrado');
+        }
 
-      const precoFinal = normalizarDecimal(preco);
-      const custoBase = normalizarDecimal(custo_unitario || custo || atual.custo || 0);
-      const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
-      const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
-      const margemLucro =
-        custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
+        const atual = atualResult.rows[0];
 
-      const estoqueAtual = normalizarInt(atual.estoque);
-      const estoqueNovo = normalizarInt(estoque);
-      const diferenca = estoqueNovo - estoqueAtual;
+        const precoFinal = normalizarDecimal(preco);
+        const custoBase = normalizarDecimal(custo_unitario || custo || atual.custo || 0);
+        const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
+        const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
+        const margemLucro =
+          custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
 
-      await pool.query(
-        `UPDATE produtos
-        SET nome = $1,
-          preco = $2,
-          custo = $3,
-          custo_unitario = $4,
-          custo_medio = $5,
-          lucro_unitario = $6,
-          margem_lucro = $7,
-          preco_promocional = $8,
-          promocao_ativa = $9,
-          estoque = $10,
-          estoque_minimo = $11,
-          codigo_barras = $12,
-          categoria = $13,
-          atualizado_em = NOW()
-        WHERE id = $14 AND empresa_id = $15`,
-        [
-          nome,
-          precoFinal,
-          custoBase,
-          custoBase,
-          custoMedioFinal,
-          lucroUnitario,
-          margemLucro,
-          normalizarDecimal(preco_promocional),
-          Boolean(promocao_ativa),
-          estoqueNovo,
-          normalizarInt(estoque_minimo),
-          codigo_barras || '',
-          categoria || '',
-          id,
-          empresaResolvida.id
-        ]
-      );
+        const estoqueAtual = normalizarInt(atual.estoque);
+        const estoqueNovo = normalizarInt(estoque);
+        const diferenca = estoqueNovo - estoqueAtual;
 
-      if (diferenca !== 0) {
-        await registrarMovimentacaoEstoque({
+        await client.query(
+          `UPDATE produtos
+          SET nome = $1,
+            preco = $2,
+            custo = $3,
+            custo_unitario = $4,
+            custo_medio = $5,
+            lucro_unitario = $6,
+            margem_lucro = $7,
+            preco_promocional = $8,
+            promocao_ativa = $9,
+            estoque = $10,
+            estoque_minimo = $11,
+            codigo_barras = $12,
+            categoria = $13,
+            atualizado_em = NOW()
+          WHERE id = $14 AND empresa_id = $15`,
+          [
+            nome,
+            precoFinal,
+            custoBase,
+            custoBase,
+            custoMedioFinal,
+            lucroUnitario,
+            margemLucro,
+            normalizarDecimal(preco_promocional),
+            Boolean(promocao_ativa),
+            estoqueNovo,
+            normalizarInt(estoque_minimo),
+            codigo_barras || '',
+            categoria || '',
+            id,
+            empresaResolvida.id
+          ]
+        );
+
+        if (diferenca !== 0) {
+          await registrarMovimentacaoEstoque({
+            empresa: empresaResolvida.nome,
+            empresa_id: empresaResolvida.id,
+            produto_id: id,
+            tipo: diferenca > 0 ? 'ajuste_entrada' : 'ajuste_saida',
+            quantidade: Math.abs(diferenca),
+            observacao: 'Ajuste manual na edição do produto',
+            referencia_tipo: 'produto',
+            referencia_id: id,
+            usuario_id: req.user.id,
+            client
+          });
+        }
+
+        await registrarAuditoria({
           empresa: empresaResolvida.nome,
           empresa_id: empresaResolvida.id,
-          produto_id: id,
-          tipo: diferenca > 0 ? 'ajuste_entrada' : 'ajuste_saida',
-          quantidade: Math.abs(diferenca),
-          observacao: 'Ajuste manual na edição do produto',
-          referencia_tipo: 'produto',
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'produtos',
+          acao: 'edicao',
           referencia_id: id,
-          usuario_id: req.user.id
+          dados_anteriores: atual,
+          dados_novos: {
+            nome,
+            preco: precoFinal,
+            custo: custoBase,
+            custo_unitario: custoBase,
+            custo_medio: custoMedioFinal,
+            lucro_unitario: lucroUnitario,
+            margem_lucro: margemLucro,
+            preco_promocional: normalizarDecimal(preco_promocional),
+            promocao_ativa: Boolean(promocao_ativa),
+            estoque: estoqueNovo,
+            estoque_minimo,
+            codigo_barras,
+            categoria
+          },
+          req,
+          client
         });
+
+        await client.query('COMMIT');
+
+        return ok(res, {
+          mensagem: 'Produto atualizado com sucesso'
+        });
+      } catch (errTx) {
+        await client.query('ROLLBACK');
+        throw errTx;
+      } finally {
+        client.release();
       }
-
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'produtos',
-        acao: 'edicao',
-        referencia_id: id,
-        dados_anteriores: atual,
-        dados_novos: {
-          nome,
-          preco: precoFinal,
-          custo: custoBase,
-          custo_unitario: custoBase,
-          custo_medio: custoMedioFinal,
-          lucro_unitario: lucroUnitario,
-          margem_lucro: margemLucro,
-          preco_promocional: normalizarDecimal(preco_promocional),
-          promocao_ativa: Boolean(promocao_ativa),
-          estoque: estoqueNovo,
-          estoque_minimo,
-          codigo_barras,
-          categoria
-        },
-        req
-      });
-
-      return ok(res, {
-        mensagem: 'Produto atualizado com sucesso'
-      });
     } catch (error) {
       console.error('Erro real ao atualizar produto:', error);
       return erro(res, 500, 'Erro ao atualizar produto');

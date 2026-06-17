@@ -93,7 +93,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
       const [data, count] = await Promise.all([
         pool.query(
-          `SELECT id, nome, codigo, categoria, preco, custo, estoque, estoque_minimo,
+          `SELECT id, nome, codigo, categoria, preco, estoque, estoque_minimo,
                   unidade, descricao, ativo, criado_em
            FROM produtos ${where}
            ORDER BY nome
@@ -117,8 +117,21 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
   router.get('/produtos/:id', authApiKey, apiRateLimiter, async (req, res) => {
     try {
       const result = await pool.query(
-        `SELECT p.*,
-                COALESCE(json_agg(pg.*) FILTER (WHERE pg.id IS NOT NULL), '[]') AS grades
+        `SELECT p.id, p.nome, p.codigo, p.categoria, p.preco, p.estoque, p.estoque_minimo,
+                p.unidade, p.descricao, p.ativo, p.criado_em,
+                COALESCE(json_agg(
+                  json_build_object(
+                    'id', pg.id,
+                    'atributo1', pg.atributo1,
+                    'atributo2', pg.atributo2,
+                    'sku', pg.sku,
+                    'gtin', pg.gtin,
+                    'preco', pg.preco,
+                    'estoque', pg.estoque,
+                    'estoque_minimo', pg.estoque_minimo,
+                    'ativo', pg.ativo
+                  )
+                ) FILTER (WHERE pg.id IS NOT NULL), '[]') AS grades
          FROM produtos p
          LEFT JOIN produto_grades pg ON pg.produto_id = p.id AND pg.ativo = true
          WHERE p.id = $1 AND p.empresa_id = $2 AND p.deletado_em IS NULL

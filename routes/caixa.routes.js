@@ -172,19 +172,35 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
 
   // ── POST /caixa/fechar ───────────────────────────────────────────────────
   router.post('/fechar', auth, writeRateLimiter, async (req, res) => {
+    const client = await pool.connect();
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
 
-      const sessao = await getSessaoAberta(emp.id);
-      if (!sessao) return erro(res, 400, 'Nenhum caixa aberto');
+      await client.query('BEGIN');
+
+      // FOR UPDATE trava a sessão para evitar que dois fechamentos concorrentes
+      // dupliquem o movimento de fechamento ou apliquem saldo_calculado divergente.
+      const sessaoResult = await client.query(
+        `SELECT * FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' ORDER BY aberto_em DESC LIMIT 1 FOR UPDATE`,
+        [emp.id]
+      );
+      const sessao = sessaoResult.rows[0];
+      if (!sessao) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'Nenhum caixa aberto');
+      }
 
       const { saldo_contado, observacao } = req.body;
       const saldoContado  = normalizarDecimal(saldo_contado ?? 0);
-      const saldoCalculado = await calcularSaldo(sessao.id);
+      const saldoCalculadoResult = await client.query(
+        `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
+        [sessao.id]
+      );
+      const saldoCalculado = Number(saldoCalculadoResult.rows[0].saldo || 0);
       const diferenca = +(saldoContado - saldoCalculado).toFixed(2);
 
-      await pool.query(
+      await client.query(
         `UPDATE caixa_sessoes SET
            status            = 'fechado',
            saldo_fechamento  = $1,
@@ -197,11 +213,13 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       );
 
       // Registra movimento de fechamento
-      await pool.query(
+      await client.query(
         `INSERT INTO caixa_movimentos (sessao_id, empresa_id, tipo, valor, descricao)
          VALUES ($1,$2,'fechamento',0,'Fechamento do caixa')`,
         [sessao.id, emp.id]
       );
+
+      await client.query('COMMIT');
 
       return ok(res, {
         sessao_id:       sessao.id,
@@ -211,8 +229,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
         mensagem: 'Caixa fechado com sucesso'
       });
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error('[caixa] POST fechar:', err.message);
       return erro(res, 500, 'Erro ao fechar caixa');
+    } finally {
+      client.release();
     }
   });
 

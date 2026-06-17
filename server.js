@@ -6627,7 +6627,8 @@ app.get('/pagamentos/pix/config', auth, async (req, res) => {
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     const result = await pool.query(
-      `SELECT pix_gateway, pix_client_id, pix_chave, pix_sandbox,
+      `SELECT pix_gateway, pix_chave, pix_sandbox,
+              CASE WHEN pix_client_id IS NOT NULL THEN '****' ELSE NULL END AS pix_client_id,
               CASE WHEN pix_client_secret IS NOT NULL THEN '****' ELSE NULL END AS pix_client_secret,
               CASE WHEN pix_certificado IS NOT NULL THEN 'configurado' ELSE NULL END AS pix_certificado
        FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
@@ -6635,7 +6636,6 @@ app.get('/pagamentos/pix/config', auth, async (req, res) => {
     );
 
     const row = result.rows[0] || { pix_gateway: 'efi', pix_sandbox: true };
-    if (row.pix_client_id) row.pix_client_id = decryptField(row.pix_client_id);
     res.json(row);
   } catch (error) {
     console.error('Erro ao buscar config PIX:', error);
@@ -6651,6 +6651,8 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool,
 
     const { pix_client_id, pix_client_secret, pix_certificado, pix_chave, pix_sandbox } = req.body;
 
+    const encClientId = pix_client_id && pix_client_id !== '****'
+      ? encryptField(pix_client_id) : pix_client_id;
     const encClientSecret = pix_client_secret && pix_client_secret !== '****'
       ? encryptField(pix_client_secret) : pix_client_secret;
     const encCertificado = pix_certificado && pix_certificado !== 'configurado'
@@ -6659,7 +6661,7 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool,
     await pool.query(
       `UPDATE configuracoes
        SET pix_gateway       = 'efi',
-           pix_client_id     = $3,
+           pix_client_id     = COALESCE(NULLIF($3, '****'), pix_client_id),
            pix_client_secret = COALESCE(NULLIF($4, '****'), pix_client_secret),
            pix_certificado   = COALESCE(NULLIF($5, 'configurado'), pix_certificado),
            pix_chave         = $6,
@@ -6667,7 +6669,7 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool,
            atualizado_em     = NOW()
        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
       [empresaResolvida.id, empresaResolvida.nome,
-       encryptField(pix_client_id), encClientSecret, encCertificado,
+       encClientId, encClientSecret, encCertificado,
        pix_chave, pix_sandbox ?? true]
     );
 
