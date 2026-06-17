@@ -1001,6 +1001,7 @@ MAX(v.data) AS ultima_venda
           SELECT venda_id,
                  SUM(quantidade * COALESCE(custo_unitario, 0)) AS cmv
           FROM venda_itens
+          WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)
           GROUP BY venda_id
         ) vi_cmv ON vi_cmv.venda_id = v.id
         ${vendaWhere}

@@ -239,7 +239,7 @@ module.exports = ({
              COUNT(*)            AS num_vendas,
              SUM(v.total)        AS receita_total
            FROM vendas v
-           LEFT JOIN clientes c ON c.id = v.cliente_id
+           LEFT JOIN clientes c ON c.id = v.cliente_id AND c.empresa_id = v.empresa_id AND c.deletado_em IS NULL
            WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
              AND v.cliente_id IS NOT NULL
              ${periodoWhere}
@@ -314,15 +314,17 @@ module.exports = ({
       let sql = `
         SELECT c.id, c.empresa_id, c.nome, c.telefone, c.email, c.cpf, c.cpf_cnpj,
                c.endereco, c.nascimento, c.tabela_preco_id, c.criado_em, c.atualizado_em,
-               COALESCE((
-                 SELECT SUM(COALESCE(cr.valor_atualizado, cr.valor))
-                 FROM contas_receber cr
-                 WHERE cr.cliente_id = c.id
-                   AND cr.empresa_id = c.empresa_id
-                   AND LOWER(COALESCE(cr.status, 'pendente')) NOT IN ('pago')
-                   AND cr.deletado_em IS NULL
-               ), 0) AS total_em_aberto
+               COALESCE(cr_saldo.total_em_aberto, 0) AS total_em_aberto
         FROM clientes c
+        LEFT JOIN (
+          SELECT cliente_id,
+                 SUM(COALESCE(valor_atualizado, valor)) AS total_em_aberto
+          FROM contas_receber
+          WHERE empresa_id = $1
+            AND status NOT IN ('pago')
+            AND deletado_em IS NULL
+          GROUP BY cliente_id
+        ) cr_saldo ON cr_saldo.cliente_id = c.id
         WHERE c.empresa_id = $1
         AND c.deletado_em IS NULL
       `;
