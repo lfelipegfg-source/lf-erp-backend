@@ -282,7 +282,8 @@ module.exports = ({
     }
   });
 
-  router.get('/:empresa', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
+  router.get('/:empresa', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res, next) => {
+    if (req.params.empresa === 'admin') return next('route');
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -420,9 +421,29 @@ ${adicionarFiltroEmpresaSaaS({
         estoque,
         estoque_minimo,
         codigo_barras,
-        categoria
+        categoria,
+        codigo_interno,
+        gtin,
+        unidade,
+        descricao_completa,
+        peso_bruto,
+        peso_liquido,
+        comprimento_cm,
+        largura_cm,
+        altura_cm,
+        ncm,
+        cfop_padrao,
+        origem,
+        icms_cst,
+        icms_aliquota,
+        icms_base_calculo,
+        pis_cst,
+        pis_aliquota,
+        cofins_cst,
+        cofins_aliquota,
+        ipi_cst,
+        ipi_aliquota
       } = req.body;
-      req.body;
 
       if (!id) {
         return erro(res, 400, 'Produto inválido');
@@ -483,8 +504,29 @@ ${adicionarFiltroEmpresaSaaS({
             estoque_minimo = $11,
             codigo_barras = $12,
             categoria = $13,
+            codigo_interno = $14,
+            gtin = $15,
+            unidade = $16,
+            descricao_completa = $17,
+            peso_bruto = $18,
+            peso_liquido = $19,
+            comprimento_cm = $20,
+            largura_cm = $21,
+            altura_cm = $22,
+            ncm = $23,
+            cfop_padrao = $24,
+            origem = $25,
+            icms_cst = $26,
+            icms_aliquota = $27,
+            icms_base_calculo = $28,
+            pis_cst = $29,
+            pis_aliquota = $30,
+            cofins_cst = $31,
+            cofins_aliquota = $32,
+            ipi_cst = $33,
+            ipi_aliquota = $34,
             atualizado_em = NOW()
-          WHERE id = $14 AND empresa_id = $15`,
+          WHERE id = $35 AND empresa_id = $36`,
           [
             nome,
             precoFinal,
@@ -499,6 +541,27 @@ ${adicionarFiltroEmpresaSaaS({
             normalizarInt(estoque_minimo),
             codigo_barras || '',
             categoria || '',
+            codigo_interno !== undefined ? (codigo_interno || null) : atual.codigo_interno,
+            gtin !== undefined ? (gtin || null) : atual.gtin,
+            unidade || atual.unidade || 'UN',
+            descricao_completa !== undefined ? (descricao_completa || null) : atual.descricao_completa,
+            peso_bruto !== undefined ? (peso_bruto ? normalizarDecimal(peso_bruto) : null) : atual.peso_bruto,
+            peso_liquido !== undefined ? (peso_liquido ? normalizarDecimal(peso_liquido) : null) : atual.peso_liquido,
+            comprimento_cm !== undefined ? (comprimento_cm ? normalizarDecimal(comprimento_cm) : null) : atual.comprimento_cm,
+            largura_cm !== undefined ? (largura_cm ? normalizarDecimal(largura_cm) : null) : atual.largura_cm,
+            altura_cm !== undefined ? (altura_cm ? normalizarDecimal(altura_cm) : null) : atual.altura_cm,
+            ncm !== undefined ? (ncm || null) : atual.ncm,
+            cfop_padrao !== undefined ? (cfop_padrao || null) : atual.cfop_padrao,
+            origem !== undefined ? normalizarInt(origem) : atual.origem,
+            icms_cst !== undefined ? (icms_cst || null) : atual.icms_cst,
+            icms_aliquota !== undefined ? normalizarDecimal(icms_aliquota) : atual.icms_aliquota,
+            icms_base_calculo !== undefined ? normalizarDecimal(icms_base_calculo) : atual.icms_base_calculo,
+            pis_cst !== undefined ? (pis_cst || null) : atual.pis_cst,
+            pis_aliquota !== undefined ? normalizarDecimal(pis_aliquota) : atual.pis_aliquota,
+            cofins_cst !== undefined ? (cofins_cst || null) : atual.cofins_cst,
+            cofins_aliquota !== undefined ? normalizarDecimal(cofins_aliquota) : atual.cofins_aliquota,
+            ipi_cst !== undefined ? (ipi_cst || null) : atual.ipi_cst,
+            ipi_aliquota !== undefined ? normalizarDecimal(ipi_aliquota) : atual.ipi_aliquota,
             id,
             empresaResolvida.id
           ]

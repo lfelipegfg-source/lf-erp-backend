@@ -1030,7 +1030,8 @@ MAX(v.data) AS ultima_venda
       // ── 3. Contas a pagar pagas por mês ──────────────────────────────────
       const cpParams = [eId, eNome];
       let cpWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-                      AND LOWER(COALESCE(status,'pendente')) = 'pago' AND data_pagamento IS NOT NULL`;
+                      AND LOWER(COALESCE(status,'pendente')) = 'pago' AND data_pagamento IS NOT NULL
+                      AND compra_id IS NULL`;
       cpWhere += adicionarFiltroPeriodo({ campo: 'data_pagamento', params: cpParams, dataInicial, dataFinal, castDate: false });
 
       const cpResult = await pool.query(`

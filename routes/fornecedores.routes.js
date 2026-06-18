@@ -111,7 +111,8 @@ module.exports = function ({
     }
   });
 
-  router.get('/:empresa', auth, requirePermissao(pool, 'fornecedores', 'ver'), async (req, res) => {
+  router.get('/:empresa', auth, requirePermissao(pool, 'fornecedores', 'ver'), async (req, res, next) => {
+    if (req.params.empresa === 'admin') return next('route');
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
