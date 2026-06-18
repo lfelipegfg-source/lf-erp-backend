@@ -163,11 +163,12 @@ module.exports = ({
                ELSE 'pendente'
              END AS status_calc
            FROM contas_receber cr
-           WHERE cr.cliente_id = $1 AND cr.empresa_id = $2
+           WHERE cr.cliente_id = $1
+             AND (cr.empresa_id = $2 OR (cr.empresa_id IS NULL AND cr.empresa = $4))
            ORDER BY
              CASE WHEN LOWER(COALESCE(cr.status,'pendente')) = 'pago' THEN 1 ELSE 0 END,
              cr.data_vencimento ASC`,
-          [id, empresaResolvida.id, hoje]
+          [id, empresaResolvida.id, hoje, empresaResolvida.nome]
         ),
         pool.query(
           `SELECT
@@ -178,8 +179,9 @@ module.exports = ({
              COUNT(*) FILTER (WHERE LOWER(COALESCE(status,'pendente')) NOT IN ('pago')) AS qtd_pendente,
              COUNT(*) AS qtd_total
            FROM contas_receber
-           WHERE cliente_id = $1 AND empresa_id = $2`,
-          [id, empresaResolvida.id, hoje]
+           WHERE cliente_id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $4))`,
+          [id, empresaResolvida.id, hoje, empresaResolvida.nome]
         )
       ]);
 
@@ -321,17 +323,17 @@ module.exports = ({
           SELECT cliente_id,
                  SUM(COALESCE(valor_atualizado, valor)) AS total_em_aberto
           FROM contas_receber
-          WHERE empresa_id = $1
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
             AND status NOT IN ('pago')
             AND deletado_em IS NULL
           GROUP BY cliente_id
         ) cr_saldo ON cr_saldo.cliente_id = c.id
-        WHERE c.empresa_id = $1
+        WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
         AND c.deletado_em IS NULL
       `;
 
-      const params = [empresaResolvida.id];
-      let idx = 2;
+      const params = [empresaResolvida.id, empresaResolvida.nome];
+      let idx = 3;
 
       if (busca) {
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
@@ -535,8 +537,9 @@ module.exports = ({
       }
 
       const vendaResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM vendas WHERE cliente_id = $1 AND empresa_id = $2`,
-        [id, empresaResolvida.id]
+        `SELECT COUNT(*) AS total FROM vendas
+         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (Number(vendaResult.rows[0].total || 0) > 0) {

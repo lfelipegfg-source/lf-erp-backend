@@ -368,7 +368,7 @@ module.exports = function ({
             SELECT 1
             FROM contas_receber cr
             WHERE cr.venda_id = v.id
-              AND (cr.empresa_id = v.empresa_id OR cr.empresa = v.empresa)
+              AND (cr.empresa_id = v.empresa_id OR (cr.empresa_id IS NULL AND cr.empresa = v.empresa))
           )
       `;
 
@@ -379,7 +379,7 @@ module.exports = function ({
             SELECT 1
             FROM contas_pagar cp
             WHERE cp.compra_id = c.id
-              AND (cp.empresa_id = c.empresa_id OR cp.empresa = c.empresa)
+              AND (cp.empresa_id = c.empresa_id OR (cp.empresa_id IS NULL AND cp.empresa = c.empresa))
           )
       `;
 
@@ -625,11 +625,12 @@ module.exports = function ({
         castDate: false
       });
 
-      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC`;
+      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT 1000`;
 
       const result = await pool.query(sql, params);
+      const truncado = result.rows.length === 1000;
 
-      return res.json({ sucesso: true, dados: result.rows.map((row) => ({
+      return res.json({ sucesso: true, truncado, dados: result.rows.map((row) => ({
         ...row,
         valor: Number(row.valor || 0),
         parcela: Number(row.parcela || 1),
@@ -698,11 +699,12 @@ module.exports = function ({
         castDate: false
       });
 
-      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC`;
+      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT 1000`;
 
       const result = await pool.query(sql, params);
+      const truncado = result.rows.length === 1000;
 
-      return res.json({ sucesso: true, dados: result.rows.map((row) => ({
+      return res.json({ sucesso: true, truncado, dados: result.rows.map((row) => ({
         ...row,
         valor: Number(row.valor || 0),
         parcela: Number(row.parcela || 1),
@@ -1144,10 +1146,10 @@ MAX(v.data) AS ultima_venda
           AND (v.empresa_id = vi.empresa_id OR (vi.empresa_id IS NULL AND v.empresa = vi.empresa))
         LEFT JOIN produtos p
           ON p.id = vi.produto_id
-          AND p.empresa_id = $1
+          AND (p.empresa_id = $1 OR (p.empresa_id IS NULL AND p.empresa = $2))
         LEFT JOIN produto_grades pg
           ON pg.id = vi.grade_id
-          AND pg.empresa_id = $1
+          AND (pg.empresa_id = $1 OR (pg.empresa_id IS NULL AND pg.empresa = $2))
         ${where}
         GROUP BY vi.produto_id, vi.produto_nome, vi.grade_id, pg.atributo1, pg.atributo2
         ORDER BY faturamento_total DESC, vi.produto_nome ASC

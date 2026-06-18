@@ -442,7 +442,7 @@ module.exports = function ({
       }
 
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
-      const geraContaPagar = pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria';
+      const geraContaPagar = pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria' || pagamentoNormalizado === 'duplicata mercantil';
       const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;
 
       // Buscar fornecedor

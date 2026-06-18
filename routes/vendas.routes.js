@@ -1251,9 +1251,9 @@ ORDER BY parcela ASC
       await client.query(
         `
         DELETE FROM vendas
-        WHERE id = $1 AND empresa_id = $2
+        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         `,
-        [id, empresaResolvida.id]
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await client.query('COMMIT');

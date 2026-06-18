@@ -214,9 +214,10 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: true } : false,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000
+  max: 20,
+  min: 2,
+  idleTimeoutMillis: 60_000,
+  connectionTimeoutMillis: 10_000
 });
 
 // Disponibiliza pool para middlewares via app.locals
@@ -1155,7 +1156,6 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
     const lock = await client.query(`SELECT pg_try_advisory_xact_lock($1, 1)`, [lockKey]);
     if (!lock.rows[0].pg_try_advisory_xact_lock) {
       await client.query('ROLLBACK');
-      client.release();
       return;
     }
 
@@ -6547,7 +6547,7 @@ app.get('/dashboard/grafico', auth, async (req, res) => {
       ),
       pool.query(
         `SELECT
-           COALESCE(NULLIF(TRIM(forma_pagamento), ''), 'Outros') AS forma,
+           COALESCE(NULLIF(TRIM(pagamento), ''), 'Outros') AS forma,
            COUNT(*)                                              AS quantidade,
            COALESCE(SUM(total), 0)                              AS total
          FROM vendas
