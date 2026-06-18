@@ -134,7 +134,7 @@ module.exports = function ({
                  COUNT(*)   AS total_compras,
                  SUM(total) AS valor_total_compras
           FROM compras
-          WHERE empresa_id = $1
+          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
             AND LOWER(COALESCE(status, '')) != 'cancelada'
           GROUP BY fornecedor_id
         ) cs ON cs.fornecedor_id = f.id
@@ -142,8 +142,8 @@ module.exports = function ({
         AND f.deletado_em IS NULL
       `;
 
-      const params = [empresaResolvida.id];
-      let idx = 2;
+      const params = [empresaResolvida.id, empresaResolvida.nome];
+      let idx = 3;
 
       if (busca) {
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');

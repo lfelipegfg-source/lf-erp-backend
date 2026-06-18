@@ -216,8 +216,8 @@ module.exports = ({
       `
       DELETE FROM contas_receber
       WHERE venda_id = $1
-        AND (empresa_id = $2 OR empresa = $3)
-      `,
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+`,
       [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
 

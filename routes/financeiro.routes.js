@@ -300,7 +300,7 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + ($3 || ' days')::INTERVAL)::DATE
+             AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
           [empresaResolvida.id, empresaResolvida.nome, dias]
@@ -314,7 +314,7 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + ($3 || ' days')::INTERVAL)::DATE
+             AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
           [empresaResolvida.id, empresaResolvida.nome, dias]

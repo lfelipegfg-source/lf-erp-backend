@@ -375,7 +375,7 @@ module.exports = function ({
 
       const contasPagas = await client.query(
         `SELECT COUNT(*) AS total FROM contas_pagar
-         WHERE compra_id = $1 AND (empresa_id = $2 OR empresa = $3) AND LOWER(status) = 'pago'`,
+         WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND LOWER(status) = 'pago'`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
       if (Number(contasPagas.rows[0].total) > 0) {
@@ -427,11 +427,11 @@ module.exports = function ({
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
       await client.query(
-        `DELETE FROM movimentacoes_estoque WHERE referencia_tipo = 'compra' AND referencia_id = $1 AND (empresa_id = $2 OR empresa = $3)`,
+        `DELETE FROM movimentacoes_estoque WHERE referencia_tipo = 'compra' AND referencia_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
       await client.query(
-        `DELETE FROM contas_pagar WHERE compra_id = $1 AND (empresa_id = $2 OR empresa = $3) AND LOWER(status) != 'pago'`,
+        `DELETE FROM contas_pagar WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND LOWER(status) != 'pago'`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
@@ -672,7 +672,7 @@ module.exports = function ({
         const cnpjLimpo = cnpjFornecedor.replace(/\D/g, '');
         const fRes = await pool.query(
           `SELECT id, nome FROM fornecedores
-           WHERE (empresa_id = $1 OR empresa = $2)
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND replace(replace(replace(cnpj,'.',''),'-',''),'/','') = $3
              AND deletado_em IS NULL
            LIMIT 1`,
