@@ -298,7 +298,7 @@ module.exports = function ({
              COUNT(*) AS qtd
            FROM contas_receber
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
+             AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
              AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
            GROUP BY data_vencimento
@@ -312,7 +312,7 @@ module.exports = function ({
              COUNT(*) AS qtd
            FROM contas_pagar
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
+             AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
              AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
            GROUP BY data_vencimento

@@ -1284,9 +1284,15 @@ function agendarAtualizacaoNoturna() {
       const { rows: empresas } = await pool.query(
         `SELECT id, nome FROM empresas WHERE deletado_em IS NULL ORDER BY id`
       );
-      for (const emp of empresas) {
-        await atualizarStatusContasReceberPorEmpresa(emp.nome, emp.id);
-        await atualizarStatusContasPagarPorEmpresa(emp.nome, emp.id);
+      const batchSize = 5;
+      for (let i = 0; i < empresas.length; i += batchSize) {
+        const batch = empresas.slice(i, i + batchSize);
+        await Promise.all(
+          batch.flatMap(emp => [
+            atualizarStatusContasReceberPorEmpresa(emp.nome, emp.id),
+            atualizarStatusContasPagarPorEmpresa(emp.nome, emp.id)
+          ])
+        );
       }
       console.log(`[scheduler] Status financeiro atualizado para ${empresas.length} empresa(s) (meia-noite Fortaleza)`);
     } catch (err) {
@@ -3614,13 +3620,11 @@ THEN 'atrasado'
     const sqlPaginado = sql + ` ORDER BY cr.id DESC LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limite, offset);
 
-    const [result, resumoGlobalResult] = await Promise.all([
+    const [result, resumoGlobalResult, recebidosParciaisResult] = await Promise.all([
       pool.query(sqlPaginado, params),
-      pool.query(resumoGlobalSqlCR, filterParamsCR)
-    ]);
-
-    const recebidosParciaisResult = await pool.query(
-      `
+      pool.query(resumoGlobalSqlCR, filterParamsCR),
+      pool.query(
+        `
   SELECT COALESCE(SUM(lf.valor), 0) AS total
   FROM lancamentos_financeiros lf
   WHERE (
@@ -3641,8 +3645,9 @@ THEN 'atrasado'
         AND cr.empresa = lf.empresa
     )
   `,
-      [empresaResolvida.nome, empresaResolvida.id]
-    );
+        [empresaResolvida.nome, empresaResolvida.id]
+      )
+    ]);
 
     const contas = result.rows.map((row) => ({
       ...row,
@@ -6045,8 +6050,10 @@ app.get('/dashboard', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    await Promise.all([
+      atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id),
+      atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+    ]);
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
