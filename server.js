@@ -1281,13 +1281,18 @@ function agendarAtualizacaoNoturna() {
 
   async function rodar() {
     try {
-      await atualizarStatusContasReceberGlobal();
-      await atualizarStatusContasPagarGlobal();
-      console.log('[scheduler] Status financeiro atualizado (meia-noite Fortaleza)');
+      const { rows: empresas } = await pool.query(
+        `SELECT id, nome FROM empresas WHERE deletado_em IS NULL ORDER BY id`
+      );
+      for (const emp of empresas) {
+        await atualizarStatusContasReceberPorEmpresa(emp.nome, emp.id);
+        await atualizarStatusContasPagarPorEmpresa(emp.nome, emp.id);
+      }
+      console.log(`[scheduler] Status financeiro atualizado para ${empresas.length} empresa(s) (meia-noite Fortaleza)`);
     } catch (err) {
       console.error('[scheduler] Erro na atualização noturna:', err.message);
     }
-    setTimeout(rodar, 24 * 60 * 60 * 1000).unref();
+    setTimeout(rodar, msAteMeianoite()).unref(); // recalcula meia-noite a cada execução
   }
 
   const delay = msAteMeianoite();
@@ -3843,7 +3848,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       return jsonErro(res, 400, 'Cliente inválido');
     }
 
-    const _chEmpresaId = req.is_saas_owner ? null : (req.empresa_id || null);
+    const _chEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
     const _chEmpresaWhere = _chEmpresaId ? 'AND empresa_id = $2' : '';
     const _chParams = _chEmpresaId ? [clienteId, _chEmpresaId] : [clienteId];
 
@@ -4800,7 +4805,7 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
 app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const _cpEmpresaId = req.is_saas_owner ? null : (req.empresa_id || null);
+    const _cpEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
     const _cpEmpresaWhere = _cpEmpresaId ? 'AND cp.empresa_id = $3' : '';
     const _cpParams = _cpEmpresaId ? [id, hoje(), _cpEmpresaId] : [id, hoje()];
 
@@ -4989,8 +4994,9 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
           data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
       WHERE id = $4
+        AND (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $6))
       `,
-      [novoStatusCP, novoValorCP, dataPagamento, id]
+      [novoStatusCP, novoValorCP, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await registrarLogFinanceiro({

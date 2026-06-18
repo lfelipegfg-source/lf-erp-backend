@@ -141,8 +141,12 @@ ${filtroEmpresa}
       await client.query('BEGIN');
 
       const produtoResult = await client.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-        [produto_id, empresaResolvida.id]
+        `SELECT * FROM produtos
+         WHERE id = $1
+           AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           AND deletado_em IS NULL
+         FOR UPDATE`,
+        [produto_id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (produtoResult.rowCount === 0) {
@@ -165,12 +169,17 @@ ${filtroEmpresa}
         novoEstoque = estoqueAtual - qtd;
       }
 
-      await client.query(
+      const updProduto = await client.query(
         `UPDATE produtos
         SET estoque = $1, atualizado_em = NOW()
-        WHERE id = $2 AND empresa_id = $3`,
-        [novoEstoque, produto_id, empresaResolvida.id]
+        WHERE id = $2
+          AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+        [novoEstoque, produto_id, empresaResolvida.id, empresaResolvida.nome]
       );
+      if (updProduto.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 500, 'Falha ao atualizar estoque do produto');
+      }
 
       await registrarMovimentacaoEstoque({
         empresa: empresaResolvida.nome,
