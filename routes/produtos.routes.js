@@ -480,8 +480,8 @@ ${adicionarFiltroEmpresaSaaS({
         // duas edições concorrentes calculem a diferença de estoque com base no
         // mesmo valor "atual" e uma delas sobrescreva o resultado da outra.
         const atualResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-          [id, empresaResolvida.id]
+          `SELECT * FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
         );
 
         if (atualResult.rowCount === 0) {

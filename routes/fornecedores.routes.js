@@ -138,7 +138,7 @@ module.exports = function ({
             AND LOWER(COALESCE(status, '')) != 'cancelada'
           GROUP BY fornecedor_id
         ) cs ON cs.fornecedor_id = f.id
-        WHERE f.empresa_id = $1
+        WHERE (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
         AND f.deletado_em IS NULL
       `;
 
@@ -355,8 +355,8 @@ module.exports = function ({
       }
 
       const compraResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM compras WHERE fornecedor_id = $1 AND empresa_id = $2`,
-        [id, empresaResolvida.id]
+        `SELECT COUNT(*) AS total FROM compras WHERE fornecedor_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (Number(compraResult.rows[0].total || 0) > 0) {

@@ -3002,19 +3002,19 @@ app.get('/lixeira', auth, async (req, res) => {
     const [produtosR, clientesR, fornecedoresR] = await Promise.all([
       pool.query(
         `SELECT id, nome, categoria, deletado_em FROM produtos
-         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND deletado_em IS NOT NULL
          ORDER BY deletado_em DESC LIMIT 200`,
         [eId, eNome]
       ),
       pool.query(
         `SELECT id, nome, telefone, email, deletado_em FROM clientes
-         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND deletado_em IS NOT NULL
          ORDER BY deletado_em DESC LIMIT 200`,
         [eId, eNome]
       ),
       pool.query(
         `SELECT id, nome, telefone, email, deletado_em FROM fornecedores
-         WHERE (empresa_id = $1 OR empresa = $2) AND deletado_em IS NOT NULL
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND deletado_em IS NOT NULL
          ORDER BY deletado_em DESC LIMIT 200`,
         [eId, eNome]
       )
@@ -3051,7 +3051,7 @@ app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, async (req, re
       `UPDATE ${tabela}
        SET deletado_em = NULL, atualizado_em = NOW()
        WHERE id = $1
-         AND (empresa_id = $2 OR empresa = $3)
+         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
          AND deletado_em IS NOT NULL
        RETURNING id, nome`,
       [Number(id), eId, eNome]
@@ -3092,7 +3092,7 @@ app.delete('/lixeira/excluir/:tabela/:id', auth, writeRateLimiter, async (req, r
     const result = await pool.query(
       `DELETE FROM ${tabela}
        WHERE id = $1
-         AND (empresa_id = $2 OR empresa = $3)
+         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
          AND deletado_em IS NOT NULL
        RETURNING id`,
       [Number(id), eId, eNome]
@@ -5387,8 +5387,8 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
           frequencia = $10,
           observacao = $11,
           atualizado_em = NOW()
-      WHERE id = $12 AND (empresa_id = $13 OR empresa = $14)
-      `,
+      WHERE id = $12 AND (empresa_id = $13 OR (empresa_id IS NULL AND empresa = $14))
+`,
       [
         String(tipo).toLowerCase(),
         categoria,
@@ -5501,7 +5501,7 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
     }
 
     await pool.query(
-      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa = $2 OR empresa_id = $3)`,
+      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2))`,
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
 
@@ -6112,10 +6112,7 @@ app.get('/dashboard', auth, async (req, res) => {
 `;
 
     let lancamentosWhere = `
-  WHERE (
-    empresa = $1
-    OR empresa_id = $2
-  )
+  WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
   AND LOWER(COALESCE(status, 'pendente')) = 'pago'
   AND pagamento_data IS NOT NULL
 `;
@@ -6838,7 +6835,11 @@ app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
       { 'Authorization': `Bearer ${accessToken}` }, agentOpts);
 
     if (checkRes.status === 200 && checkRes.body.status === 'CONCLUIDA') {
-      await pool.query(`UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW() WHERE txid=$1`, [txid]);
+      await pool.query(
+        `UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW()
+         WHERE txid=$1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [txid, empresaResolvida.id, empresaResolvida.nome]
+      );
     }
 
     res.json({ status: checkRes.body.status || 'ATIVA' });
@@ -6929,9 +6930,10 @@ app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, async (req, res) =>
     const crResult = await pool.query(
       `SELECT cr.*, c.cpf, c.cpf_cnpj, c.telefone, c.email
        FROM contas_receber cr
-       LEFT JOIN clientes c ON c.id = cr.cliente_id AND c.empresa_id = cr.empresa_id
-       WHERE cr.id = $1 AND cr.empresa_id = $2`,
-      [Number(conta_receber_id), empresaResolvida.id]
+       LEFT JOIN clientes c ON c.id = cr.cliente_id
+         AND (c.empresa_id = cr.empresa_id OR (c.empresa_id IS NULL AND c.empresa = cr.empresa))
+       WHERE cr.id = $1 AND (cr.empresa_id = $2 OR (cr.empresa_id IS NULL AND cr.empresa = $3))`,
+      [Number(conta_receber_id), empresaResolvida.id, empresaResolvida.nome]
     );
 
     if (crResult.rowCount === 0) return jsonErro(res, 404, 'Conta a receber não encontrada');
