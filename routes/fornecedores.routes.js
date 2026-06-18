@@ -126,17 +126,18 @@ module.exports = function ({
       let sql = `
         SELECT f.id, f.empresa_id, f.nome, f.cnpj, f.telefone, f.email, f.endereco,
                f.criado_em, f.atualizado_em,
-               COALESCE((
-                 SELECT COUNT(*) FROM compras c
-                 WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
-                   AND LOWER(COALESCE(c.status, '')) != 'cancelada'
-               ), 0) AS total_compras,
-               COALESCE((
-                 SELECT SUM(c.total) FROM compras c
-                 WHERE c.fornecedor_id = f.id AND c.empresa_id = f.empresa_id
-                   AND LOWER(COALESCE(c.status, '')) != 'cancelada'
-               ), 0) AS valor_total_compras
+               COALESCE(cs.total_compras, 0)       AS total_compras,
+               COALESCE(cs.valor_total_compras, 0) AS valor_total_compras
         FROM fornecedores f
+        LEFT JOIN (
+          SELECT fornecedor_id,
+                 COUNT(*)   AS total_compras,
+                 SUM(total) AS valor_total_compras
+          FROM compras
+          WHERE empresa_id = $1
+            AND LOWER(COALESCE(status, '')) != 'cancelada'
+          GROUP BY fornecedor_id
+        ) cs ON cs.fornecedor_id = f.id
         WHERE f.empresa_id = $1
         AND f.deletado_em IS NULL
       `;
@@ -206,7 +207,8 @@ module.exports = function ({
       }
 
       if (busca) {
-        params.push(`%${busca}%`);
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
+        params.push(`%${buscaEsc}%`);
         where += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${params.length}
@@ -223,15 +225,25 @@ module.exports = function ({
         dataFinal
       });
 
-      const result = await pool.query(
-        `SELECT id, empresa_id, empresa, nome, cnpj, telefone, email, endereco, criado_em, atualizado_em
-        FROM fornecedores
-        ${where}
-        ORDER BY empresa ASC, nome ASC`,
-        params
-      );
+      const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
+      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const offset = (pagina - 1) * limite;
 
-      return res.json({ sucesso: true, dados: result.rows.map(normalizarFornecedor) });
+      const [countResult, result] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS total FROM fornecedores ${where}`, params),
+        pool.query(
+          `SELECT id, empresa_id, empresa, nome, cnpj, telefone, email, endereco, criado_em, atualizado_em FROM fornecedores ${where} ORDER BY empresa ASC, nome ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+          [...params, limite, offset]
+        )
+      ]);
+
+      return res.json({
+        sucesso: true,
+        dados:  result.rows.map(normalizarFornecedor),
+        total:  Number(countResult.rows[0]?.total || 0),
+        pagina,
+        limite
+      });
     } catch (error) {
       console.error('Erro real ao buscar fornecedores admin:', error);
       return erro(res, 500, 'Erro ao buscar fornecedores');

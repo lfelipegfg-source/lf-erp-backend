@@ -88,7 +88,9 @@ module.exports = function ({
 
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
       const geraContaPagar =
-        pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria';
+        pagamentoNormalizado === 'boleto' ||
+        pagamentoNormalizado === 'promissoria' ||
+        pagamentoNormalizado === 'duplicata mercantil';
       const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;
 
       const compraResult = await client.query(
@@ -383,7 +385,8 @@ module.exports = function ({
 
       // Reverter estoque dos itens originais
       const itensOriginais = await client.query(
-        `SELECT * FROM compra_itens WHERE compra_id = $1`, [id]
+        `SELECT * FROM compra_itens WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       // Pré-busca todos os produtos originais em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)
@@ -419,7 +422,10 @@ module.exports = function ({
       }
 
       // Limpar dados originais
-      await client.query(`DELETE FROM compra_itens WHERE compra_id = $1`, [id]);
+      await client.query(
+        `DELETE FROM compra_itens WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
+      );
       await client.query(
         `DELETE FROM movimentacoes_estoque WHERE referencia_tipo = 'compra' AND referencia_id = $1 AND (empresa_id = $2 OR empresa = $3)`,
         [id, empresaResolvida.id, empresaResolvida.nome]
@@ -690,7 +696,7 @@ module.exports = function ({
       });
     } catch (error) {
       console.error('[compras] importar-xml:', error.message);
-      return erro(res, 500, 'Erro ao processar XML: ' + error.message);
+      return erro(res, 500, 'Erro ao processar o XML da nota fiscal');
     }
   });
 

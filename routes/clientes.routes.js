@@ -396,7 +396,8 @@ module.exports = ({
       }
 
       if (busca) {
-        params.push(`%${busca}%`);
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
+        params.push(`%${buscaEsc}%`);
         where += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${params.length}
@@ -413,15 +414,24 @@ module.exports = ({
         dataFinal
       });
 
-      const result = await pool.query(
-        `SELECT *
-        FROM clientes
-        ${where}
-        ORDER BY empresa ASC, nome ASC`,
-        params
-      );
+      const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
+      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const offset = (pagina - 1) * limite;
 
-      return res.json(result.rows.map(normalizarCliente));
+      const [countResult, result] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS total FROM clientes ${where}`, params),
+        pool.query(
+          `SELECT * FROM clientes ${where} ORDER BY empresa ASC, nome ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+          [...params, limite, offset]
+        )
+      ]);
+
+      return res.json({
+        dados: result.rows.map(normalizarCliente),
+        total: Number(countResult.rows[0]?.total || 0),
+        pagina,
+        limite
+      });
     } catch (error) {
       console.error('Erro real ao buscar clientes admin:', error);
       return erro(res, 500, 'Erro ao buscar clientes');

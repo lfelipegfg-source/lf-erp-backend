@@ -441,7 +441,7 @@ module.exports = function ({
             'conta_receber' AS origem,
             'entrada' AS tipo,
             COALESCE(cliente_nome, 'Cliente não informado') AS descricao,
-            valor,
+            COALESCE(valor_atualizado, valor) AS valor,
             data_pagamento AS data_movimento,
             forma_pagamento,
             venda_id AS referencia_id,
@@ -1144,8 +1144,10 @@ MAX(v.data) AS ultima_venda
           AND (v.empresa_id = vi.empresa_id OR (vi.empresa_id IS NULL AND v.empresa = vi.empresa))
         LEFT JOIN produtos p
           ON p.id = vi.produto_id
+          AND p.empresa_id = $1
         LEFT JOIN produto_grades pg
           ON pg.id = vi.grade_id
+          AND pg.empresa_id = $1
         ${where}
         GROUP BY vi.produto_id, vi.produto_nome, vi.grade_id, pg.atributo1, pg.atributo2
         ORDER BY faturamento_total DESC, vi.produto_nome ASC

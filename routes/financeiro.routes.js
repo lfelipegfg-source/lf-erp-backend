@@ -297,13 +297,13 @@ module.exports = function ({
              SUM(COALESCE(valor_atualizado, valor)) AS valor,
              COUNT(*) AS qtd
            FROM contas_receber
-           WHERE empresa_id = $1
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + ($2 || ' days')::INTERVAL)::DATE
+             AND data_vencimento <= (CURRENT_DATE + ($3 || ' days')::INTERVAL)::DATE
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, dias]
+          [empresaResolvida.id, empresaResolvida.nome, dias]
         ),
         pool.query(
           `SELECT
@@ -311,13 +311,13 @@ module.exports = function ({
              SUM(valor) AS valor,
              COUNT(*) AS qtd
            FROM contas_pagar
-           WHERE empresa_id = $1
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + ($2 || ' days')::INTERVAL)::DATE
+             AND data_vencimento <= (CURRENT_DATE + ($3 || ' days')::INTERVAL)::DATE
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, dias]
+          [empresaResolvida.id, empresaResolvida.nome, dias]
         )
       ]);
 
@@ -337,6 +337,10 @@ module.exports = function ({
       }
 
       // Cria array de dias com saldo acumulado
+      const fmtFortaleza = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Fortaleza',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
       const hoje = new Date();
       let saldoAcum = 0;
       const projecao = [];
@@ -344,7 +348,7 @@ module.exports = function ({
       for (let i = 0; i <= dias; i++) {
         const d = new Date(hoje);
         d.setDate(d.getDate() + i);
-        const key = d.toISOString().slice(0, 10);
+        const key = fmtFortaleza.format(d);
         const entrada = mapaEntradas[key] || 0;
         const saida   = mapaSaidas[key]   || 0;
 

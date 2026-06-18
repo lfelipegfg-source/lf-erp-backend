@@ -21,6 +21,11 @@ function addDias(dataBase, dias) {
   return data.toISOString().slice(0, 10);
 }
 
+const _fmtDataFortaleza = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Fortaleza',
+  year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
 function normalizarDataISO(valor) {
   if (!valor) return null;
 
@@ -32,7 +37,7 @@ function normalizarDataISO(valor) {
 
   if (Number.isNaN(d.getTime())) return null;
 
-  return d.toISOString().slice(0, 10);
+  return _fmtDataFortaleza.format(d);
 }
 
 // Valida itens de venda: produto_id e quantidade obrigatórios e positivos

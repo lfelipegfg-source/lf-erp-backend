@@ -2727,24 +2727,31 @@ app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios',
 
     const senhaHash = await bcrypt.hash(senha.trim(), 10);
 
-    const result = await pool.query(
-      `
+    const clienteTx = await pool.connect();
+    let novoUsuario;
+    try {
+      await clienteTx.query('BEGIN');
+
+      const result = await clienteTx.query(
+        `
         INSERT INTO usuarios
-        (empresa, nome_completo, usuario, senha, tipo, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+        (empresa, empresa_id, nome_completo, usuario, senha, tipo, criado_em, atualizado_em)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
         RETURNING id
         `,
-      [empresaResolvida.nome, nome.trim(), usuario.trim(), senhaHash, tipo]
-    );
+        [empresaResolvida.nome, empresaResolvida.id, nome.trim(), usuario.trim(), senhaHash, tipo]
+      );
+      novoUsuario = result.rows[0];
 
-    await pool.query(
-      `UPDATE usuarios
-        SET empresa_id = $1
-        WHERE id = $2`,
-      [empresaResolvida.id, result.rows[0].id]
-    );
+      await clienteTx.query('COMMIT');
+    } catch (txErr) {
+      await clienteTx.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      clienteTx.release();
+    }
 
-    res.json(result.rows[0]);
+    res.json(novoUsuario);
   } catch (error) {
     console.error('Erro ao criar usuário:', error);
     jsonErro(res, 500, 'Erro ao criar usuário');
@@ -3531,9 +3538,8 @@ THEN 'atrasado'
       FROM contas_receber cr
       LEFT JOIN vendas v
         ON v.id = cr.venda_id
-       AND v.empresa = cr.empresa
-      WHERE cr.empresa = $1
-        AND (cr.empresa_id IS NULL OR cr.empresa_id = $3)
+       AND (v.empresa_id = cr.empresa_id OR (cr.empresa_id IS NULL AND v.empresa = cr.empresa))
+      WHERE (cr.empresa_id = $3 OR (cr.empresa_id IS NULL AND cr.empresa = $1))
     `;
 
     const params = [empresaResolvida.nome, hoje(), empresaResolvida.id];
@@ -4374,8 +4380,9 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
           status = $2,
           atualizado_em = NOW()
       WHERE id = $3
+        AND (empresa_id = $4 OR (empresa_id IS NULL AND empresa = $5))
       `,
-      [novoValorConta, novoStatus, contaId]
+      [novoValorConta, novoStatus, contaId, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query(
@@ -4385,8 +4392,9 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
           observacao = COALESCE(observacao, '') || ' | Estornado em ' || NOW(),
           atualizado_em = NOW()
       WHERE id = $1
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [lancamentoId]
+      [lancamentoId, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query('COMMIT');
@@ -4681,9 +4689,8 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
       FROM contas_pagar cp
       LEFT JOIN compras c
         ON c.id = cp.compra_id
-       AND c.empresa = cp.empresa
-      WHERE cp.empresa = $1
-        AND (cp.empresa_id IS NULL OR cp.empresa_id = $3)
+       AND (c.empresa_id = cp.empresa_id OR (cp.empresa_id IS NULL AND c.empresa = cp.empresa))
+      WHERE (cp.empresa_id = $3 OR (cp.empresa_id IS NULL AND cp.empresa = $1))
     `;
 
     const params = [empresaResolvida.nome, hoje(), empresaResolvida.id];

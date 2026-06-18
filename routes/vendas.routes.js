@@ -118,11 +118,7 @@ module.exports = ({
       SELECT 1
       FROM contas_receber
       WHERE venda_id = $1
-        AND (
-          empresa_id = $2
-          OR empresa = $3
-          OR empresa_id IS NULL
-        )
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         AND LOWER(COALESCE(status, 'pendente')) = 'pago'
       LIMIT 1
       `,
@@ -239,8 +235,9 @@ module.exports = ({
       `
       DELETE FROM venda_itens
       WHERE venda_id = $1
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [vendaId]
+      [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
   }
 
@@ -319,8 +316,8 @@ module.exports = ({
 
         // Baixa estoque da grade
         await client.query(
-          `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW() WHERE id = $2`,
-          [estoqueGrade - quantidade, gradeId]
+          `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+          [estoqueGrade - quantidade, gradeId, empresaResolvida.id]
         );
 
         // Sincroniza estoque do produto-pai como soma das grades
@@ -674,15 +671,12 @@ module.exports = ({
 
       await client.query('BEGIN');
 
-      const vendaResult = await client.query(
-        `
-        SELECT *
-        FROM vendas
-        WHERE id = $1
-        LIMIT 1
-        `,
-        [id]
-      );
+      const vendaResult = req.user.is_saas_owner
+        ? await client.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id])
+        : await client.query(
+            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
 
       if (vendaResult.rowCount === 0) {
         await client.query('ROLLBACK');

@@ -310,6 +310,7 @@ ${adicionarFiltroEmpresaSaaS({
       let idx = params.length + 1;
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${idx}
@@ -317,7 +318,7 @@ ${adicionarFiltroEmpresaSaaS({
             OR LOWER(COALESCE(codigo_barras, '')) LIKE $${idx}
           )
         `;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 
@@ -372,7 +373,8 @@ ${adicionarFiltroEmpresaSaaS({
       }
 
       if (busca) {
-        params.push(`%${busca}%`);
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
+        params.push(`%${buscaEsc}%`);
         where += `
           AND (
             LOWER(COALESCE(nome, '')) LIKE $${params.length}
@@ -389,16 +391,27 @@ ${adicionarFiltroEmpresaSaaS({
         dataFinal
       });
 
-      const result = await pool.query(
-        `SELECT *,
-                CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN TRUE ELSE FALSE END AS alerta_estoque
-        FROM produtos
-        ${where}
-        ORDER BY empresa ASC, nome ASC`,
-        params
-      );
+      const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
+      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const offset = (pagina - 1) * limite;
 
-      return res.json({ sucesso: true, dados: result.rows.map(normalizarProduto) });
+      const [countResult, result] = await Promise.all([
+        pool.query(`SELECT COUNT(*) AS total FROM produtos ${where}`, params),
+        pool.query(
+          `SELECT *,
+                  CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN TRUE ELSE FALSE END AS alerta_estoque
+          FROM produtos ${where} ORDER BY empresa ASC, nome ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+          [...params, limite, offset]
+        )
+      ]);
+
+      return res.json({
+        sucesso: true,
+        dados:  result.rows.map(normalizarProduto),
+        total:  Number(countResult.rows[0]?.total || 0),
+        pagina,
+        limite
+      });
     } catch (error) {
       console.error('Erro real ao buscar produtos admin:', error);
       return erro(res, 500, 'Erro ao buscar produtos');
@@ -692,27 +705,31 @@ ${adicionarFiltroEmpresaSaaS({
         return erro(res, 400, 'Produto já possui movimentações e não pode ser excluído');
       }
 
-      await pool.query(
-        `DELETE FROM movimentacoes_estoque
-WHERE produto_id = $1
-AND (
-  empresa_id = $2
-  OR (
-    empresa_id IS NULL
-    AND empresa = $3
-  )
-)`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
+      const clienteDel = await pool.connect();
+      try {
+        await clienteDel.query('BEGIN');
 
-      await pool.query(
-        `UPDATE produtos
-   SET deletado_em = NOW(),
-       atualizado_em = NOW()
-   WHERE id = $1
-   AND empresa_id = $2`,
-        [id, empresaResolvida.id]
-      );
+        await clienteDel.query(
+          `DELETE FROM movimentacoes_estoque
+           WHERE produto_id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        await clienteDel.query(
+          `UPDATE produtos
+           SET deletado_em = NOW(), atualizado_em = NOW()
+           WHERE id = $1 AND empresa_id = $2`,
+          [id, empresaResolvida.id]
+        );
+
+        await clienteDel.query('COMMIT');
+      } catch (txErr) {
+        await clienteDel.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        clienteDel.release();
+      }
 
       await registrarAuditoria({
         empresa: empresaResolvida.nome,
