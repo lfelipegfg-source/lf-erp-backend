@@ -231,7 +231,7 @@ module.exports = ({
 
       const [devRes, itensRes] = await Promise.all([
         pool.query(`SELECT * FROM devolucoes WHERE id = $1 AND empresa_id = $2`, [Number(req.params.id), emp.id]),
-        pool.query(`SELECT * FROM devolucao_itens WHERE devolucao_id = $1`, [Number(req.params.id)])
+        pool.query(`SELECT * FROM devolucao_itens WHERE devolucao_id = $1 AND empresa_id = $2`, [Number(req.params.id), emp.id])
       ]);
 
       if (devRes.rowCount === 0) return erro(res, 404, 'Devolução não encontrada');

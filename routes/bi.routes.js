@@ -157,7 +157,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
       const limit  = Math.min(20, Number(req.query.limit) || 10);
       const { inicio, fim } = req.query;
 
-      const params = [e.id];
+      const params = [e.id, e.nome];
       let dataCond = '';
       if (inicio) { params.push(inicio); dataCond += ` AND v.data >= $${params.length}`; }
       if (fim)    { params.push(fim);    dataCond += ` AND v.data <= $${params.length}`; }
@@ -170,7 +170,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
                 COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario,0)), 0) AS custo
          FROM venda_itens vi
          JOIN vendas v ON v.id = vi.venda_id
-         WHERE vi.empresa_id = $1 ${dataCond}
+         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2)) ${dataCond}
          GROUP BY vi.produto_nome
          ORDER BY receita DESC
          LIMIT ${limit}`,
@@ -284,7 +284,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const { inicio, fim } = req.query;
-      const params = [e.id];
+      const params = [e.id, e.nome];
       let dataCond = '';
       if (inicio) { params.push(inicio); dataCond += ` AND v.data >= $${params.length}`; }
       if (fim)    { params.push(fim);    dataCond += ` AND v.data <= $${params.length}`; }
@@ -297,7 +297,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
          FROM venda_itens vi
          JOIN vendas v ON v.id = vi.venda_id
          LEFT JOIN produtos p ON p.id = vi.produto_id
-         WHERE vi.empresa_id = $1 ${dataCond}
+         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2)) ${dataCond}
          GROUP BY categoria
          ORDER BY receita DESC`,
         params

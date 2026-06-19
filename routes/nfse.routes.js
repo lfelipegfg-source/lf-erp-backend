@@ -154,7 +154,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const ref    = `nfse_${empresaResolvida.id}_${rpsNum}_${crypto.randomBytes(4).toString('hex')}`;
 
       const payload = {
-        data_emissao:  data_emissao || new Date().toISOString(),
+        data_emissao:  data_emissao || new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' }).format(new Date()),
         serie:         cfg.rps_serie || '1',
         rps_numero:    rpsNum,
         rps_tipo:      'RPS',

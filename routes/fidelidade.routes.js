@@ -297,7 +297,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
           [qtd, Number(cliente_id), e.id]
         );
 
-        const saldoRes = await client.query(`SELECT pontos_fidelidade FROM clientes WHERE id = $1`, [Number(cliente_id)]);
+        const saldoRes = await client.query(`SELECT pontos_fidelidade FROM clientes WHERE id = $1 AND empresa_id = $2`, [Number(cliente_id), e.id]);
         const saldo = saldoRes.rows[0]?.pontos_fidelidade || 0;
 
         await client.query(
@@ -343,7 +343,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       let expirados = 0;
       for (const row of vencidosResult.rows) {
-        const pontosBaixar = Math.min(Number(row.pontos_a_expirar), (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1`, [row.cliente_id])).rows[0]?.p || 0);
+        const pontosBaixar = Math.min(Number(row.pontos_a_expirar), (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2`, [row.cliente_id, e.id])).rows[0]?.p || 0);
         if (pontosBaixar <= 0) continue;
 
         await pool.query(
@@ -351,7 +351,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
           [pontosBaixar, row.cliente_id]
         );
 
-        const saldo = (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1`, [row.cliente_id])).rows[0]?.p || 0;
+        const saldo = (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2`, [row.cliente_id, e.id])).rows[0]?.p || 0;
 
         await pool.query(
           `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo)

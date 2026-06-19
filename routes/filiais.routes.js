@@ -159,8 +159,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const result = await pool.query(
         `SELECT f.*,
-                (SELECT COUNT(*) FROM vendas WHERE filial_id = f.id)  AS total_vendas,
-                (SELECT COUNT(*) FROM compras WHERE filial_id = f.id) AS total_compras
+                (SELECT COUNT(*) FROM vendas  WHERE filial_id = f.id AND empresa_id = f.empresa_id) AS total_vendas,
+                (SELECT COUNT(*) FROM compras WHERE filial_id = f.id AND empresa_id = f.empresa_id) AS total_compras
          FROM filiais f WHERE f.empresa_id = $1 ORDER BY f.principal DESC, f.nome`,
         [e.id]
       );
