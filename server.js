@@ -2124,23 +2124,6 @@ async function initDb() {
     );
   }
 
-  // ================= PILOTO — LUCILEIDE VARIEDADES =================
-  // Empresa piloto fica sempre no plano premium, ativa, sem bloqueio
-  const premiumId = await pool.query(`SELECT id FROM planos WHERE codigo = 'premium' LIMIT 1`);
-  const premiumPlanoId = premiumId.rows[0]?.id || null;
-
-  await pool.query(
-    `UPDATE empresas
-     SET plano_id         = COALESCE($1, plano_id),
-         assinatura_status = 'ativo',
-         bloqueada         = FALSE,
-         motivo_bloqueio   = NULL,
-         trial_fim         = NULL,
-         atualizado_em     = NOW()
-     WHERE LOWER(nome) = 'lucileide variedades'`,
-    [premiumPlanoId]
-  );
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS jwt_blacklist (
       token_hash TEXT PRIMARY KEY,
@@ -2156,45 +2139,6 @@ async function initDb() {
 
 app.get('/', (req, res) => {
   res.send('LF ERP backend online 🚀');
-});
-
-app.post('/reset-dados', auth, async (req, res) => {
-  try {
-    if (!req.user.is_saas_owner) {
-      return jsonErro(res, 403, 'Sem permissão');
-    }
-
-    const resetToken = process.env.RESET_SECRET;
-    const headerToken = req.headers['x-reset-token'];
-
-    const _bufReset = Buffer.from(resetToken);
-    const _bufHeader = Buffer.from(headerToken || '');
-    if (!resetToken || !headerToken || _bufReset.length !== _bufHeader.length || !crypto.timingSafeEqual(_bufReset, _bufHeader)) {
-      return jsonErro(res, 403, 'Token de reset inválido ou ausente');
-    }
-
-    await pool.query(`
-      TRUNCATE TABLE
-        venda_itens,
-        vendas,
-        compra_itens,
-        compras,
-        contas_receber,
-        contas_pagar,
-        movimentacoes_estoque,
-        lancamentos_financeiros,
-        investimentos,
-        produtos,
-        clientes,
-        fornecedores
-      RESTART IDENTITY CASCADE
-    `);
-
-    res.json({ sucesso: true, mensagem: 'Dados resetados com sucesso' });
-  } catch (error) {
-    console.error('Erro no reset:', error);
-    jsonErro(res, 500, 'Erro ao resetar dados');
-  }
 });
 
 // ================= AUTH =================
