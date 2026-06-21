@@ -61,10 +61,10 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       const vendasResult = await pool.query(
         `SELECT COALESCE(SUM(total), 0) AS total_vendas, COUNT(*) AS qtd_vendas
          FROM vendas
-         WHERE empresa_id = $1
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
            AND data >= $2::date
            AND LOWER(pagamento) IN ('dinheiro','pix')`,
-        [emp.id, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date(sessao.aberto_em))]
+        [emp.id, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date(sessao.aberto_em)), emp.nome]
       );
       const vendas = vendasResult.rows[0];
 
@@ -172,11 +172,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
 
   // ── POST /caixa/fechar ───────────────────────────────────────────────────
   router.post('/fechar', auth, writeRateLimiter, async (req, res) => {
+    const emp = await getEmpresa(req);
+    if (!emp) return erro(res, 403, 'Sem acesso');
+
     const client = await pool.connect();
     try {
-      const emp = await getEmpresa(req);
-      if (!emp) return erro(res, 403, 'Sem acesso');
-
       await client.query('BEGIN');
 
       // FOR UPDATE trava a sessão para evitar que dois fechamentos concorrentes

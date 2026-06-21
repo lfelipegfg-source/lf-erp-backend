@@ -51,8 +51,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         ),
         pool.query(
           `SELECT
-             COUNT(*) FILTER (WHERE estagio = 'ganho' AND DATE_TRUNC('month', atualizado_em) = DATE_TRUNC('month', NOW())) AS ganhas_mes,
-             COALESCE(SUM(valor_estimado) FILTER (WHERE estagio = 'ganho' AND DATE_TRUNC('month', atualizado_em) = DATE_TRUNC('month', NOW())), 0) AS valor_ganho_mes,
+             COUNT(*) FILTER (WHERE estagio = 'ganho' AND DATE_TRUNC('month', atualizado_em AT TIME ZONE 'America/Fortaleza') = DATE_TRUNC('month', NOW() AT TIME ZONE 'America/Fortaleza')) AS ganhas_mes,
+             COALESCE(SUM(valor_estimado) FILTER (WHERE estagio = 'ganho' AND DATE_TRUNC('month', atualizado_em AT TIME ZONE 'America/Fortaleza') = DATE_TRUNC('month', NOW() AT TIME ZONE 'America/Fortaleza')), 0) AS valor_ganho_mes,
              COUNT(*) FILTER (WHERE estagio NOT IN ('ganho','perdido')) AS em_aberto,
              COALESCE(SUM(valor_estimado) FILTER (WHERE estagio NOT IN ('ganho','perdido')), 0) AS valor_pipeline
            FROM crm_oportunidades
@@ -186,8 +186,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
           [id, emp.id]
         ),
         pool.query(
-          `SELECT * FROM crm_atividades WHERE oportunidade_id = $1 ORDER BY data DESC, criado_em DESC`,
-          [id]
+          `SELECT * FROM crm_atividades WHERE oportunidade_id = $1 AND empresa_id = $2 ORDER BY data DESC, criado_em DESC`,
+          [id, emp.id]
         )
       ]);
 
@@ -336,8 +336,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       // Marca oportunidade como "em proposta" se ainda não avançou
       if (!['proposta', 'negociacao', 'ganho'].includes(op.estagio)) {
         await pool.query(
-          `UPDATE crm_oportunidades SET estagio = 'proposta', atualizado_em = NOW() WHERE id = $1`,
-          [id]
+          `UPDATE crm_oportunidades SET estagio = 'proposta', atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          [id, emp.id]
         );
       }
 

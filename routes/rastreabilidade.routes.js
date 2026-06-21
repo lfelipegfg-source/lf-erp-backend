@@ -234,9 +234,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
            FROM rastreabilidade_movimentos m
            LEFT JOIN vendas v ON v.id = m.referencia_id AND m.referencia_tipo = 'venda'
            LEFT JOIN compras c ON c.id = m.referencia_id AND m.referencia_tipo = 'compra'
-           WHERE m.lote_id = $1
+           WHERE m.lote_id = $1 AND m.empresa_id = $2
            ORDER BY m.criado_em DESC`,
-          [Number(req.params.id)]
+          [Number(req.params.id), e.id]
         )
       ]);
 
@@ -301,8 +301,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const movCount = await pool.query(
-        `SELECT COUNT(*) FROM rastreabilidade_movimentos WHERE lote_id = $1`,
-        [Number(req.params.id)]
+        `SELECT COUNT(*) FROM rastreabilidade_movimentos WHERE lote_id = $1 AND empresa_id = $2`,
+        [Number(req.params.id), e.id]
       );
       if (Number(movCount.rows[0].count) > 0) return erro(res, 400, 'Não é possível excluir lote com movimentos registrados');
 

@@ -16,6 +16,7 @@
  */
 
 const https = require('https');
+const crypto = require('crypto');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje, registrarMovimentacaoEstoque, criarParcelasContasReceber }) {
   const router = require('express').Router();
@@ -119,8 +120,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   async function processarPedidoML({ orderId, empresaId, empresaNome, token }) {
     // 1. Idempotência
     const jaProcessado = await pool.query(
-      `SELECT id, venda_id FROM marketplace_pedidos WHERE plataforma = 'mercadolivre' AND pedido_externo = $1`,
-      [String(orderId)]
+      `SELECT id, venda_id FROM marketplace_pedidos WHERE plataforma = 'mercadolivre' AND pedido_externo = $1 AND empresa_id = $2`,
+      [String(orderId), empresaId]
     );
     if (jaProcessado.rowCount > 0) {
       return { jaProcessado: true, vendaId: jaProcessado.rows[0].venda_id };
@@ -338,7 +339,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!cfg?.app_id) return erro(res, 400, 'Configure o App ID antes de autorizar');
 
       const redirectUri = process.env.MARKETPLACE_REDIRECT_URI || `${process.env.BACKEND_URL || ''}/marketplace/oauth/callback`;
-      const state = Buffer.from(JSON.stringify({ empresa_id: empresaResolvida.id, plataforma })).toString('base64');
+      const stateSecret = process.env.JWT_SECRET || 'lferp-marketplace-state';
+      const statePayload = JSON.stringify({ empresa_id: empresaResolvida.id, plataforma, ts: Date.now() });
+      const stateSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
+      const state = Buffer.from(JSON.stringify({ p: statePayload, s: stateSig })).toString('base64url');
 
       let url;
       if (plataforma === 'mercadolivre') {
@@ -359,7 +363,19 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const { code, state } = req.query;
       if (!code || !state) return res.send('<h3>Parâmetros inválidos</h3>');
 
-      const { empresa_id, plataforma } = JSON.parse(Buffer.from(state, 'base64').toString());
+      let empresa_id, plataforma;
+      try {
+        const stateSecret = process.env.JWT_SECRET || 'lferp-marketplace-state';
+        const { p: statePayload, s: stateSig } = JSON.parse(Buffer.from(state, 'base64url').toString());
+        const expectedSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
+        if (stateSig !== expectedSig) return res.send('<h3>State inválido ou adulterado</h3>');
+        const parsed = JSON.parse(statePayload);
+        if (Date.now() - parsed.ts > 15 * 60 * 1000) return res.send('<h3>Autorização expirada. Tente novamente.</h3>');
+        empresa_id = parsed.empresa_id;
+        plataforma = parsed.plataforma;
+      } catch {
+        return res.send('<h3>State malformado</h3>');
+      }
       const cfg = await getConfig(empresa_id, plataforma);
       if (!cfg) return res.send('<h3>Configuração não encontrada</h3>');
 
@@ -449,8 +465,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       // Atualiza sync local
       await pool.query(
-        `UPDATE marketplace_produtos SET estoque_publicado = $1, ultimo_sync = NOW() WHERE id = $2`,
-        [estoqueAtual, link.id]
+        `UPDATE marketplace_produtos SET estoque_publicado = $1, ultimo_sync = NOW() WHERE id = $2 AND empresa_id = $3`,
+        [estoqueAtual, link.id, empresaResolvida.id]
       );
 
       return ok(res, { mensagem: `Estoque sincronizado: ${estoqueAtual} unidades`, listing_id: link.listing_id });

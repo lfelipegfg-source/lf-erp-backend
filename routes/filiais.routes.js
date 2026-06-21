@@ -49,7 +49,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const vendasResult = await pool.query(
         `SELECT filial_id, COUNT(*) AS qtd_vendas, COALESCE(SUM(total),0) AS total_vendas
          FROM vendas
-         WHERE (empresa_id = $1 OR empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
            ${dataCond}
          GROUP BY filial_id`,
         params
@@ -58,7 +58,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const comprasResult = await pool.query(
         `SELECT filial_id, COUNT(*) AS qtd_compras, COALESCE(SUM(total),0) AS total_compras
          FROM compras
-         WHERE (empresa_id = $1 OR empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
            ${dataCond}
          GROUP BY filial_id`,
         params
@@ -117,7 +117,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
       const params = [e.id];
-      let cond = `WHERE (empresa_id = $1 OR empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1))`;
+      let cond = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))`;
       cond += filialId ? ` AND filial_id = $2` : ` AND filial_id IS NULL`;
       if (filialId) params.push(filialId);
 
@@ -282,7 +282,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const result = await pool.query(
         `SELECT id, data, cliente_nome, total, pagamento, status_pagamento
          FROM vendas
-         WHERE (empresa_id = $1 OR empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
          ${cond} ${dataCond}
          ORDER BY data DESC, id DESC LIMIT 500`,
         params
