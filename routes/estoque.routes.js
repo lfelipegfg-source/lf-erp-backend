@@ -111,33 +111,29 @@ ${filtroEmpresa}
   });
 
   router.post('/ajuste', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
+    const { empresa, produto_id, tipo, quantidade, observacao } = req.body;
+
+    if (!empresa || !produto_id || !tipo || !quantidade) {
+      return erro(res, 400, 'Dados do ajuste incompletos');
+    }
+
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
+      return erro(res, 403, 'Sem acesso');
+    }
+
+    const tiposPermitidos = ['ajuste_entrada', 'ajuste_saida', 'perda', 'avaria'];
+    if (!tiposPermitidos.includes(tipo)) {
+      return erro(res, 400, 'Tipo de ajuste inválido');
+    }
+
+    const qtd = normalizarInt(quantidade);
+    if (qtd <= 0) {
+      return erro(res, 400, 'Quantidade inválida');
+    }
+
     const client = await pool.connect();
-
     try {
-      const { empresa, produto_id, tipo, quantidade, observacao } = req.body;
-
-      if (!empresa || !produto_id || !tipo || !quantidade) {
-        return erro(res, 400, 'Dados do ajuste incompletos');
-      }
-
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-      if (!empresaResolvida) {
-        return erro(res, 403, 'Sem acesso');
-      }
-
-      const tiposPermitidos = ['ajuste_entrada', 'ajuste_saida', 'perda', 'avaria'];
-
-      if (!tiposPermitidos.includes(tipo)) {
-        return erro(res, 400, 'Tipo de ajuste inválido');
-      }
-
-      const qtd = normalizarInt(quantidade);
-
-      if (qtd <= 0) {
-        return erro(res, 400, 'Quantidade inválida');
-      }
-
       await client.query('BEGIN');
 
       const produtoResult = await client.query(

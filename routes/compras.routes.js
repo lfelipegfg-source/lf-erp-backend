@@ -37,34 +37,32 @@ module.exports = function ({
   }
 
   router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
+    if (!podeGerenciarCompras(req)) {
+      return erro(res, 403, 'Sem permissão para compras');
+    }
+
+    const {
+      empresa,
+      fornecedor_id,
+      data,
+      pagamento,
+      parcelas,
+      observacao,
+      primeiro_vencimento,
+      itens
+    } = req.body;
+
+    if (!fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
+      return erro(res, 400, 'Dados da compra incompletos');
+    }
+
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
+      return erro(res, 403, 'Sem acesso');
+    }
+
     const client = await pool.connect();
-
     try {
-      if (!podeGerenciarCompras(req)) {
-        return erro(res, 403, 'Sem permissão para compras');
-      }
-
-      const {
-        empresa,
-        fornecedor_id,
-        data,
-        pagamento,
-        parcelas,
-        observacao,
-        primeiro_vencimento,
-        itens
-      } = req.body;
-
-      if (!fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
-        return erro(res, 400, 'Dados da compra incompletos');
-      }
-
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-      if (!empresaResolvida) {
-        return erro(res, 403, 'Sem acesso');
-      }
-
       await client.query('BEGIN');
 
       const fornecedorResult = await client.query(
@@ -348,20 +346,20 @@ module.exports = function ({
   });
 
   router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'editar'), async (req, res) => {
+    if (!podeGerenciarCompras(req)) return erro(res, 403, 'Sem permissão para compras');
+
+    const id = Number(req.params.id);
+    const { empresa, fornecedor_id, data, pagamento, parcelas, observacao, primeiro_vencimento, itens } = req.body;
+
+    if (!id || !fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
+      return erro(res, 400, 'Dados da compra incompletos');
+    }
+
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
     const client = await pool.connect();
     try {
-      if (!podeGerenciarCompras(req)) return erro(res, 403, 'Sem permissão para compras');
-
-      const id = Number(req.params.id);
-      const { empresa, fornecedor_id, data, pagamento, parcelas, observacao, primeiro_vencimento, itens } = req.body;
-
-      if (!id || !fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
-        return erro(res, 400, 'Dados da compra incompletos');
-      }
-
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
-
       await client.query('BEGIN');
 
       const compraAtual = await client.query(

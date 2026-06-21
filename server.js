@@ -568,9 +568,9 @@ function validarItensVenda(itens) {
 }
 
 function addDias(dataBase, dias) {
-  const data = new Date(`${dataBase}T00:00:00`);
+  const data = new Date(`${dataBase}T12:00:00`);
   data.setDate(data.getDate() + Number(dias || 0));
-  return data.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(data);
 }
 
 function normalizarDataISO(valor) {
@@ -3568,10 +3568,7 @@ THEN 'atrasado'
         `
   SELECT COALESCE(SUM(lf.valor), 0) AS total
   FROM lancamentos_financeiros lf
-  WHERE (
-    lf.empresa = $1
-    OR lf.empresa_id = $2
-  )
+  WHERE (lf.empresa_id = $2 OR (lf.empresa_id IS NULL AND lf.empresa = $1))
     AND LOWER(COALESCE(lf.tipo, '')) = 'receita'
     AND LOWER(COALESCE(lf.status, 'pendente')) = 'pago'
     AND LOWER(COALESCE(lf.categoria, '')) = 'contas_receber'
@@ -3860,10 +3857,7 @@ THEN 'atrasado'
       `
   SELECT COALESCE(SUM(lf.valor), 0) AS total
   FROM lancamentos_financeiros lf
-  WHERE (
-    lf.empresa = $1
-    OR lf.empresa_id = $2
-  )
+  WHERE (lf.empresa_id = $2 OR (lf.empresa_id IS NULL AND lf.empresa = $1))
     AND LOWER(COALESCE(lf.tipo, '')) = 'receita'
     AND LOWER(COALESCE(lf.status, '')) = 'pago'
     AND LOWER(COALESCE(lf.categoria, '')) = 'contas_receber'
@@ -4410,10 +4404,7 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
         `
     SELECT COUNT(*) AS total
     FROM lancamentos_financeiros
-    WHERE (
-      empresa = $1
-      OR empresa_id = $2
-    )
+    WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
       AND LOWER(COALESCE(status, '')) = 'pago'
       AND conta_receber_id = $3
     `,
@@ -5586,7 +5577,7 @@ app.get('/financeiro/auditoria', auth, async (req, res) => {
     const { tipo, entidade, busca } = req.query;
 
     const params = [empresaResolvida.id, empresaResolvida.nome];
-    let where = `WHERE (fl.empresa_id = $1 OR fl.empresa = $2)`;
+    let where = `WHERE (fl.empresa_id = $1 OR (fl.empresa_id IS NULL AND fl.empresa = $2))`;
 
     if (tipo)    { params.push(tipo);    where += ` AND fl.tipo = $${params.length}`; }
     if (entidade){ params.push(entidade); where += ` AND fl.entidade = $${params.length}`; }
@@ -5656,10 +5647,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
     `;
 
     let whereLanc = `
-  WHERE (
-    empresa = $1
-    OR empresa_id = $2
-  )
+  WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
     AND LOWER(COALESCE(status, 'pendente')) = 'pago'
     AND pagamento_data IS NOT NULL
 `;
@@ -6009,8 +5997,9 @@ app.get('/dashboard', auth, async (req, res) => {
       pFim.setDate(pFim.getDate() - 1);
       const pIni = new Date(pFim);
       pIni.setDate(pIni.getDate() - dias);
-      prevInicial = pIni.toISOString().slice(0, 10);
-      prevFinal   = pFim.toISOString().slice(0, 10);
+      const _fmtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' });
+      prevInicial = _fmtDate.format(pIni);
+      prevFinal   = _fmtDate.format(pFim);
     }
 
     const vendasParams = [];
@@ -6971,8 +6960,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
     // Atualiza status no banco se necessário
     if (boleto.status !== cr.boleto_status) {
       await pool.query(
-        `UPDATE contas_receber SET boleto_status = $1, atualizado_em = NOW() WHERE id = $2`,
-        [boleto.status, crId]
+        `UPDATE contas_receber SET boleto_status = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+        [boleto.status, crId, empresaResolvida.id]
       );
     }
 
@@ -6982,8 +6971,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
         `UPDATE contas_receber
          SET status = 'pago', data_pagamento = COALESCE($1::date, CURRENT_DATE),
              atualizado_em = NOW()
-         WHERE id = $2 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
-        [boleto.dataPagamento, crId]
+         WHERE id = $2 AND empresa_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+        [boleto.dataPagamento, crId, empresaResolvida.id]
       );
     }
 
@@ -7840,7 +7829,7 @@ app.get('/metas-vendas', auth, async (req, res) => {
       dataInicio = `${periodo}-01`;
       const [y, m] = periodo.split('-').map(Number);
       const fim = new Date(y, m, 0); // último dia do mês
-      dataFim = fim.toISOString().slice(0, 10);
+      dataFim = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(fim);
     } else {
       dataInicio = hoje().slice(0, 8) + '01';
       dataFim = hoje();
