@@ -287,7 +287,7 @@ module.exports = ({
     if (pedido.status === 'convertido') return erro(res, 400, 'Pedido já foi convertido em venda');
     if (pedido.status === 'cancelado')  return erro(res, 400, 'Pedido cancelado não pode ser convertido');
 
-    const itensResult = await pool.query(`SELECT * FROM pedido_itens WHERE pedido_id = $1`, [id]);
+    const itensResult = await pool.query(`SELECT * FROM pedido_itens WHERE pedido_id = $1 AND empresa_id = $2`, [id, empresaResolvida.id]);
     const itensPedido = itensResult.rows;
 
     const { forma_pagamento, parcelas, data, observacao, conta_receber } = req.body;
@@ -313,7 +313,7 @@ module.exports = ({
           pedido.cliente_id, pedido.cliente_nome,
           pedido.subtotal, pedido.desconto, pedido.acrescimo, pedido.total,
           formaFinal, parcelasFinal,
-          data || new Date().toISOString().slice(0, 10),
+          data || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date()),
           observacao || pedido.observacao || null,
           id,
           pedido.orcamento_id || null,

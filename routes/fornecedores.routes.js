@@ -271,8 +271,8 @@ module.exports = function ({
       }
 
       const atualResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
+        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (atualResult.rowCount === 0) {
@@ -288,7 +288,7 @@ module.exports = function ({
             endereco = $5,
             observacao = $6,
             atualizado_em = NOW()
-        WHERE id = $7 AND empresa_id = $8`,
+        WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9))`,
         [
           nome,
           cnpj || '',
@@ -297,7 +297,8 @@ module.exports = function ({
           endereco || '',
           observacao || '',
           id,
-          empresaResolvida.id
+          empresaResolvida.id,
+          empresaResolvida.nome
         ]
       );
 
@@ -346,8 +347,8 @@ module.exports = function ({
       }
 
       const fornecedorResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
+        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (fornecedorResult.rowCount === 0) {
@@ -368,8 +369,8 @@ module.exports = function ({
         SET deletado_em = NOW(),
             atualizado_em = NOW()
         WHERE id = $1
-        AND empresa_id = $2`,
-        [id, empresaResolvida.id]
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await registrarAuditoria({

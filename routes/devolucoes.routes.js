@@ -164,8 +164,8 @@ module.exports = ({
         // Restaura estoque do produto
         if (item.tem_grade && item.gradeId) {
           await client.query(
-            `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2`,
-            [item.qtd, item.gradeId]
+            `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+            [item.qtd, item.gradeId, emp.id]
           );
           await client.query(
             `UPDATE produtos SET estoque = (SELECT COALESCE(SUM(estoque),0) FROM produto_grades WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true), atualizado_em = NOW()

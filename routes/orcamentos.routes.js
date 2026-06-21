@@ -328,7 +328,7 @@ module.exports = ({
       if (atual.rowCount === 0) return erro(res, 404, 'Orçamento não encontrado');
       if (atual.rows[0].status !== 'rascunho') return erro(res, 400, 'Apenas orçamentos em rascunho podem ser excluídos');
 
-      await pool.query(`DELETE FROM orcamentos WHERE id = $1`, [id]);
+      await pool.query(`DELETE FROM orcamentos WHERE id = $1 AND empresa_id = $2`, [id, empresaResolvida.id]);
       return ok(res, { mensagem: 'Orçamento excluído' });
     } catch (err) {
       console.error('[orcamentos] DELETE:', err.message);

@@ -943,10 +943,7 @@ module.exports = ({
       SET observacao = $1,
           atualizado_em = NOW()
       WHERE id = $2
-        AND (
-          empresa_id = $3
-          OR empresa = $4
-        )
+        AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       RETURNING id, observacao
       `,
         [observacao || '', id, empresaResolvida.id, empresaResolvida.nome]

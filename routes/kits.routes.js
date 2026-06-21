@@ -115,7 +115,7 @@ module.exports = ({
 
       // Garante modo kit ativo
       if (!kit.e_kit) {
-        await pool.query(`UPDATE produtos SET e_kit = true, atualizado_em = NOW() WHERE id = $1`, [kitId]);
+        await pool.query(`UPDATE produtos SET e_kit = true, atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`, [kitId, empresaResolvida.id]);
       }
 
       const qtd = normalizarDecimal(quantidade);
@@ -234,8 +234,8 @@ module.exports = ({
       }
 
       await pool.query(
-        `UPDATE produtos SET e_kit = $1, atualizado_em = NOW() WHERE id = $2`,
-        [novoValor, kitId]
+        `UPDATE produtos SET e_kit = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+        [novoValor, kitId, empresaResolvida.id]
       );
 
       return ok(res, { e_kit: novoValor, mensagem: novoValor ? 'Modo kit ativado' : 'Modo kit desativado. Componentes removidos.' });

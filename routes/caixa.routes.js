@@ -64,7 +64,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
          WHERE empresa_id = $1
            AND data >= $2::date
            AND LOWER(pagamento) IN ('dinheiro','pix')`,
-        [emp.id, sessao.aberto_em.toISOString().slice(0, 10)]
+        [emp.id, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date(sessao.aberto_em))]
       );
       const vendas = vendasResult.rows[0];
 

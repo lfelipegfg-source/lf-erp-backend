@@ -1181,7 +1181,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
             2
           ),
           atualizado_em = NOW()
-      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $5))
+      WHERE (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $2
@@ -1197,7 +1197,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
           juros = 0,
           valor_atualizado = valor,
           atualizado_em = NOW()
-      WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
+      WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
         AND data_vencimento IS NOT NULL
         AND data_vencimento >= $2
@@ -1243,7 +1243,7 @@ async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
       `UPDATE contas_pagar
         SET status = 'atrasado',
             atualizado_em = NOW()
-        WHERE (empresa = $1 OR (empresa_id IS NOT NULL AND empresa_id = $3))
+        WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
           AND status = 'pendente'
           AND data_vencimento IS NOT NULL
           AND data_vencimento < $2`,
@@ -3133,19 +3133,16 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
     return jsonErro(res, 403, 'Sem acesso');
   }
 
+  if (!podeGerenciarCompras(req)) {
+    return jsonErro(res, 403, 'Sem permissão para excluir compras');
+  }
+
+  const id = Number(req.params.id);
+  if (!id) return jsonErro(res, 400, 'Compra inválida');
+
   const client = await pool.connect();
 
   try {
-    if (!podeGerenciarCompras(req)) {
-      return jsonErro(res, 403, 'Sem permissão para excluir compras');
-    }
-
-    const id = Number(req.params.id);
-
-    if (!id) {
-      return jsonErro(res, 400, 'Compra inválida');
-    }
-
     await client.query('BEGIN');
 
     const compraResult = await client.query(
@@ -3942,7 +3939,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
     const contaResult = await client.query(
       `SELECT * FROM contas_receber
        WHERE id = $1
-         AND (empresa_id = $2 OR empresa = $3)
+         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
        FOR UPDATE`,
       [id, req.empresa_id, req.empresa_nome]
     );
@@ -3993,7 +3990,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
           valor = $2,
           data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
           atualizado_em = NOW()
-      WHERE id = $4 AND (empresa_id = $5 OR empresa = $6)
+      WHERE id = $4 AND (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $6))
       `,
       [novoStatus, novoValor, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
@@ -4114,9 +4111,13 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`, [
-      id
-    ]);
+    const contaResult = await pool.query(
+      `SELECT * FROM contas_receber
+       WHERE id = $1
+         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+       LIMIT 1`,
+      [id, req.empresa_id, req.empresa_nome]
+    );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
@@ -4139,10 +4140,7 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
         observacao,
         criado_em
       FROM lancamentos_financeiros
-      WHERE (
-        empresa = $1
-        OR empresa_id = $2
-      )
+      WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(tipo, '')) = 'receita'
         AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
         AND LOWER(COALESCE(status, '')) = 'pago'
@@ -4200,7 +4198,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
           data_pagamento = NULL,
           valor = COALESCE(valor_original, valor),
           atualizado_em = NOW()
-      WHERE id = $2 AND (empresa_id = $3 OR empresa = $4)
+      WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       `,
       [novoStatus, id, empresaResolvida.id, empresaResolvida.nome]
     );
@@ -4436,7 +4434,7 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
       `
       DELETE FROM contas_receber
       WHERE id = $1
-        AND (empresa = $2 OR empresa_id = $3)
+        AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2))
       `,
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
@@ -4910,7 +4908,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
     const contaResult = await client.query(
       `SELECT * FROM contas_pagar
        WHERE id = $1
-         AND (empresa_id = $2 OR empresa = $3)
+         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
        FOR UPDATE`,
       [id, req.empresa_id, req.empresa_nome]
     );
@@ -5141,7 +5139,7 @@ app.get('/financeiro/lancamentos/:empresa', auth, requirePermissao(pool, 'financ
       SELECT
         *
       FROM lancamentos_financeiros
-      WHERE (empresa = $1 OR empresa_id = $2)
+      WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
     `;
 
     const params = [empresaResolvida.nome, empresaResolvida.id];
@@ -5398,7 +5396,7 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
       SET status = 'pago',
           pagamento_data = $1,
           atualizado_em = NOW()
-      WHERE id = $2 AND (empresa_id = $3 OR empresa = $4)
+      WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       `,
       [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
     );
@@ -7033,7 +7031,7 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
         `UPDATE contas_receber
          SET status = 'pago', boleto_status = 'RECEIVED',
              data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
-         WHERE id = $1 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+         WHERE id = $1 AND boleto_id IS NOT NULL AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
         [contaId, payment.paymentDate || null]
       );
     }
@@ -7041,7 +7039,7 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
     if (event === 'PAYMENT_OVERDUE' && contaId > 0) {
       await pool.query(
         `UPDATE contas_receber SET boleto_status = 'OVERDUE', atualizado_em = NOW()
-         WHERE id = $1`,
+         WHERE id = $1 AND boleto_id IS NOT NULL`,
         [contaId]
       );
     }
@@ -7218,13 +7216,20 @@ app.get('/conciliacao/:id/itens', auth, async (req, res) => {
 app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const item = await pool.query(`SELECT * FROM conciliacao_itens WHERE id = $1`, [id]);
+    const item = await pool.query(
+      `SELECT * FROM conciliacao_itens
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, req.empresa_id, req.empresa_nome]
+    );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
 
-    const empresaResolvida = await validarAcessoEmpresa(req, item.rows[0].empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, item.rows[0].empresa, item.rows[0].empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
-    await pool.query(`UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1`, [id]);
+    await pool.query(
+      `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND empresa_id = $2`,
+      [id, empresaResolvida.id]
+    );
     await pool.query(
       `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1 WHERE id = $1`,
       [item.rows[0].conciliacao_id]
@@ -7240,12 +7245,16 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, r
 app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const item = await pool.query(`SELECT * FROM conciliacao_itens WHERE id = $1`, [id]);
+    const item = await pool.query(
+      `SELECT * FROM conciliacao_itens
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, req.empresa_id, req.empresa_nome]
+    );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
     if (item.rows[0].status === 'conciliado') return jsonErro(res, 400, 'Item já conciliado');
 
     const row = item.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, row.empresa);
+    const empresaResolvida = await validarAcessoEmpresa(req, row.empresa, row.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     const { categoria, observacao } = req.body;
@@ -8167,7 +8176,7 @@ app.get('/empresa/exportar-dados', auth, async (req, res) => {
       pool.query(`SELECT id,cliente_nome,parcela,total_parcelas,valor,data_vencimento,data_pagamento,status,forma_pagamento FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
       pool.query(`SELECT id,fornecedor_id,descricao,valor,data_vencimento,data_pagamento,status FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
       pool.query(`SELECT produto_id,tipo,quantidade,data_movimentacao FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
-      pool.query(`SELECT id,tipo,descricao,valor,data,categoria FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY data`, [id])
+      pool.query(`SELECT id,tipo,descricao,valor,vencimento AS data,categoria FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY vencimento`, [id])
     ]);
 
     const payload = {
@@ -8629,7 +8638,7 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
       pool.query(`SELECT * FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
       pool.query(`SELECT * FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
       pool.query(`SELECT * FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
-      pool.query(`SELECT * FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY data`, [id])
+      pool.query(`SELECT * FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY vencimento`, [id])
     ]);
 
     const payload = {
@@ -8710,8 +8719,9 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
     if (!nome_empresa || !usuario || !senha) {
       return jsonErro(res, 400, 'nome_empresa, usuario e senha são obrigatórios');
     }
-    if (String(senha).length < 6) {
-      return jsonErro(res, 400, 'A senha deve ter ao menos 6 caracteres');
+    const forcaSenha = validarForcaSenha(senha);
+    if (!forcaSenha.valido) {
+      return jsonErro(res, 400, forcaSenha.mensagem);
     }
 
     // Verifica unicidade de empresa e usuário
