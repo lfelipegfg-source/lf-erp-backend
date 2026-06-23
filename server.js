@@ -3570,8 +3570,8 @@ THEN 'atrasado'
     params.push(limite, offset);
 
     const [result, resumoGlobalResult, recebidosParciaisResult] = await Promise.all([
-      pool.query(sqlPaginado, params),
-      pool.query(resumoGlobalSqlCR, filterParamsCR),
+      pool.query(sqlPaginado, params).catch(e => { console.error('[cr-q1] lista:', e.message); throw e; }),
+      pool.query(resumoGlobalSqlCR, filterParamsCR).catch(e => { console.error('[cr-q2] resumo:', e.message); throw e; }),
       pool.query(
         `
   SELECT COALESCE(SUM(lf.valor), 0) AS total
@@ -3586,13 +3586,13 @@ THEN 'atrasado'
       FROM contas_receber cr
       WHERE (
         (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
-        OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g')::INTEGER ELSE NULL END)
+        OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g')::INTEGER ELSE NULL END)
       )
-        AND cr.empresa = lf.empresa
+        AND cr.empresa_id = lf.empresa_id
     )
   `,
         [empresaResolvida.nome, empresaResolvida.id]
-      )
+      ).catch(e => { console.error('[cr-q3] parciais:', e.message); throw e; })
     ]);
 
     const contas = result.rows.map((row) => ({
