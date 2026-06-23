@@ -3566,7 +3566,7 @@ THEN 'atrasado'
     `;
 
     const offset = (pagina - 1) * limite;
-    const sqlPaginado = sql + ` ORDER BY cr.id DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    const sqlPaginado = sql + ` ORDER BY cr.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limite, offset);
 
     const [result, resumoGlobalResult, recebidosParciaisResult] = await Promise.all([
@@ -4713,7 +4713,7 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
     `;
 
     const offsetCP = (paginaCP - 1) * limiteCP;
-    const sqlPaginadoCP = sql + ` ORDER BY cp.id DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    const sqlPaginadoCP = sql + ` ORDER BY cp.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limiteCP, offsetCP);
 
     const [resultCP, resumoGlobalResultCP] = await Promise.all([
