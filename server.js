@@ -1282,7 +1282,7 @@ function agendarAtualizacaoNoturna() {
   async function rodar() {
     try {
       const { rows: empresas } = await pool.query(
-        `SELECT id, nome FROM empresas WHERE deletado_em IS NULL ORDER BY id`
+        `SELECT id, nome FROM empresas ORDER BY id`
       );
       const batchSize = 5;
       for (let i = 0; i < empresas.length; i += batchSize) {
@@ -3877,7 +3877,7 @@ THEN 'atrasado'
         AND cr.empresa = $1
         AND (
           (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
-          OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\D', '', 'g')::INTEGER ELSE NULL END)
+          OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g')::INTEGER ELSE NULL END)
         )
     )
   `,

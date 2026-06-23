@@ -42,8 +42,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cr:', e.message); }
+      try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cp:', e.message); }
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -330,8 +330,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cr:', e.message); }
+      try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cp:', e.message); }
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -579,7 +579,7 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cr:', e.message); }
 
       const status = (req.query.status || '').trim().toLowerCase();
       const busca = (req.query.busca || '').trim().toLowerCase();
@@ -652,7 +652,7 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cp:', e.message); }
 
       const status = (req.query.status || '').trim().toLowerCase();
       const busca = (req.query.busca || '').trim().toLowerCase();
@@ -897,7 +897,7 @@ MAX(v.data) AS ultima_venda
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       // Atualiza status antes de consultar
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cr:', e.message); }
 
       const params = [];
       let whereBase = `

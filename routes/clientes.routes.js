@@ -325,7 +325,6 @@ module.exports = ({
           FROM contas_receber
           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
             AND status NOT IN ('pago')
-            AND deletado_em IS NULL
           GROUP BY cliente_id
         ) cr_saldo ON cr_saldo.cliente_id = c.id
         WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
