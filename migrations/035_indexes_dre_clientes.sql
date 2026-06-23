@@ -9,6 +9,7 @@ CREATE INDEX IF NOT EXISTS idx_venda_itens_empresa_venda
 -- Acelera LEFT JOIN de saldo de clientes (total_em_aberto):
 -- antes: subquery correlacionada por cliente_id + empresa_id
 -- depois: scan direto por empresa_id + status com GROUP BY via index-only scan
+-- NOTA: contas_receber não tem coluna deletado_em — filtro removido
 CREATE INDEX IF NOT EXISTS idx_cr_empresa_status_cliente
   ON contas_receber(empresa_id, status, cliente_id)
-  WHERE deletado_em IS NULL AND cliente_id IS NOT NULL;
+  WHERE cliente_id IS NOT NULL;

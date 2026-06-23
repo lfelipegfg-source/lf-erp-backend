@@ -43,10 +43,10 @@ CREATE INDEX IF NOT EXISTS idx_cr_cashflow_venc
 
 -- ── compras ───────────────────────────────────────────────────────────────────
 -- Listagem filtrada por empresa + status (GET /compras/:empresa)
+-- NOTA: compras não tem coluna deletado_em — filtro removido
 
 CREATE INDEX IF NOT EXISTS idx_compras_empresa_status_data
-  ON compras(empresa_id, status, data DESC)
-  WHERE deletado_em IS NULL;
+  ON compras(empresa_id, status, data DESC);
 
 -- ── lancamentos_financeiros ───────────────────────────────────────────────────
 -- Subquery de recebidos parciais em contas-receber filtra por categoria
