@@ -1857,8 +1857,12 @@ async function initDb() {
   `);
 
   await pool.query(`
-    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS valor_original NUMERIC(12,2);
-    ALTER TABLE contas_pagar   ADD COLUMN IF NOT EXISTS valor_original NUMERIC(12,2);
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS valor_original    NUMERIC(12,2);
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS valor_atualizado  NUMERIC(12,2);
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS dias_atraso       INTEGER DEFAULT 0;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS multa             NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE contas_receber ADD COLUMN IF NOT EXISTS juros             NUMERIC(12,2) DEFAULT 0;
+    ALTER TABLE contas_pagar   ADD COLUMN IF NOT EXISTS valor_original    NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -3452,7 +3456,11 @@ app.get('/contas-receber/:empresa', auth, requirePermissao(pool, 'financeiro', '
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try {
+      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    } catch (statusErr) {
+      console.error('[status-cr] Erro não-crítico ao atualizar status:', statusErr.message);
+    }
 
     const status = (req.query.status || '').trim().toLowerCase();
     const cliente = (req.query.cliente || '').trim().toLowerCase();
@@ -4605,7 +4613,11 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try {
+      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    } catch (statusErr) {
+      console.error('[status-cp] Erro não-crítico ao atualizar status:', statusErr.message);
+    }
 
     const status = (req.query.status || '').trim().toLowerCase();
     const fornecedor = (req.query.fornecedor || '').trim().toLowerCase();
