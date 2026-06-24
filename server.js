@@ -969,12 +969,30 @@ async function loadBlacklistFromDb() {
   }
 }
 
+// Nonces de curta duração para SSE — evita JWT na URL de logs
+const _sseNonces = new Map(); // nonce → { token, expiry }
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _sseNonces) { if (v.expiry < now) _sseNonces.delete(k); }
+}, 30_000);
+
 function auth(req, res, next) {
   let authHeader = req.headers.authorization;
 
-  // EventSource não suporta headers — aceita token via query param SOMENTE para SSE
-  if (!authHeader && req.method === 'GET' && req.query.token && req.path === '/sse-notificacoes') {
-    authHeader = `Bearer ${req.query.token}`;
+  // EventSource não suporta headers — aceita nonce de uso único SOMENTE para SSE
+  if (!authHeader && req.method === 'GET' && req.path === '/sse-notificacoes') {
+    const nonce = req.query.nonce;
+    if (nonce && _sseNonces.has(nonce)) {
+      const entry = _sseNonces.get(nonce);
+      if (entry.expiry >= Date.now()) {
+        authHeader = `Bearer ${entry.token}`;
+      }
+      _sseNonces.delete(nonce); // uso único
+    }
+    // Compatibilidade temporária com token direto (remover futuramente)
+    if (!authHeader && req.query.token) {
+      authHeader = `Bearer ${req.query.token}`;
+    }
   }
 
   if (!authHeader) {
@@ -2280,7 +2298,7 @@ app.post('/auth/refresh', auth, async (req, res) => {
        FROM usuarios u
        LEFT JOIN empresas e ON e.id = u.empresa_id
        LEFT JOIN planos p ON p.id = e.plano_id
-       WHERE u.id = $1 AND u.ativo = true
+       WHERE u.id = $1
        LIMIT 1`,
       [req.user.id]
     );
@@ -2309,6 +2327,15 @@ app.post('/auth/refresh', auth, async (req, res) => {
     console.error('Erro ao renovar token:', error);
     jsonErro(res, 500, 'Erro ao renovar token');
   }
+});
+
+// GET /auth/sse-token — gera nonce de uso único (30s) para conectar SSE sem JWT na URL
+app.get('/auth/sse-token', auth, (req, res) => {
+  const nonce = crypto.randomUUID();
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+  _sseNonces.set(nonce, { token, expiry: Date.now() + 30_000 });
+  res.json({ sucesso: true, nonce });
 });
 
 app.post('/logout', auth, (req, res) => {
