@@ -187,9 +187,9 @@ module.exports = ({
 
       const { usuario_id, status } = req.query;
       const { dataInicial, dataFinal } = obterPeriodo(req);
-      const params = [emp.id, emp.nome];
-      let where = 'WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))';
-      let idx = 3;
+      const params = [emp.id];
+      let where = 'WHERE c.empresa_id = $1';
+      let idx = 2;
 
       if (usuario_id)  { where += ` AND c.usuario_id = $${idx++}`;         params.push(Number(usuario_id)); }
       if (status)      { where += ` AND c.status = $${idx++}`;              params.push(status); }
@@ -227,9 +227,9 @@ module.exports = ({
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
-      const params = [emp.id, emp.nome];
+      const params = [emp.id];
       let filtro = '';
-      let idx = 3;
+      let idx = 2;
 
       if (dataInicial) { filtro += ` AND DATE(c.criado_em) >= $${idx++}`; params.push(dataInicial); }
       if (dataFinal)   { filtro += ` AND DATE(c.criado_em) <= $${idx++}`; params.push(dataFinal); }
@@ -247,7 +247,7 @@ module.exports = ({
            AVG(c.percentual) AS percentual_medio
          FROM comissoes c
          JOIN usuarios u ON u.id = c.usuario_id
-         WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2)) ${filtro} AND c.status != 'cancelado'
+         WHERE c.empresa_id = $1 ${filtro} AND c.status != 'cancelado'
          GROUP BY u.id, u.nome_completo, u.usuario
          ORDER BY total_comissao DESC`,
         params

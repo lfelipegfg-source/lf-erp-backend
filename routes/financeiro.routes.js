@@ -32,8 +32,8 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
-      await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[fluxo-caixa] status-cr:', e.message); }
+      try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[fluxo-caixa] status-cp:', e.message); }
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -286,8 +286,8 @@ module.exports = function ({
       const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
 
       await Promise.all([
-        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id),
-        atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[cashflow-futuro] status-cr:', e.message)),
+        atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[cashflow-futuro] status-cp:', e.message))
       ]);
 
       const [receberResult, pagarResult] = await Promise.all([
