@@ -2155,8 +2155,8 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_jwt_blacklist_expires ON jwt_blacklist (expires_at);
   `);
 
-  await atualizarStatusContasReceberGlobal();
-  await atualizarStatusContasPagarGlobal();
+  try { await atualizarStatusContasReceberGlobal(); } catch (e) { console.error('[initDb] status-cr global:', e.message); }
+  try { await atualizarStatusContasPagarGlobal(); } catch (e) { console.error('[initDb] status-cp global:', e.message); }
 }
 
 app.get('/', (req, res) => {
