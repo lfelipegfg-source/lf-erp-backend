@@ -593,7 +593,7 @@ module.exports = ({
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-criar] status-cr:', e.message); }
 
       // Calcula comissão em background — não bloqueia resposta; erro é logado com contexto
       calcularComissaoVenda(pool, {
@@ -878,7 +878,7 @@ module.exports = ({
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-editar] status-cr:', e.message); }
 
       return res.json({
         sucesso: true,
@@ -1268,7 +1268,7 @@ ORDER BY parcela ASC
         req
       });
 
-      await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-excluir] status-cr:', e.message); }
 
       return res.json({
         sucesso: true,

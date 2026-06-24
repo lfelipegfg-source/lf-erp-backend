@@ -3238,7 +3238,7 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
     );
 
     await client.query('COMMIT');
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[del-compra] status-cp:', e.message); }
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -3826,7 +3826,7 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[cr-list] status-cr:', e.message); }
 
     const contasResult = await pool.query(
       `
@@ -4063,7 +4063,7 @@ VALUES (
       id, valor: valorPago, cliente: conta.cliente_nome, status: novoStatus
     }).catch((e) => console.error(`[webhook-contabil] recebimento=${id}:`, e.message));
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[cr-pagar] status-cr:', e.message); }
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -4216,7 +4216,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       usuario_id: req.user?.id
     });
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[cr-estornar] status-cr:', e.message); }
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -4976,7 +4976,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
       id, valor: valorPagoFinal, fornecedor: conta.fornecedor
     }).catch((e) => console.error(`[webhook-contabil] pagamento=${id}:`, e.message));
 
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[cp-pagar] status-cp:', e.message); }
 
     const contaAtualizadaResult = await pool.query(
       `
@@ -5634,8 +5634,8 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
-    await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+    try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[fluxo-caixa-legacy] status-cr:', e.message); }
+    try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[fluxo-caixa-legacy] status-cp:', e.message); }
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
 
