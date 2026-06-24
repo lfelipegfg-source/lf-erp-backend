@@ -44,8 +44,8 @@ function gerarPixCopiaCola({ chave, valor, nome, cidade, txid = '***', descricao
 
   // Payload Format Indicator
   let payload = campo('00', '01');
-  // Point of Initiation Method: 11 = static, 12 = dynamic (uma vez)
-  payload += campo('01', '12');
+  // Point of Initiation Method: 11 = static (reutilizável), 12 = dynamic (uso único)
+  payload += campo('01', '11');
   payload += merchantInfo;
   // Merchant Category Code
   payload += campo('52', '0000');

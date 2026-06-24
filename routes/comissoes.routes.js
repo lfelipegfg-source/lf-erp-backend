@@ -19,6 +19,7 @@
  */
 
 const { calcularComissaoVenda } = require('../utils/comissoes');
+const { requirePermissao } = require('../utils/permissoes');
 
 module.exports = ({
   auth,
@@ -42,7 +43,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // CONFIG — GET /comissoes/config
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'comissoes', 'ver'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -72,7 +73,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/config — criar ou atualizar config de um vendedor
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/config', auth, writeRateLimiter, async (req, res) => {
+  router.post('/config', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -113,7 +114,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /comissoes/config/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/config/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/config/:id', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -133,7 +134,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/config/:id/produtos — override de % por produto
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/config/:id/produtos', auth, writeRateLimiter, async (req, res) => {
+  router.post('/config/:id/produtos', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -161,7 +162,7 @@ module.exports = ({
   });
 
   // DELETE /comissoes/config/:id/produtos/:pid
-  router.delete('/config/:id/produtos/:pid', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/config/:id/produtos/:pid', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -180,7 +181,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /comissoes — listar comissões
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'comissoes', 'ver'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -221,7 +222,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /comissoes/resumo — totais por vendedor no período
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/resumo', auth, async (req, res) => {
+  router.get('/resumo', auth, requirePermissao(pool, 'comissoes', 'ver'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -263,7 +264,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/:id/pagar — marca comissão como paga
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/pagar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/pagar', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -303,7 +304,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/:id/cancelar
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/cancelar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/cancelar', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -325,7 +326,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/recalcular/:vendaId — recalcula manualmente
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/recalcular/:vendaId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/recalcular/:vendaId', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

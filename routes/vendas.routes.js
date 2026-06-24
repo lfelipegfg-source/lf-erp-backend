@@ -1108,7 +1108,7 @@ module.exports = ({
 
       const [itensResult] = await Promise.all([
         pool.query(`SELECT * FROM venda_itens WHERE venda_id = $1 ORDER BY id ASC`, [id]),
-        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[venda-detalhe] status-cr:', e.message))
       ]);
 
       const contasReceberResult = await pool.query(

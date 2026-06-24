@@ -327,7 +327,7 @@ module.exports = function ({
       });
 
       if (typeof atualizarStatusContasPagarPorEmpresa === 'function') {
-        await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+        try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[compras-criar] status-cp:', e.message); }
       }
 
       return ok(res, {
@@ -548,7 +548,7 @@ module.exports = function ({
       });
 
       if (typeof atualizarStatusContasPagarPorEmpresa === 'function') {
-        await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id);
+        try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[compras-editar] status-cp:', e.message); }
       }
 
       return ok(res, { mensagem: 'Compra atualizada com sucesso' });

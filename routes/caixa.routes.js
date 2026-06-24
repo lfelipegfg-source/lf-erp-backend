@@ -11,6 +11,8 @@
  *   GET  /caixa/historico      — últimas sessões fechadas
  */
 
+const { requirePermissao } = require('../utils/permissoes');
+
 module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }) => {
   const router = require('express').Router();
 
@@ -46,7 +48,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   }
 
   // ── GET /caixa/sessao-ativa ───────────────────────────────────────────────
-  router.get('/sessao-ativa', auth, async (req, res) => {
+  router.get('/sessao-ativa', auth, requirePermissao(pool, 'caixa', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -84,7 +86,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/abrir ────────────────────────────────────────────────────
-  router.post('/abrir', auth, writeRateLimiter, async (req, res) => {
+  router.post('/abrir', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -117,7 +119,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/sangria ──────────────────────────────────────────────────
-  router.post('/sangria', auth, writeRateLimiter, async (req, res) => {
+  router.post('/sangria', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -144,7 +146,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/suprimento ───────────────────────────────────────────────
-  router.post('/suprimento', auth, writeRateLimiter, async (req, res) => {
+  router.post('/suprimento', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -171,7 +173,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/fechar ───────────────────────────────────────────────────
-  router.post('/fechar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/fechar', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
     const emp = await getEmpresa(req);
     if (!emp) return erro(res, 403, 'Sem acesso');
 
@@ -238,7 +240,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── GET /caixa/historico ─────────────────────────────────────────────────
-  router.get('/historico', auth, async (req, res) => {
+  router.get('/historico', auth, requirePermissao(pool, 'caixa', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

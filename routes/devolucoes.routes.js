@@ -105,8 +105,8 @@ module.exports = ({
       const itensVendaRes = await client.query(
         `SELECT vi.*, p.tem_grade FROM venda_itens vi
          LEFT JOIN produtos p ON p.id = vi.produto_id
-         WHERE vi.venda_id = $1`,
-        [Number(venda_id)]
+         WHERE vi.venda_id = $1 AND vi.empresa_id = $2`,
+        [Number(venda_id), emp.id]
       );
       const itensVendaMap = new Map(itensVendaRes.rows.map((i) => [i.id || `${i.produto_id}-${i.grade_id}`, i]));
 

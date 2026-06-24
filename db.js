@@ -10,4 +10,8 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+pool.on('error', (err) => {
+  console.error('[db] Erro inesperado em conexão idle:', err.message);
+});
+
 module.exports = pool;

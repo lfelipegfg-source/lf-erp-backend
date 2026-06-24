@@ -207,7 +207,8 @@ function montarPayloadNfe({ venda, itens, empresa, cliente, nfeConfig }) {
   }
 
   // ── Payload final ─────────────────────────────────────────────────────────
-  const dataEmissao = new Date().toISOString().slice(0, 19) + '-03:00';
+  const _agoraLocal = new Date(new Date().getTime() - 3 * 60 * 60 * 1000);
+  const dataEmissao = _agoraLocal.toISOString().slice(0, 19) + '-03:00';
 
   return {
     natureza_operacao:   'VENDA DE MERCADORIA',

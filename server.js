@@ -4169,7 +4169,12 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(`SELECT * FROM contas_receber WHERE id = $1`, [id]);
+    const contaResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM contas_receber WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
@@ -5239,7 +5244,12 @@ app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    const result = await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id]);
+    const result = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (result.rowCount === 0) {
       return jsonErro(res, 404, 'Lançamento não encontrado');
@@ -5271,9 +5281,12 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
 
     const id = Number(req.params.id);
 
-    const atualResult = await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [
-      id
-    ]);
+    const atualResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (atualResult.rowCount === 0) {
       return jsonErro(res, 404, 'Lançamento não encontrado');
@@ -5378,9 +5391,12 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
 
     const id = Number(req.params.id);
 
-    const atualResult = await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [
-      id
-    ]);
+    const atualResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (atualResult.rowCount === 0) {
       return jsonErro(res, 404, 'Lançamento não encontrado');
@@ -5430,9 +5446,12 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
 
     const id = Number(req.params.id);
 
-    const atualResult = await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [
-      id
-    ]);
+    const atualResult = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (atualResult.rowCount === 0) {
       return jsonErro(res, 404, 'Lançamento não encontrado');
@@ -7028,12 +7047,13 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
     const contaId = Number(payment.externalReference);
 
     if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event) && contaId > 0) {
+      // boleto_id = $3 garante que só o boleto específico do Asaas pode baixar esta conta
       await pool.query(
         `UPDATE contas_receber
          SET status = 'pago', boleto_status = 'RECEIVED',
              data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
-         WHERE id = $1 AND boleto_id IS NOT NULL AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
-        [contaId, payment.paymentDate || null]
+         WHERE id = $1 AND boleto_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+        [contaId, payment.paymentDate || null, payment.id || '']
       );
     }
 
