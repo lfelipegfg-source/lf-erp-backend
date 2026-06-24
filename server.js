@@ -7343,7 +7343,12 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
 app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const sess = await pool.query(`SELECT * FROM conciliacoes WHERE id = $1`, [id]);
+    const sess = req.user.is_saas_owner
+      ? await pool.query(`SELECT * FROM conciliacoes WHERE id = $1`, [id])
+      : await pool.query(
+          `SELECT * FROM conciliacoes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
     if (!sess.rowCount) return jsonErro(res, 404, 'Sessão não encontrada');
 
     const empresaResolvida = await validarAcessoEmpresa(req, sess.rows[0].empresa);

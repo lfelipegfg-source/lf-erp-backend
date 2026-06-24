@@ -15,10 +15,15 @@ function normalizarInt(valor) {
   return Number.isFinite(numero) ? numero : 0;
 }
 
+const _fmtDiasFortaleza = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Fortaleza',
+  year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
 function addDias(dataBase, dias) {
-  const data = new Date(`${dataBase}T00:00:00`);
+  const data = new Date(`${dataBase}T12:00:00`);
   data.setDate(data.getDate() + Number(dias || 0));
-  return data.toISOString().slice(0, 10);
+  return _fmtDiasFortaleza.format(data);
 }
 
 const _fmtDataFortaleza = new Intl.DateTimeFormat('en-CA', {
