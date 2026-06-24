@@ -290,6 +290,11 @@ module.exports = function ({
         atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[cashflow-futuro] status-cp:', e.message))
       ]);
 
+      // Calcula limite de data no JS para evitar ambiguidade de tipo do parâmetro no PostgreSQL
+      const limiteData = new Date();
+      limiteData.setDate(limiteData.getDate() + dias);
+      const limiteISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(limiteData);
+
       const [receberResult, pagarResult] = await Promise.all([
         pool.query(
           `SELECT
@@ -300,10 +305,10 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
+             AND data_vencimento <= $3
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, empresaResolvida.nome, dias]
+          [empresaResolvida.id, empresaResolvida.nome, limiteISO]
         ),
         pool.query(
           `SELECT
@@ -314,10 +319,10 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= (CURRENT_DATE + INTERVAL '1 day' * $3)::DATE
+             AND data_vencimento <= $3
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, empresaResolvida.nome, dias]
+          [empresaResolvida.id, empresaResolvida.nome, limiteISO]
         )
       ]);
 
@@ -367,7 +372,7 @@ module.exports = function ({
         projecao
       });
     } catch (err) {
-      console.error('[financeiro] cashflow-futuro:', err.message);
+      console.error('[financeiro] cashflow-futuro:', err.message, err.stack);
       return erro(res, 500, 'Erro ao calcular cashflow futuro');
     }
   });
