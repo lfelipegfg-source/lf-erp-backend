@@ -989,10 +989,6 @@ function auth(req, res, next) {
       }
       _sseNonces.delete(nonce); // uso único
     }
-    // Compatibilidade temporária com token direto (remover futuramente)
-    if (!authHeader && req.query.token) {
-      authHeader = `Bearer ${req.query.token}`;
-    }
   }
 
   if (!authHeader) {
@@ -3374,7 +3370,7 @@ app.get('/estoque/resumo/:empresa', auth, requirePermissao(pool, 'estoque', 'ver
   }
 });
 
-app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
+app.get('/compras-fornecedores/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3410,7 +3406,7 @@ app.get('/compras-fornecedores/:empresa', auth, async (req, res) => {
   }
 });
 
-app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
+app.get('/vendas-clientes/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3445,7 +3441,7 @@ app.get('/vendas-clientes/:empresa', auth, async (req, res) => {
 });
 
 // ================= CONTAS A RECEBER =================
-app.get('/contas-receber-clientes/:empresa', auth, async (req, res) => {
+app.get('/contas-receber-clientes/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -4605,7 +4601,7 @@ RETURNING *
 });
 
 // ================= CONTAS A PAGAR =================
-app.get('/contas-pagar-fornecedores/:empresa', auth, async (req, res) => {
+app.get('/contas-pagar-fornecedores/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -7203,11 +7199,18 @@ app.post('/conciliacao/importar', jsonUpload, auth, writeRateLimiter, async (req
     );
     const conciliacaoId = sessao.rows[0].id;
 
-    for (const it of itens) {
+    if (itens.length > 0) {
+      const placeholders = itens.map((_, idx) => {
+        const b = idx * 8;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+      }).join(',');
+      const params = itens.flatMap(it => [
+        conciliacaoId, empresaResolvida.nome, empresaResolvida.id,
+        it.fitid, it.data, it.descricao, it.valor, it.tipo
+      ]);
       await pool.query(
-        `INSERT INTO conciliacao_itens (conciliacao_id, empresa, empresa_id, fitid, data, descricao, valor, tipo)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [conciliacaoId, empresaResolvida.nome, empresaResolvida.id, it.fitid, it.data, it.descricao, it.valor, it.tipo]
+        `INSERT INTO conciliacao_itens (conciliacao_id, empresa, empresa_id, fitid, data, descricao, valor, tipo) VALUES ${placeholders}`,
+        params
       );
     }
 
@@ -7914,25 +7917,28 @@ app.get('/metas-vendas', auth, async (req, res) => {
       [empresaResolvida.id, periodo]
     );
 
-    // Calcula progresso real via vendas do período
-    const metasComProgresso = await Promise.all(
-      metasResult.rows.map(async (meta) => {
-        const vendasResult = await pool.query(
-          `SELECT COALESCE(SUM(total), 0) AS realizado
-           FROM vendas
-           WHERE empresa_id = $1
-             AND data >= $2 AND data <= $3
-             ${meta.usuario_id ? 'AND criado_por = $4' : ''}`,
-          meta.usuario_id
-            ? [empresaResolvida.id, dataInicio, dataFim, meta.usuario_id]
-            : [empresaResolvida.id, dataInicio, dataFim]
-        );
-        const realizado = Number(vendasResult.rows[0].realizado || 0);
-        const meta_valor = Number(meta.valor_meta || 0);
-        const percentual = meta_valor > 0 ? Math.min(100, Math.round((realizado / meta_valor) * 100)) : 0;
-        return { ...meta, realizado, percentual, faltando: Math.max(0, meta_valor - realizado) };
-      })
+    // Calcula progresso real via vendas do período — query única com GROUP BY (evita N+1)
+    const realizadoResult = await pool.query(
+      `SELECT criado_por AS usuario_id, COALESCE(SUM(total), 0) AS realizado
+       FROM vendas
+       WHERE empresa_id = $1 AND data >= $2 AND data <= $3
+       GROUP BY criado_por`,
+      [empresaResolvida.id, dataInicio, dataFim]
     );
+    const realizadoMap = {};
+    let realizadoTotal = 0;
+    for (const r of realizadoResult.rows) {
+      const v = Number(r.realizado || 0);
+      realizadoMap[r.usuario_id] = v;
+      realizadoTotal += v;
+    }
+    const metasComProgresso = metasResult.rows.map((meta) => {
+      // Meta por usuário → apenas vendas daquele usuário; meta geral → todas as vendas
+      const realizado = meta.usuario_id ? (realizadoMap[meta.usuario_id] || 0) : realizadoTotal;
+      const meta_valor = Number(meta.valor_meta || 0);
+      const percentual = meta_valor > 0 ? Math.min(100, Math.round((realizado / meta_valor) * 100)) : 0;
+      return { ...meta, realizado, percentual, faltando: Math.max(0, meta_valor - realizado) };
+    });
 
     res.json({ sucesso: true, periodo, data_inicio: dataInicio, data_fim: dataFim, metas: metasComProgresso });
   } catch (err) {

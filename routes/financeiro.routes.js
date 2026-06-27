@@ -290,10 +290,12 @@ module.exports = function ({
         atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[cashflow-futuro] status-cp:', e.message))
       ]);
 
-      // Calcula limite de data no JS para evitar ambiguidade de tipo do parâmetro no PostgreSQL
-      const limiteData = new Date();
+      // Datas em Fortaleza — new Date() puro é UTC; convertemos explicitamente
+      const fmtISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' });
+      const hojeISO   = fmtISO.format(new Date());
+      const limiteData = new Date(hojeISO + 'T00:00:00');
       limiteData.setDate(limiteData.getDate() + dias);
-      const limiteISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(limiteData);
+      const limiteISO = fmtISO.format(limiteData);
 
       const [receberResult, pagarResult] = await Promise.all([
         pool.query(
@@ -305,10 +307,11 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= $3
+             AND data_vencimento >= $3
+             AND data_vencimento <= $4
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, empresaResolvida.nome, limiteISO]
+          [empresaResolvida.id, empresaResolvida.nome, hojeISO, limiteISO]
         ),
         pool.query(
           `SELECT
@@ -319,10 +322,11 @@ module.exports = function ({
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
              AND COALESCE(status,'pendente') NOT IN ('pago')
              AND data_vencimento IS NOT NULL
-             AND data_vencimento <= $3
+             AND data_vencimento >= $3
+             AND data_vencimento <= $4
            GROUP BY data_vencimento
            ORDER BY data_vencimento`,
-          [empresaResolvida.id, empresaResolvida.nome, limiteISO]
+          [empresaResolvida.id, empresaResolvida.nome, hojeISO, limiteISO]
         )
       ]);
 
@@ -342,11 +346,8 @@ module.exports = function ({
       }
 
       // Cria array de dias com saldo acumulado
-      const fmtFortaleza = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Fortaleza',
-        year: 'numeric', month: '2-digit', day: '2-digit'
-      });
-      const hoje = new Date();
+      const fmtFortaleza = fmtISO;
+      const hoje = new Date(hojeISO + 'T00:00:00');
       let saldoAcum = 0;
       const projecao = [];
 
