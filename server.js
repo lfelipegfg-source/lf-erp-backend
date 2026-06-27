@@ -4131,6 +4131,8 @@ WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
 
 app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
+
     const id = Number(req.params.id);
 
     const contaResult = await pool.query(
@@ -4247,9 +4249,9 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       `
       SELECT *
       FROM contas_receber
-      WHERE id = $1
+      WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     const contaAtualizada = contaAtualizadaResult.rows[0];
@@ -4786,8 +4788,9 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const _cpEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
-    const _cpEmpresaWhere = _cpEmpresaId ? 'AND cp.empresa_id = $3' : '';
-    const _cpParams = _cpEmpresaId ? [id, hoje(), _cpEmpresaId] : [id, hoje()];
+    const _cpEmpresaNome = req.user?.is_saas_owner ? '' : (req.empresa_nome || req.user?.empresa || '');
+    const _cpEmpresaWhere = _cpEmpresaId !== null ? 'AND (cp.empresa_id = $3 OR (cp.empresa_id IS NULL AND cp.empresa = $4))' : '';
+    const _cpParams = _cpEmpresaId !== null ? [id, hoje(), _cpEmpresaId, _cpEmpresaNome] : [id, hoje()];
 
     const contaResult = await pool.query(
       `
@@ -5016,8 +5019,9 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
         END AS status_exibicao
       FROM contas_pagar
       WHERE id = $1
+        AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       `,
-      [id, hoje()]
+      [id, hoje(), empresaResolvida.id, empresaResolvida.nome]
     );
 
     const contaAtualizada = contaAtualizadaResult.rows[0];
@@ -5556,6 +5560,8 @@ app.post('/investimentos', auth, writeRateLimiter, async (req, res) => {
 
 app.get('/investimentos/:empresa', auth, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
+
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -7372,7 +7378,10 @@ app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     await pool.query(`DELETE FROM conciliacao_itens WHERE conciliacao_id = $1`, [id]);
-    await pool.query(`DELETE FROM conciliacoes WHERE id = $1`, [id]);
+    await pool.query(
+      `DELETE FROM conciliacoes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
+    );
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao excluir conciliação:', error);

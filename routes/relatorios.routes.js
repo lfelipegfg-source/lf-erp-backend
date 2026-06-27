@@ -908,7 +908,7 @@ MAX(v.data) AS ultima_venda
         ${adicionarFiltroEmpresaSaaS({ params, empresaResolvida })}
         AND data_vencimento IS NOT NULL
         AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
-        AND data_vencimento::date < CURRENT_DATE
+        AND data_vencimento::date < (NOW() AT TIME ZONE 'America/Fortaleza')::date
       `;
 
       const INADIMPLENCIA_LIMIT = 500;
@@ -930,11 +930,11 @@ MAX(v.data) AS ultima_venda
           COALESCE(cliente_nome, 'Consumidor Final')  AS cliente_nome,
           COUNT(*)                                    AS total_titulos,
           COALESCE(SUM(valor), 0)                     AS valor_total,
-          MAX(CURRENT_DATE - data_vencimento::date)   AS max_dias_atraso,
-          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 1  AND 30  THEN valor ELSE 0 END), 0) AS faixa_1_30,
-          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 31 AND 60  THEN valor ELSE 0 END), 0) AS faixa_31_60,
-          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date BETWEEN 61 AND 90  THEN valor ELSE 0 END), 0) AS faixa_61_90,
-          COALESCE(SUM(CASE WHEN CURRENT_DATE - data_vencimento::date > 90              THEN valor ELSE 0 END), 0) AS faixa_90plus
+          MAX((NOW() AT TIME ZONE 'America/Fortaleza')::date - data_vencimento::date)   AS max_dias_atraso,
+          COALESCE(SUM(CASE WHEN (NOW() AT TIME ZONE 'America/Fortaleza')::date - data_vencimento::date BETWEEN 1  AND 30  THEN valor ELSE 0 END), 0) AS faixa_1_30,
+          COALESCE(SUM(CASE WHEN (NOW() AT TIME ZONE 'America/Fortaleza')::date - data_vencimento::date BETWEEN 31 AND 60  THEN valor ELSE 0 END), 0) AS faixa_31_60,
+          COALESCE(SUM(CASE WHEN (NOW() AT TIME ZONE 'America/Fortaleza')::date - data_vencimento::date BETWEEN 61 AND 90  THEN valor ELSE 0 END), 0) AS faixa_61_90,
+          COALESCE(SUM(CASE WHEN (NOW() AT TIME ZONE 'America/Fortaleza')::date - data_vencimento::date > 90              THEN valor ELSE 0 END), 0) AS faixa_90plus
         FROM contas_receber
         ${whereBase}
         GROUP BY cliente_key, cliente_nome
