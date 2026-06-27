@@ -141,8 +141,8 @@ module.exports = ({
 
       const clienteResult = await pool.query(
         `SELECT id, nome, telefone, cpf, cpf_cnpj, email, endereco
-         FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
+         FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
       if (clienteResult.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
 
@@ -480,7 +480,7 @@ module.exports = ({
             nascimento = $4,
             cpf = $5,
             atualizado_em = NOW()
-        WHERE id = $6 AND empresa_id = $7`,
+        WHERE id = $6 AND empresa_id = $7 AND deletado_em IS NULL`,
         [nome, endereco || '', telefone || '', nascimento || '', cpf || '', id, empresaResolvida.id]
       );
 

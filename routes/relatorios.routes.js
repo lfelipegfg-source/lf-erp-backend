@@ -448,6 +448,7 @@ module.exports = function ({
             observacao
           FROM contas_receber
           ${whereReceber}
+          LIMIT 5000
         `,
           paramsReceber
         ),
@@ -466,6 +467,7 @@ module.exports = function ({
             observacao
           FROM contas_pagar
           ${wherePagar}
+          LIMIT 5000
         `,
           paramsPagar
         ),
@@ -484,6 +486,7 @@ module.exports = function ({
             observacao
           FROM lancamentos_financeiros
           ${whereLanc}
+          LIMIT 5000
         `,
           paramsLanc
         ),
@@ -502,6 +505,7 @@ module.exports = function ({
             observacao
           FROM investimentos
           ${whereInvest}
+          LIMIT 5000
         `,
           paramsInvest
         ),
@@ -520,6 +524,7 @@ module.exports = function ({
             NULL AS observacao
           FROM vendas v
           ${whereVendas}
+          LIMIT 5000
         `,
           paramsVendas
         ),
@@ -540,6 +545,7 @@ module.exports = function ({
           LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
             AND (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
           ${whereCompras}
+          LIMIT 5000
         `,
           paramsCompras
         )
@@ -814,6 +820,7 @@ MAX(v.data) AS ultima_venda
             AND p.empresa = vi.empresa
           )
         )
+        AND p.deletado_em IS NULL
 
       ${where}
 

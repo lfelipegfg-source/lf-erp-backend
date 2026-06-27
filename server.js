@@ -20,7 +20,14 @@ const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
 const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
 const { encryptField, decryptField } = require('./utils/pixCrypto');
-const { addDias: addDiasUtil } = require('./utils/normalizadores');
+const {
+  hoje,
+  normalizarDecimal,
+  normalizarInt,
+  addDias,
+  normalizarDataISO,
+  validarItensVenda
+} = require('./utils/normalizadores');
 
 // Rate limiter em memória para o endpoint /login
 const loginAttempts     = new Map(); // por IP
@@ -508,22 +515,8 @@ app.use(
   })
 );
 
-function hoje() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Fortaleza',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date());
-}
-
 function agoraISO() {
   return new Date().toISOString();
-}
-
-function normalizarDecimal(valor) {
-  const numero = Number(valor);
-  return Number.isFinite(numero) ? numero : 0;
 }
 
 async function registrarLogFinanceiro({
@@ -553,32 +546,6 @@ async function registrarLogFinanceiro({
       usuario_id || null
     ]
   ).catch((err) => console.error('[log_financeiro]', err));
-}
-
-function normalizarInt(valor) {
-  const numero = parseInt(valor, 10);
-  return Number.isFinite(numero) ? numero : 0;
-}
-
-function validarItensVenda(itens) {
-  if (!Array.isArray(itens) || itens.length === 0) return false;
-  for (const item of itens) {
-    if (!Number(item.produto_id) || normalizarInt(item.quantidade) <= 0) return false;
-  }
-  return true;
-}
-
-const addDias = addDiasUtil;
-
-function normalizarDataISO(valor) {
-  if (!valor) return null;
-  if (typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(valor.trim())) {
-    return valor.trim();
-  }
-  const d = new Date(valor);
-  if (Number.isNaN(d.getTime())) return null;
-  // Usar timezone Fortaleza para evitar shift de data ao converter Date → string
-  return d.toLocaleDateString('sv-SE', { timeZone: 'America/Fortaleza' });
 }
 
 function obterPeriodo(req) {
@@ -758,7 +725,7 @@ async function obterPlanoEmpresa(empresaId, empresaNome) {
       p.*
     FROM empresas e
     LEFT JOIN planos p ON p.id = e.plano_id
-    WHERE e.id = $1 OR e.nome = $2
+    WHERE e.id = $1 OR LOWER(e.nome) = LOWER($2)
     LIMIT 1
     `,
     [empresaId || 0, empresaNome || '']
@@ -8536,11 +8503,13 @@ app.get('/sse-notificacoes', auth, async (req, res) => {
     const heartbeat = setInterval(() => {
       try { res.write(': ping\n\n'); } catch { clearInterval(heartbeat); }
     }, 25000);
+    heartbeat.unref();
 
     // Refresh a cada 60s
     const refresh = setInterval(async () => {
       await ssePush(res, empresaId).catch(() => {});
     }, 60000);
+    refresh.unref();
 
     req.on('close', () => {
       clearInterval(heartbeat);
@@ -8968,6 +8937,7 @@ app.put('/admin/empresas/:id/status', auth, apenasAdmin, async (req, res) => {
     );
 
     _planoCache.delete(`id:${id}`);
+    _planoCache.delete(`nome:${nomeEmpresa}`);
     _configCache.delete(nomeEmpresa);
 
     return res.json({ sucesso: true });
