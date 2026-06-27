@@ -4354,15 +4354,15 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
   try {
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(
-      `
-      SELECT *
-      FROM contas_receber
-      WHERE id = $1
-      LIMIT 1
-      `,
-      [id]
-    );
+    const contaResult = req.user?.is_saas_owner
+      ? await pool.query(
+          `SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`,
+          [id]
+        )
+      : await pool.query(
+          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
@@ -6953,8 +6953,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
     const crId = Number(req.params.contaReceberID);
     const crResult = await pool.query(
       `SELECT boleto_id, boleto_url, boleto_linha_digitavel, boleto_status, boleto_gerado_em
-       FROM contas_receber WHERE id = $1 AND empresa_id = $2`,
-      [crId, empresaResolvida.id]
+       FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [crId, empresaResolvida.id, empresaResolvida.nome]
     );
 
     if (crResult.rowCount === 0) return jsonErro(res, 404, 'Conta não encontrada');
@@ -6968,8 +6968,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
     // Atualiza status no banco se necessário
     if (boleto.status !== cr.boleto_status) {
       await pool.query(
-        `UPDATE contas_receber SET boleto_status = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-        [boleto.status, crId, empresaResolvida.id]
+        `UPDATE contas_receber SET boleto_status = $1, atualizado_em = NOW() WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+        [boleto.status, crId, empresaResolvida.id, empresaResolvida.nome]
       );
     }
 
@@ -6979,8 +6979,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
         `UPDATE contas_receber
          SET status = 'pago', data_pagamento = COALESCE($1::date, CURRENT_DATE),
              atualizado_em = NOW()
-         WHERE id = $2 AND empresa_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
-        [boleto.dataPagamento, crId, empresaResolvida.id]
+         WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
+        [boleto.dataPagamento, crId, empresaResolvida.id, empresaResolvida.nome]
       );
     }
 
@@ -7248,8 +7248,8 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, r
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     await pool.query(
-      `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND empresa_id = $2`,
-      [id, empresaResolvida.id]
+      `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
     await pool.query(
       `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1 WHERE id = $1`,
@@ -7298,8 +7298,8 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
     const lancamentoId = lanc.rows[0].id;
 
     await pool.query(
-      `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2`,
-      [lancamentoId, id]
+      `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+      [lancamentoId, id, empresaResolvida.id, empresaResolvida.nome]
     );
     await pool.query(
       `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1 WHERE id = $1`,
@@ -7327,7 +7327,7 @@ app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
     const empresaResolvida = await validarAcessoEmpresa(req, sess.rows[0].empresa);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
-    await pool.query(`DELETE FROM conciliacao_itens WHERE conciliacao_id = $1`, [id]);
+    await pool.query(`DELETE FROM conciliacao_itens WHERE conciliacao_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`, [id, empresaResolvida.id, empresaResolvida.nome]);
     await pool.query(
       `DELETE FROM conciliacoes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
       [id, empresaResolvida.id, empresaResolvida.nome]
