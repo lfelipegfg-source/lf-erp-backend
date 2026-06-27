@@ -3247,13 +3247,13 @@ app.get('/compras-detalhe/:id', auth, requirePermissao(pool, 'compras', 'ver'), 
     const compra = compraResult.rows[0];
 
     const itensResult = await pool.query(
-      `SELECT * FROM compra_itens WHERE compra_id = $1 ORDER BY id ASC`,
-      [id]
+      `SELECT * FROM compra_itens WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) ORDER BY id ASC`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     const contasPagarResult = await pool.query(
-      `SELECT * FROM contas_pagar WHERE compra_id = $1 ORDER BY parcela ASC, id ASC`,
-      [id]
+      `SELECT * FROM contas_pagar WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) ORDER BY parcela ASC, id ASC`,
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     res.json({
@@ -4050,9 +4050,9 @@ WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
       FROM contas_receber
-      WHERE id = $1
+      WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       `,
-      [id, hoje()]
+      [id, hoje(), empresaResolvida.id, empresaResolvida.nome]
     );
 
     const contaAtualizada = contaAtualizadaResult.rows[0];
@@ -4267,10 +4267,10 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       `
       SELECT *
       FROM contas_receber
-      WHERE id = $1
+      WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       FOR UPDATE
       `,
-      [contaId]
+      [contaId, lancamento.empresa_id || 0, lancamento.empresa || '']
     );
 
     if (contaResult.rowCount === 0) {
@@ -4829,10 +4829,10 @@ app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
       `
         SELECT *
         FROM compra_itens
-        WHERE compra_id = $1
+        WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
         ORDER BY id ASC
         `,
-      [conta.compra_id]
+      [conta.compra_id, conta.empresa_id || 0, conta.empresa || '']
     );
 
     const parcelasResult = await pool.query(
@@ -5620,6 +5620,7 @@ app.get('/financeiro/auditoria', auth, async (req, res) => {
 
 app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresa = req.params.empresa;
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
@@ -7137,7 +7138,7 @@ function parseCSV(texto) {
 }
 
 // POST /conciliacao/importar
-app.post('/conciliacao/importar', jsonUpload, auth, writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/importar', auth, writeRateLimiter, jsonUpload, async (req, res) => {
   try {
     const { conteudo, tipo, nome, conta } = req.body;
     if (!conteudo || !tipo || !nome) return jsonErro(res, 400, 'Campos obrigatórios: conteudo, tipo, nome');
@@ -7427,6 +7428,7 @@ process.on('uncaughtException', (err) => {
 
 app.get('/alertas/:empresa', auth, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.params.empresa);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
@@ -7968,6 +7970,7 @@ app.get('/depositos', auth, async (req, res) => {
 // POST /depositos — criar depósito
 app.post('/depositos', auth, writeRateLimiter, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
@@ -7992,6 +7995,7 @@ app.post('/depositos', auth, writeRateLimiter, async (req, res) => {
 // PUT /depositos/:id — editar depósito
 app.put('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
@@ -8021,6 +8025,7 @@ app.put('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
 // DELETE /depositos/:id — remover depósito (só se sem estoque)
 app.delete('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
@@ -8105,6 +8110,16 @@ app.post('/depositos/transferir', auth, writeRateLimiter, async (req, res) => {
     }
 
     await client.query('BEGIN');
+
+    // Verifica que ambos os depósitos pertencem à empresa (anti-cross-tenant)
+    const depositosCheck = await client.query(
+      `SELECT id FROM depositos WHERE id = ANY($1::integer[]) AND empresa_id = $2`,
+      [[Number(deposito_origem_id), Number(deposito_destino_id)], empresaResolvida.id]
+    );
+    if (depositosCheck.rowCount !== 2) {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 403, 'Depósitos não pertencem à empresa');
+    }
 
     // Verifica estoque na origem com FOR UPDATE
     const origem = await client.query(

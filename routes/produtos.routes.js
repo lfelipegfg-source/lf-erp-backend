@@ -656,8 +656,8 @@ ${adicionarFiltroEmpresaSaaS({
       }
 
       const produtoResult = await pool.query(
-        `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
+        `SELECT * FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (produtoResult.rowCount === 0) {

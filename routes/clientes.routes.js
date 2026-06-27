@@ -464,8 +464,8 @@ module.exports = ({
       }
 
       const atualResult = await pool.query(
-        `SELECT * FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [id, empresaResolvida.id]
+        `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (atualResult.rowCount === 0) {
@@ -480,8 +480,8 @@ module.exports = ({
             nascimento = $4,
             cpf = $5,
             atualizado_em = NOW()
-        WHERE id = $6 AND empresa_id = $7 AND deletado_em IS NULL`,
-        [nome, endereco || '', telefone || '', nascimento || '', cpf || '', id, empresaResolvida.id]
+        WHERE id = $6 AND (empresa_id = $7 OR (empresa_id IS NULL AND empresa = $8)) AND deletado_em IS NULL`,
+        [nome, endereco || '', telefone || '', nascimento || '', cpf || '', id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await registrarAuditoria({
@@ -551,8 +551,8 @@ module.exports = ({
         SET deletado_em = NOW(),
             atualizado_em = NOW()
         WHERE id = $1
-        AND empresa_id = $2`,
-        [id, empresaResolvida.id]
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await registrarAuditoria({

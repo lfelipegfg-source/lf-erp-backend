@@ -144,8 +144,8 @@ module.exports = ({
       itensResult.rows.map(r => Number(r.produto_id)).filter(id => id > 0)
     )];
     const eKitRows = await client.query(
-      `SELECT id, e_kit FROM produtos WHERE id = ANY($1) AND empresa_id = $2`,
-      [prodIdsEstorno, empresaResolvida.id]
+      `SELECT id, e_kit FROM produtos WHERE id = ANY($1) AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+      [prodIdsEstorno, empresaResolvida.id, empresaResolvida.nome]
     );
     const eKitMap = Object.fromEntries(eKitRows.rows.map(r => [r.id, Boolean(r.e_kit)]));
 
@@ -181,15 +181,15 @@ module.exports = ({
         await sincronizarEstoqueKit(client, produtoId, empresaResolvida.id);
       } else {
         const produtoResult = await client.query(
-          `SELECT estoque FROM produtos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-          [produtoId, empresaResolvida.id]
+          `SELECT estoque FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+          [produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
         if (produtoResult.rowCount === 0) continue;
 
         const estoqueAtual = normalizarInt(produtoResult.rows[0].estoque);
         await client.query(
-          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-          [estoqueAtual + quantidade, produtoId, empresaResolvida.id]
+          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+          [estoqueAtual + quantidade, produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
       }
 
@@ -258,8 +258,8 @@ module.exports = ({
     // o débito de estoque é feito via UPDATE atômico (estoque - qty WHERE estoque >= qty)
     const produtoIds = [...new Set(itens.map(i => Number(i.produto_id)).filter(id => id > 0))];
     const produtosRows = await client.query(
-      `SELECT * FROM produtos WHERE id = ANY($1) AND empresa_id = $2`,
-      [produtoIds, empresaResolvida.id]
+      `SELECT * FROM produtos WHERE id = ANY($1) AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+      [produtoIds, empresaResolvida.id, empresaResolvida.nome]
     );
     const produtosMap = Object.fromEntries(produtosRows.rows.map(p => [p.id, p]));
 
