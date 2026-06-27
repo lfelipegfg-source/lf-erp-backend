@@ -538,6 +538,7 @@ module.exports = function ({
             c.observacao
           FROM compras c
           LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
+            AND (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
           ${whereCompras}
         `,
           paramsCompras
@@ -557,9 +558,9 @@ module.exports = function ({
           valor: Number(row.valor || 0)
         }))
         .sort((a, b) => {
-          const da = new Date(`${a.data_movimento || '1970-01-01'}T00:00:00`).getTime();
-          const db = new Date(`${b.data_movimento || '1970-01-01'}T00:00:00`).getTime();
-          return db - da;
+          const da = a.data_movimento || '1970-01-01';
+          const db = b.data_movimento || '1970-01-01';
+          return db < da ? -1 : db > da ? 1 : 0;
         });
 
       return res.json({ sucesso: true, dados: movimentos });
@@ -606,6 +607,7 @@ module.exports = function ({
       }
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
             LOWER(COALESCE(cliente_nome, '')) LIKE $${idx}
@@ -613,7 +615,7 @@ module.exports = function ({
             OR CAST(id AS TEXT) LIKE $${idx}
           )
         `;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 
@@ -679,6 +681,7 @@ module.exports = function ({
       }
 
       if (busca) {
+        const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
             LOWER(COALESCE(fornecedor_nome, '')) LIKE $${idx}
@@ -687,7 +690,7 @@ module.exports = function ({
             OR CAST(id AS TEXT) LIKE $${idx}
           )
         `;
-        params.push(`%${busca}%`);
+        params.push(`%${buscaEsc}%`);
         idx++;
       }
 
@@ -920,6 +923,7 @@ MAX(v.data) AS ultima_venda
       const totalClientesInadimplentes = Number(countResult.rows[0]?.total || 0);
 
       // ── Por cliente ──────────────────────────────────────────────────────
+      const limitIdx = params.length + 1;
       const clientesResult = await pool.query(`
         SELECT
           COALESCE(cliente_id::text, 'sem_cadastro') AS cliente_key,
@@ -935,8 +939,8 @@ MAX(v.data) AS ultima_venda
         ${whereBase}
         GROUP BY cliente_key, cliente_nome
         ORDER BY valor_total DESC
-        LIMIT ${INADIMPLENCIA_LIMIT}
-      `, params);
+        LIMIT $${limitIdx}
+      `, [...params, INADIMPLENCIA_LIMIT]);
 
       const clientes = clientesResult.rows.map((r) => ({
         cliente_key:       r.cliente_key,
@@ -1149,7 +1153,7 @@ MAX(v.data) AS ultima_venda
           AND (p.empresa_id = $1 OR (p.empresa_id IS NULL AND p.empresa = $2))
         LEFT JOIN produto_grades pg
           ON pg.id = vi.grade_id
-          AND pg.empresa_id = $1
+          AND (pg.empresa_id = $1 OR (pg.empresa_id IS NULL AND pg.empresa = $2))
         ${where}
         GROUP BY vi.produto_id, vi.produto_nome, vi.grade_id, pg.atributo1, pg.atributo2
         ORDER BY faturamento_total DESC, vi.produto_nome ASC

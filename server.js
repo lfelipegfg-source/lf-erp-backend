@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
 const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
 const { encryptField, decryptField } = require('./utils/pixCrypto');
+const { addDias: addDiasUtil } = require('./utils/normalizadores');
 
 // Rate limiter em memória para o endpoint /login
 const loginAttempts     = new Map(); // por IP
@@ -567,11 +568,7 @@ function validarItensVenda(itens) {
   return true;
 }
 
-function addDias(dataBase, dias) {
-  const data = new Date(`${dataBase}T12:00:00`);
-  data.setDate(data.getDate() + Number(dias || 0));
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(data);
-}
+const addDias = addDiasUtil;
 
 function normalizarDataISO(valor) {
   if (!valor) return null;
@@ -974,7 +971,7 @@ const _sseNonces = new Map(); // nonce → { token, expiry }
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _sseNonces) { if (v.expiry < now) _sseNonces.delete(k); }
-}, 30_000);
+}, 30_000).unref();
 
 function auth(req, res, next) {
   let authHeader = req.headers.authorization;

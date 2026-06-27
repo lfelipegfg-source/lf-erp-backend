@@ -291,6 +291,7 @@ module.exports = ({
       const receitaGeral = rows[0]?.receita_geral || 0;
 
       return res.json({
+        sucesso: true,
         clientes: rows,
         resumo,
         receita_geral: Number(receitaGeral),
