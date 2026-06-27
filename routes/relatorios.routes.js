@@ -829,6 +829,7 @@ MAX(v.data) AS ultima_venda
         vi.produto_nome
 
       ORDER BY lucro_total DESC, faturamento_total DESC
+      LIMIT 5000
       `,
         params
       );

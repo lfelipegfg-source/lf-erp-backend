@@ -456,8 +456,8 @@ module.exports = ({
 
       if (clienteIdFinal) {
         const clienteResult = await client.query(
-          `SELECT * FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-          [clienteIdFinal, empresaResolvida.id]
+          `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+          [clienteIdFinal, empresaResolvida.id, empresaResolvida.nome]
         );
 
         if (clienteResult.rowCount === 0) {
@@ -724,13 +724,8 @@ module.exports = ({
 
       if (clienteIdFinal) {
         const clienteResult = await client.query(
-          `
-          SELECT *
-          FROM clientes
-          WHERE id = $1 AND empresa_id = $2
-          LIMIT 1
-          `,
-          [clienteIdFinal, empresaResolvida.id]
+          `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL LIMIT 1`,
+          [clienteIdFinal, empresaResolvida.id, empresaResolvida.nome]
         );
 
         if (clienteResult.rowCount === 0) {
@@ -779,9 +774,9 @@ module.exports = ({
             data = $12,
             observacao = $13,
             atualizado_em = NOW()
-        WHERE id = $14 AND empresa_id = $15
+        WHERE id = $14 AND (empresa_id = $15 OR (empresa_id IS NULL AND empresa = $1))
         RETURNING *
-        `,
+`,
         [
           empresaResolvida.nome,
           empresaResolvida.id,
@@ -1107,7 +1102,7 @@ module.exports = ({
       }
 
       const [itensResult] = await Promise.all([
-        pool.query(`SELECT * FROM venda_itens WHERE venda_id = $1 ORDER BY id ASC`, [id]),
+        pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id WHERE vi.venda_id = $1 AND v.empresa_id = $2 ORDER BY vi.id ASC`, [id, empresaResolvida.id]),
         atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[venda-detalhe] status-cr:', e.message))
       ]);
 

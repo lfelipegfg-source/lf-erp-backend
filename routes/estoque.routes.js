@@ -224,12 +224,13 @@ ${filtroEmpresa}
            GREATEST(p.estoque_minimo * 2 - p.estoque, p.estoque_minimo - p.estoque) AS qtd_sugerida,
            f.nome AS fornecedor_preferencial
          FROM produtos p
-         LEFT JOIN fornecedores f ON f.id = p.fornecedor_id AND f.empresa_id = p.empresa_id
+         LEFT JOIN fornecedores f ON f.id = p.fornecedor_id AND (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
          WHERE (p.empresa_id = $1 OR (p.empresa_id IS NULL AND p.empresa = $2))
            AND p.deletado_em IS NULL
            AND p.estoque_minimo > 0
            AND p.estoque < p.estoque_minimo
-         ORDER BY (p.estoque_minimo - p.estoque) DESC, p.nome`,
+         ORDER BY (p.estoque_minimo - p.estoque) DESC, p.nome
+         LIMIT 1000`,
         [empresaResolvida.id, empresaResolvida.nome]
       );
 

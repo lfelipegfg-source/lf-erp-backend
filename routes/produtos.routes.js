@@ -539,7 +539,7 @@ ${adicionarFiltroEmpresaSaaS({
             ipi_cst = $33,
             ipi_aliquota = $34,
             atualizado_em = NOW()
-          WHERE id = $35 AND empresa_id = $36`,
+          WHERE id = $35 AND (empresa_id = $36 OR (empresa_id IS NULL AND empresa = $37))`,
           [
             nome,
             precoFinal,
@@ -576,7 +576,8 @@ ${adicionarFiltroEmpresaSaaS({
             ipi_cst !== undefined ? (ipi_cst || null) : atual.ipi_cst,
             ipi_aliquota !== undefined ? normalizarDecimal(ipi_aliquota) : atual.ipi_aliquota,
             id,
-            empresaResolvida.id
+            empresaResolvida.id,
+            empresaResolvida.nome
           ]
         );
 

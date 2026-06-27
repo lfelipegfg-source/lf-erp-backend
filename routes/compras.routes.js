@@ -114,8 +114,8 @@ module.exports = function ({
       // Pré-busca todos os produtos em 1 SELECT FOR UPDATE com ids ordenados (evita deadlock)
       const idsProdutos = [...new Set(itens.map(i => Number(i.produto_id)))].sort((a, b) => a - b);
       const produtosResult = await client.query(
-        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-        [idsProdutos, empresaResolvida.id]
+        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+        [idsProdutos, empresaResolvida.id, empresaResolvida.nome]
       );
       const produtosMap = Object.fromEntries(produtosResult.rows.map(p => [Number(p.id), p]));
 
@@ -391,8 +391,8 @@ module.exports = function ({
       const idsOriginais = [...new Set(itensOriginais.rows.map(r => Number(r.produto_id)))].sort((a, b) => a - b);
       if (idsOriginais.length > 0) {
         const prodsOriginaisResult = await client.query(
-          `SELECT id, estoque, custo_medio, custo FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 FOR UPDATE`,
-          [idsOriginais, empresaResolvida.id]
+          `SELECT id, estoque, custo_medio, custo FROM produtos WHERE id = ANY($1::int[]) AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
+          [idsOriginais, empresaResolvida.id, empresaResolvida.nome]
         );
         const prodsOriginaisMap = Object.fromEntries(prodsOriginaisResult.rows.map(p => [Number(p.id), p]));
 
@@ -463,8 +463,8 @@ module.exports = function ({
       // Aplicar novos itens — pré-busca todos em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)
       const idsNovos = [...new Set(itens.map(i => Number(i.produto_id)))].sort((a, b) => a - b);
       const prodsNovosResult = await client.query(
-        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND empresa_id = $2 AND deletado_em IS NULL FOR UPDATE`,
-        [idsNovos, empresaResolvida.id]
+        `SELECT * FROM produtos WHERE id = ANY($1::int[]) AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+        [idsNovos, empresaResolvida.id, empresaResolvida.nome]
       );
       const prodsNovosMap = Object.fromEntries(prodsNovosResult.rows.map(p => [Number(p.id), p]));
 
