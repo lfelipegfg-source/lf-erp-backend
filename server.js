@@ -6968,13 +6968,16 @@ app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, async (req, res) =>
            boleto_status        = $4,
            boleto_gerado_em     = NOW(),
            atualizado_em        = NOW()
-       WHERE id = $5`,
+       WHERE id = $5
+         AND (empresa_id = $6 OR (empresa_id IS NULL AND empresa = $7))`,
       [
         boleto.id,
         boleto.invoiceUrl || boleto.bankSlipUrl || null,
         boleto.linhaDigitavel || null,
         boleto.status || 'PENDING',
-        cr.id
+        cr.id,
+        empresaResolvida.id,
+        empresaResolvida.nome
       ]
     );
 
@@ -7084,11 +7087,19 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
     }
 
     if (event === 'PAYMENT_OVERDUE' && contaId > 0) {
-      await pool.query(
-        `UPDATE contas_receber SET boleto_status = 'OVERDUE', atualizado_em = NOW()
-         WHERE id = $1 AND boleto_id IS NOT NULL`,
+      const overdueCheck = await pool.query(
+        `SELECT empresa_id, empresa FROM contas_receber WHERE id = $1 LIMIT 1`,
         [contaId]
       );
+      if (overdueCheck.rowCount > 0) {
+        const { empresa_id: empId, empresa: empNome } = overdueCheck.rows[0];
+        await pool.query(
+          `UPDATE contas_receber SET boleto_status = 'OVERDUE', atualizado_em = NOW()
+           WHERE id = $1 AND boleto_id IS NOT NULL
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [contaId, empId || 0, empNome || '']
+        );
+      }
     }
 
     res.status(200).json({ ok: true });
