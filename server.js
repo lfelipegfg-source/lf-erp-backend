@@ -4291,14 +4291,12 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
     await client.query('BEGIN');
 
     const lancamentoResult = await client.query(
-      `
-      SELECT *
-      FROM lancamentos_financeiros
-      WHERE id = $1
-      LIMIT 1
-      FOR UPDATE
-      `,
-      [lancamentoId]
+      req.user.is_saas_owner
+        ? `SELECT * FROM lancamentos_financeiros WHERE id = $1 LIMIT 1 FOR UPDATE`
+        : `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1 FOR UPDATE`,
+      req.user.is_saas_owner
+        ? [lancamentoId]
+        : [lancamentoId, req.user.empresa_id || 0, req.user.empresa || '']
     );
 
     if (lancamentoResult.rowCount === 0) {
@@ -7074,14 +7072,22 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
     const contaId = Number(payment.externalReference);
 
     if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event) && contaId > 0) {
-      // boleto_id = $3 garante que só o boleto específico do Asaas pode baixar esta conta
-      await pool.query(
-        `UPDATE contas_receber
-         SET status = 'pago', boleto_status = 'RECEIVED',
-             data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
-         WHERE id = $1 AND boleto_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
-        [contaId, payment.paymentDate || null, payment.id || '']
+      // Busca empresa_id da conta para garantir filtro multiempresa no UPDATE
+      const contaCheck = await pool.query(
+        `SELECT empresa_id, empresa FROM contas_receber WHERE id = $1 LIMIT 1`,
+        [contaId]
       );
+      if (contaCheck.rowCount > 0) {
+        const { empresa_id: empId, empresa: empNome } = contaCheck.rows[0];
+        await pool.query(
+          `UPDATE contas_receber
+           SET status = 'pago', boleto_status = 'RECEIVED',
+               data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
+           WHERE id = $1 AND boleto_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'
+             AND (empresa_id = $4 OR (empresa_id IS NULL AND empresa = $5))`,
+          [contaId, payment.paymentDate || null, payment.id || '', empId || 0, empNome || '']
+        );
+      }
     }
 
     if (event === 'PAYMENT_OVERDUE' && contaId > 0) {
