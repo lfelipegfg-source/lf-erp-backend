@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
 const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
 const { encryptField, decryptField } = require('./utils/pixCrypto');
+const { normalizarFormaPagamentoFluxo } = require('./utils/financeiroUtils');
 const {
   hoje,
   normalizarDecimal,
@@ -232,30 +233,12 @@ const pool = new Pool({
 app.locals.pool = pool;
 
 app.get('/health', async (req, res) => {
-  const inicio = Date.now();
   try {
     await pool.query('SELECT 1');
-    const latencia = Date.now() - inicio;
-    const mem = process.memoryUsage();
-
-    res.json({
-      status: 'ok',
-      sistema: 'LF ERP',
-      database: 'online',
-      latencia_ms: latencia,
-      uptime_s: Math.floor(process.uptime()),
-      memoria_mb: Math.round(mem.rss / 1024 / 1024),
-      timestamp: new Date().toISOString()
-    });
+    res.json({ status: 'ok', sistema: 'LF ERP', database: 'online' });
   } catch (error) {
     console.error('Erro no health check:', error);
-    res.status(500).json({
-      status: 'erro',
-      sistema: 'LF ERP',
-      database: 'offline',
-      latencia_ms: Date.now() - inicio,
-      timestamp: new Date().toISOString()
-    });
+    res.status(500).json({ status: 'erro', sistema: 'LF ERP', database: 'offline' });
   }
 });
 
@@ -7725,27 +7708,7 @@ async function start() {
 
 start();
 
-function normalizarFormaPagamentoFluxo(value) {
-  const forma = String(value || '')
-    .trim()
-    .toLowerCase();
 
-  const mapa = {
-    dinheiro: 'Dinheiro',
-    pix: 'Pix',
-    cartão: 'Cartão',
-    cartao: 'Cartão',
-    credito: 'Cartão',
-    crédito: 'Cartão',
-    debito: 'Cartão',
-    débito: 'Cartão',
-    boleto: 'Boleto',
-    promissoria: 'Promissória',
-    promissória: 'Promissória'
-  };
-
-  return mapa[forma] || 'Não informado';
-}
 
 // ================= ADMIN: LOGS DE AUDITORIA =================
 
