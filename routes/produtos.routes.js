@@ -720,8 +720,8 @@ ${adicionarFiltroEmpresaSaaS({
         await clienteDel.query(
           `UPDATE produtos
            SET deletado_em = NOW(), atualizado_em = NOW()
-           WHERE id = $1 AND empresa_id = $2`,
-          [id, empresaResolvida.id]
+           WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
         );
 
         await clienteDel.query('COMMIT');

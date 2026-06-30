@@ -66,8 +66,8 @@ module.exports = function ({
       await client.query('BEGIN');
 
       const fornecedorResult = await client.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [fornecedor_id, empresaResolvida.id]
+        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [fornecedor_id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       if (fornecedorResult.rowCount === 0) {
@@ -411,8 +411,9 @@ module.exports = function ({
           })();
 
           await client.query(
-            `UPDATE produtos SET estoque = $1, custo_medio = $2, atualizado_em = NOW() WHERE id = $3 AND empresa_id = $4`,
-            [estoqueRevertido, custoRevertido, Number(item.produto_id), empresaResolvida.id]
+            `UPDATE produtos SET estoque = $1, custo_medio = $2, atualizado_em = NOW()
+             WHERE id = $3 AND (empresa_id = $4 OR (empresa_id IS NULL AND empresa = $5))`,
+            [estoqueRevertido, custoRevertido, Number(item.produto_id), empresaResolvida.id, empresaResolvida.nome]
           );
           // Atualiza o mapa para itens duplicados na mesma compra
           prodsOriginaisMap[Number(item.produto_id)] = { ...prod, estoque: estoqueRevertido, custo_medio: custoRevertido };
@@ -445,8 +446,8 @@ module.exports = function ({
 
       // Buscar fornecedor
       const fornecedorResult = await client.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-        [fornecedor_id, empresaResolvida.id]
+        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
+        [fornecedor_id, empresaResolvida.id, empresaResolvida.nome]
       );
       if (fornecedorResult.rowCount === 0) {
         await client.query('ROLLBACK');
@@ -456,8 +457,9 @@ module.exports = function ({
 
       // Atualizar compra
       await client.query(
-        `UPDATE compras SET fornecedor_id=$1, data=$2, total=$3, observacao=$4, pagamento=$5, gerar_conta_pagar=$6, atualizado_em=NOW() WHERE id=$7 AND empresa_id=$8`,
-        [fornecedor_id, normalizarDataISO(data) || hoje(), totalCalculado, observacao || '', pagamentoNormalizado, geraContaPagar, id, empresaResolvida.id]
+        `UPDATE compras SET fornecedor_id=$1, data=$2, total=$3, observacao=$4, pagamento=$5, gerar_conta_pagar=$6, atualizado_em=NOW()
+         WHERE id=$7 AND (empresa_id=$8 OR (empresa_id IS NULL AND empresa = $9))`,
+        [fornecedor_id, normalizarDataISO(data) || hoje(), totalCalculado, observacao || '', pagamentoNormalizado, geraContaPagar, id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       // Aplicar novos itens — pré-busca todos em 1 SELECT FOR UPDATE (ORDER BY id = lock consistente)
@@ -500,8 +502,9 @@ module.exports = function ({
         );
 
         await client.query(
-          `UPDATE produtos SET estoque=$1, custo=$2, custo_unitario=$3, custo_medio=$4, lucro_unitario=$5, margem_lucro=$6, atualizado_em=NOW() WHERE id=$7 AND empresa_id=$8`,
-          [novoEstoque, custoUnitario, custoUnitario, novoCustoMedio, lucroUnitario, margemLucro, produto.id, empresaResolvida.id]
+          `UPDATE produtos SET estoque=$1, custo=$2, custo_unitario=$3, custo_medio=$4, lucro_unitario=$5, margem_lucro=$6, atualizado_em=NOW()
+           WHERE id=$7 AND (empresa_id=$8 OR (empresa_id IS NULL AND empresa = $9))`,
+          [novoEstoque, custoUnitario, custoUnitario, novoCustoMedio, lucroUnitario, margemLucro, produto.id, empresaResolvida.id, empresaResolvida.nome]
         );
 
         // Atualiza mapa para produto duplicado na mesma compra

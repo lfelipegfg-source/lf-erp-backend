@@ -134,9 +134,10 @@ module.exports = ({
       SELECT *
       FROM venda_itens
       WHERE venda_id = $1
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       ORDER BY id ASC
       `,
-      [vendaId]
+      [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
 
     // Pré-busca e_kit de todos os produtos da venda — evita N+1 (atributo estático)
@@ -161,15 +162,17 @@ module.exports = ({
       if (gradeId) {
         // Restaura estoque na grade específica
         await client.query(
-          `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-          [quantidade, gradeId, empresaResolvida.id]
+          `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW()
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+          [quantidade, gradeId, empresaResolvida.id, empresaResolvida.nome]
         );
         await client.query(
           `UPDATE produtos SET estoque = (
              SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
-             WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true
-           ), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
-          [produtoId, empresaResolvida.id]
+             WHERE produto_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND ativo = true
+           ), atualizado_em = NOW()
+           WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
       } else if (eKit) {
         // Restaura estoque de cada componente do kit
@@ -377,8 +380,8 @@ module.exports = ({
         // UPDATE atômico: debita apenas se estoque suficiente — previne oversell em concorrência
         const upd = await client.query(
           `UPDATE produtos SET estoque = estoque - $1, atualizado_em = NOW()
-           WHERE id = $2 AND empresa_id = $3 AND estoque >= $1`,
-          [quantidade, produto.id, empresaResolvida.id]
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) AND estoque >= $1`,
+          [quantidade, produto.id, empresaResolvida.id, empresaResolvida.nome]
         );
 
         if (upd.rowCount === 0) {
@@ -1102,7 +1105,13 @@ module.exports = ({
       }
 
       const [itensResult] = await Promise.all([
-        pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id WHERE vi.venda_id = $1 AND v.empresa_id = $2 ORDER BY vi.id ASC`, [id, empresaResolvida.id]),
+        pool.query(
+          `SELECT vi.* FROM venda_itens vi
+           WHERE vi.venda_id = $1
+             AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))
+           ORDER BY vi.id ASC`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        ),
         atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[venda-detalhe] status-cr:', e.message))
       ]);
 
