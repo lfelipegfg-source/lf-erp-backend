@@ -280,7 +280,7 @@ module.exports = function ({
   // GET /financeiro/cashflow-futuro?dias=30|60|90
   router.get('/cashflow-futuro', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
-      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);

@@ -3085,7 +3085,11 @@ app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), asy
       castDate: false
     });
 
-    sql += ` ORDER BY c.id DESC`;
+    const paginaC = Math.max(1, normalizarInt(req.query.page || 1));
+    const limiteC = Math.min(normalizarInt(req.query.limit || 100), 500);
+    const offsetC = (paginaC - 1) * limiteC;
+    sql += ` ORDER BY c.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limiteC, offsetC);
 
     const result = await pool.query(sql, params);
     res.json(
@@ -3775,9 +3779,15 @@ app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) =
       return jsonErro(res, 400, 'Cliente inválido');
     }
 
-    const _chEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
-    const _chEmpresaWhere = _chEmpresaId ? 'AND empresa_id = $2' : '';
-    const _chParams = _chEmpresaId ? [clienteId, _chEmpresaId] : [clienteId];
+    if (!req.user?.is_saas_owner && !req.empresa_id && !req.empresa_nome) {
+      return jsonErro(res, 403, 'Empresa não identificada');
+    }
+    const _chEmpresaWhere = req.user?.is_saas_owner
+      ? ''
+      : `AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`;
+    const _chParams = req.user?.is_saas_owner
+      ? [clienteId]
+      : [clienteId, req.empresa_id || 0, req.empresa_nome || ''];
 
     const clienteResult = await pool.query(
       `SELECT * FROM clientes WHERE id = $1 AND deletado_em IS NULL ${_chEmpresaWhere} LIMIT 1`,
@@ -4165,8 +4175,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
 
     const novoStatus =
       conta.data_vencimento &&
-      new Date(`${String(conta.data_vencimento).slice(0, 10)}T00:00:00`) <
-        new Date(`${hoje()}T00:00:00`)
+      String(conta.data_vencimento).slice(0, 10) < hoje()
         ? 'atrasado'
         : 'pendente';
 
@@ -4292,8 +4301,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
 
     const novoStatus =
       conta.data_vencimento &&
-      new Date(`${String(conta.data_vencimento).slice(0, 10)}T00:00:00`) <
-        new Date(`${hoje()}T00:00:00`)
+      String(conta.data_vencimento).slice(0, 10) < hoje()
         ? 'atrasado'
         : 'pendente';
 
@@ -4321,8 +4329,6 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       [lancamentoId, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    await client.query('COMMIT');
-
     await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
       empresa_id: empresaResolvida.id,
@@ -4333,6 +4339,8 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       valor: valorEstorno,
       usuario_id: req.user?.id
     });
+
+    await client.query('COMMIT');
 
     res.json({
       sucesso: true,
@@ -5326,7 +5334,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
         valorFinal,
         normalizarDataISO(vencimento) || null,
         normalizarDataISO(pagamento_data) || null,
-        status || 'pendente',
+        ['pendente', 'pago', 'atrasado'].includes(String(status || '').toLowerCase()) ? String(status).toLowerCase() : 'pendente',
         forma_pagamento || '',
         Boolean(recorrente),
         frequencia || '',
@@ -5554,7 +5562,7 @@ app.get('/investimentos/:empresa', auth, async (req, res) => {
       castDate: false
     });
 
-    sql += ` ORDER BY id DESC`;
+    sql += ` ORDER BY id DESC LIMIT 500`;
 
     const result = await pool.query(sql, params);
 
@@ -5987,8 +5995,8 @@ app.get('/dashboard', auth, async (req, res) => {
     }
 
     await Promise.all([
-      atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id),
-      atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id)
+      atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[dashboard] status-cr:', e.message)),
+      atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[dashboard] status-cp:', e.message))
     ]);
 
     const { dataInicial, dataFinal } = obterPeriodo(req);
@@ -6602,6 +6610,7 @@ function resolvePixConfig(config) {
 // GET /pagamentos/pix/config
 app.get('/pagamentos/pix/config', auth, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
@@ -7264,8 +7273,9 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, r
       [id, empresaResolvida.id, empresaResolvida.nome]
     );
     await pool.query(
-      `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1 WHERE id = $1`,
-      [item.rows[0].conciliacao_id]
+      `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [item.rows[0].conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
     );
     res.json({ sucesso: true });
   } catch (error) {
@@ -7315,8 +7325,9 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
       [lancamentoId, id, empresaResolvida.id, empresaResolvida.nome]
     );
     await pool.query(
-      `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1 WHERE id = $1`,
-      [row.conciliacao_id]
+      `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      [row.conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
     );
     res.json({ sucesso: true, lancamento_id: lancamentoId });
   } catch (error) {

@@ -6,6 +6,13 @@ function hoje() {
 }
 
 function normalizarDecimal(valor) {
+  if (valor === null || valor === undefined || valor === '') return 0;
+  if (typeof valor === 'string') {
+    // Suporta formato BR "1.234,56": remove pontos de milhar, troca vírgula por ponto
+    const limpo = valor.trim().replace(/\./g, '').replace(',', '.');
+    const numero = Number(limpo);
+    return Number.isFinite(numero) ? numero : 0;
+  }
   const numero = Number(valor);
   return Number.isFinite(numero) ? numero : 0;
 }
@@ -34,8 +41,12 @@ const _fmtDataFortaleza = new Intl.DateTimeFormat('en-CA', {
 function normalizarDataISO(valor) {
   if (!valor) return null;
 
-  if (typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(valor.trim())) {
-    return valor.trim();
+  if (typeof valor === 'string') {
+    const s = valor.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    // Suporte a DD/MM/YYYY (formato BR)
+    const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
+    if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
   }
 
   const d = new Date(valor);

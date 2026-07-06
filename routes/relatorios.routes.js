@@ -1165,6 +1165,7 @@ MAX(v.data) AS ultima_venda
         ${where}
         GROUP BY vi.produto_id, vi.produto_nome, vi.grade_id, pg.atributo1, pg.atributo2
         ORDER BY faturamento_total DESC, vi.produto_nome ASC
+        LIMIT 5000
         `,
         params
       );

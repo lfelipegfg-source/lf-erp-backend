@@ -208,7 +208,7 @@ ${filtroEmpresa}
   // ── Sugestão automática de compra ────────────────────────────────────────────
   router.get('/sugestao-compra', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
     try {
-      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
       if (!empresaResolvida) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
 
       const result = await pool.query(

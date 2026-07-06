@@ -186,7 +186,7 @@ module.exports = function ({
               lucro_unitario = $5,
               margem_lucro = $6,
               atualizado_em = NOW()
-          WHERE id = $7 AND empresa_id = $8`,
+          WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9))`,
           [
             novoEstoque,
             custoUnitario,
@@ -195,7 +195,8 @@ module.exports = function ({
             lucroUnitario,
             margemLucro,
             produto.id,
-            empresaResolvida.id
+            empresaResolvida.id,
+            empresaResolvida.nome
           ]
         );
 
