@@ -197,8 +197,8 @@ module.exports = ({
 
       // Define a nova principal
       const result = await pool.query(
-        `UPDATE produto_imagens SET principal = true WHERE id = $1 RETURNING *`,
-        [imagemId]
+        `UPDATE produto_imagens SET principal = true WHERE id = $1 AND empresa_id = $2 RETURNING *`,
+        [imagemId, empresaResolvida.id]
       );
 
       return ok(res, { imagem: result.rows[0] });
@@ -246,7 +246,7 @@ module.exports = ({
       if (!imagem) return erro(res, 404, 'Imagem não encontrada');
 
       // Remove do banco
-      await pool.query(`DELETE FROM produto_imagens WHERE id = $1`, [imagemId]);
+      await pool.query(`DELETE FROM produto_imagens WHERE id = $1 AND empresa_id = $2`, [imagemId, empresaResolvida.id]);
 
       // Remove do Cloudinary (fire-and-forget — não bloqueia resposta)
       deletarImagem(imagem.storage_public_id).catch(() => {});

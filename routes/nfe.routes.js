@@ -223,7 +223,10 @@ module.exports = ({
       // Busca cliente se houver
       let cliente = null;
       if (venda.cliente_id) {
-        const cliResult = await pool.query(`SELECT * FROM clientes WHERE id = $1`, [venda.cliente_id]);
+        const cliResult = await pool.query(
+          `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [venda.cliente_id, empresaResolvida.id, empresaResolvida.nome]
+        );
         if (cliResult.rowCount > 0) cliente = cliResult.rows[0];
       }
 
@@ -325,9 +328,9 @@ module.exports = ({
       await pool.query(
         `UPDATE nfe_emissoes SET status=$1, chave_nfe=COALESCE($2,chave_nfe),
          numero=COALESCE($3,numero), serie=COALESCE($4,serie),
-         mensagem=$5, atualizado_em=NOW() WHERE ref=$6`,
+         mensagem=$5, atualizado_em=NOW() WHERE ref=$6 AND empresa_id=$7`,
         [statusFinal, d.chave_nfe || null, d.numero_nfe || null, d.serie || null,
-         d.mensagem_sefaz || null, ref]
+         d.mensagem_sefaz || null, ref, empresaResolvida.id]
       );
 
       return ok(res, { ref, status: statusFinal, chave_nfe: d.chave_nfe, mensagem: d.mensagem_sefaz });
@@ -377,13 +380,14 @@ module.exports = ({
            cancelado_em = $3,
            motivo_cancelamento = $4,
            atualizado_em = NOW()
-         WHERE id = $5`,
+         WHERE id = $5 AND empresa_id = $6`,
         [
           cancelado ? 'cancelado' : emissao.status,
           d.mensagem_sefaz || null,
           cancelado ? new Date() : null,
           cancelado ? justificativa.trim() : null,
-          nfeId
+          nfeId,
+          empresaResolvida.id
         ]
       );
 

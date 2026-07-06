@@ -91,13 +91,16 @@ module.exports = ({ auth, pool }) => {
          JOIN empresas e ON e.id = c.empresa_id
          WHERE c.portal_ativo = true
            AND c.senha_portal IS NOT NULL
-           AND REGEXP_REPLACE(COALESCE(c.cpf_cnpj, ''), '[^0-9]', '', 'g') = $1
-         LIMIT 1`,
+           AND REGEXP_REPLACE(COALESCE(c.cpf_cnpj, ''), '[^0-9]', '', 'g') = $1`,
         [cleanDoc]
       );
 
       if (result.rowCount === 0) {
         return erro(res, 401, 'CPF/CNPJ não encontrado, portal inativo ou senha não configurada');
+      }
+
+      if (result.rowCount > 1) {
+        return erro(res, 400, 'CPF/CNPJ encontrado em mais de uma empresa. Entre em contato com o suporte.');
       }
 
       const cliente = result.rows[0];
@@ -188,7 +191,9 @@ module.exports = ({ auth, pool }) => {
       const params = [clienteId, empresaId];
       let where = 'WHERE cr.cliente_id = $1 AND cr.empresa_id = $2';
 
+      const STATUS_VALIDOS_PORTAL = ['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado', 'cancelado'];
       if (status) {
+        if (!STATUS_VALIDOS_PORTAL.includes(status.toLowerCase())) return erro(res, 400, 'Status inválido');
         where += ` AND LOWER(cr.status) = $3`;
         params.push(status.toLowerCase());
       }

@@ -223,9 +223,9 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: true } : false,
-  max: 20,
-  min: 2,
-  idleTimeoutMillis: 60_000,
+  max: 10,
+  min: 0,
+  idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000
 });
 
@@ -1826,6 +1826,18 @@ async function initDb() {
     ALTER TABLE contas_pagar   ADD COLUMN IF NOT EXISTS valor_original    NUMERIC(12,2);
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nfe_config (
+      id         SERIAL PRIMARY KEY,
+      empresa_id INTEGER UNIQUE,
+      token_focusnfe TEXT,
+      ambiente   INTEGER DEFAULT 2,
+      serie      TEXT DEFAULT '1',
+      codigo_csc TEXT,
+      id_token_csc TEXT,
+      atualizado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
   await pool.query(`
     ALTER TABLE nfe_config ADD COLUMN IF NOT EXISTS codigo_csc   TEXT;
     ALTER TABLE nfe_config ADD COLUMN IF NOT EXISTS id_token_csc TEXT;
@@ -3923,7 +3935,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
        WHERE id = $1
          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
        FOR UPDATE`,
-      [id, req.empresa_id, req.empresa_nome]
+      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
     );
 
     if (contaResult.rowCount === 0) {
@@ -4191,16 +4203,20 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       [novoStatus, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'estorno',
-      entidade: 'contas_receber',
-      entidade_id: id,
-      descricao: `Estorno da baixa da conta a receber #${id}`,
-      valor: conta.valor_atualizado || conta.valor || 0,
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'estorno',
+        entidade: 'contas_receber',
+        entidade_id: id,
+        descricao: `Estorno da baixa da conta a receber #${id}`,
+        valor: conta.valor_atualizado || conta.valor || 0,
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) {
+      console.error('[cr-estornar] log financeiro:', logErr.message);
+    }
 
     try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[cr-estornar] status-cr:', e.message); }
 
@@ -4897,7 +4913,7 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
        WHERE id = $1
          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
        FOR UPDATE`,
-      [id, req.empresa_id, req.empresa_nome]
+      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
     );
 
     if (contaResult.rowCount === 0) {
@@ -6678,6 +6694,14 @@ app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, async (req, res) => {
     const { conta_receber_id, valor, cliente_nome } = req.body;
     if (!valor || Number(valor) <= 0) return jsonErro(res, 400, 'Valor inválido');
 
+    if (conta_receber_id) {
+      const crCheck = await pool.query(
+        `SELECT 1 FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+        [Number(conta_receber_id), empresaResolvida.id, empresaResolvida.nome]
+      );
+      if (crCheck.rowCount === 0) return jsonErro(res, 403, 'Conta a receber não pertence à empresa');
+    }
+
     const cfg = await pool.query(
       `SELECT * FROM configuracoes WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2) LIMIT 1`,
       [empresaResolvida.id, empresaResolvida.nome]
@@ -7153,6 +7177,7 @@ function parseCSV(texto) {
 // POST /conciliacao/importar
 app.post('/conciliacao/importar', auth, writeRateLimiter, jsonUpload, async (req, res) => {
   try {
+    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const { conteudo, tipo, nome, conta } = req.body;
     if (!conteudo || !tipo || !nome) return jsonErro(res, 400, 'Campos obrigatórios: conteudo, tipo, nome');
 
@@ -7261,22 +7286,32 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, r
     const item = await pool.query(
       `SELECT * FROM conciliacao_itens
        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [id, req.empresa_id, req.empresa_nome]
+      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
     );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
 
     const empresaResolvida = await validarAcessoEmpresa(req, item.rows[0].empresa, item.rows[0].empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
-    await pool.query(
-      `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-    await pool.query(
-      `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1
-       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [item.rows[0].conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
-    );
+    const client7 = await pool.connect();
+    try {
+      await client7.query('BEGIN');
+      await client7.query(
+        `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      await client7.query(
+        `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1
+         WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [item.rows[0].conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      await client7.query('COMMIT');
+    } catch (txErr) {
+      await client7.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client7.release();
+    }
     res.json({ sucesso: true });
   } catch (error) {
     console.error('Erro ao ignorar item:', error);
@@ -7292,7 +7327,7 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
     const item = await pool.query(
       `SELECT * FROM conciliacao_itens
        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [id, req.empresa_id, req.empresa_nome]
+      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
     );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
     if (item.rows[0].status === 'conciliado') return jsonErro(res, 400, 'Item já conciliado');
@@ -7304,31 +7339,41 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
     const { categoria, observacao } = req.body;
     const tipoLanc = row.tipo === 'credito' ? 'receita' : 'despesa';
 
-    const lanc = await pool.query(
-      `INSERT INTO lancamentos_financeiros
-         (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, criado_por, criado_em, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,'pago',$8,NOW(),NOW()) RETURNING id`,
-      [
-        empresaResolvida.nome, empresaResolvida.id,
-        tipoLanc,
-        categoria || (row.tipo === 'credito' ? 'Receita bancária' : 'Despesa bancária'),
-        row.descricao,
-        row.valor,
-        row.data,
-        req.user.id
-      ]
-    );
-    const lancamentoId = lanc.rows[0].id;
-
-    await pool.query(
-      `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
-      [lancamentoId, id, empresaResolvida.id, empresaResolvida.nome]
-    );
-    await pool.query(
-      `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1
-       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [row.conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
-    );
+    const client8 = await pool.connect();
+    let lancamentoId;
+    try {
+      await client8.query('BEGIN');
+      const lanc = await client8.query(
+        `INSERT INTO lancamentos_financeiros
+           (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, criado_por, criado_em, atualizado_em)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$7,'pago',$8,NOW(),NOW()) RETURNING id`,
+        [
+          empresaResolvida.nome, empresaResolvida.id,
+          tipoLanc,
+          categoria || (row.tipo === 'credito' ? 'Receita bancária' : 'Despesa bancária'),
+          row.descricao,
+          row.valor,
+          row.data,
+          req.user.id
+        ]
+      );
+      lancamentoId = lanc.rows[0].id;
+      await client8.query(
+        `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+        [lancamentoId, id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      await client8.query(
+        `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1
+         WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [row.conciliacao_id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      await client8.query('COMMIT');
+    } catch (txErr) {
+      await client8.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client8.release();
+    }
     res.json({ sucesso: true, lancamento_id: lancamentoId });
   } catch (error) {
     console.error('Erro ao criar lançamento da conciliação:', error);

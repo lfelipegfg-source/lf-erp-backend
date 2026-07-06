@@ -343,22 +343,34 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       let expirados = 0;
       for (const row of vencidosResult.rows) {
-        const pontosBaixar = Math.min(Number(row.pontos_a_expirar), (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2`, [row.cliente_id, e.id])).rows[0]?.p || 0);
-        if (pontosBaixar <= 0) continue;
+        const clientFid = await pool.connect();
+        try {
+          await clientFid.query('BEGIN');
+          const saldoRes = await clientFid.query(
+            `SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2 FOR UPDATE`,
+            [row.cliente_id, e.id]
+          );
+          const pontosBaixar = Math.min(Number(row.pontos_a_expirar), saldoRes.rows[0]?.p || 0);
+          if (pontosBaixar <= 0) { await clientFid.query('ROLLBACK'); continue; }
 
-        await pool.query(
-          `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2`,
-          [pontosBaixar, row.cliente_id]
-        );
-
-        const saldo = (await pool.query(`SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2`, [row.cliente_id, e.id])).rows[0]?.p || 0;
-
-        await pool.query(
-          `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo)
-           VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao')`,
-          [e.id, row.cliente_id, -pontosBaixar, saldo]
-        );
-        expirados++;
+          await clientFid.query(
+            `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2`,
+            [pontosBaixar, row.cliente_id]
+          );
+          const novoSaldo = (saldoRes.rows[0]?.p || 0) - pontosBaixar;
+          await clientFid.query(
+            `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo)
+             VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao')`,
+            [e.id, row.cliente_id, -pontosBaixar, novoSaldo]
+          );
+          await clientFid.query('COMMIT');
+          expirados++;
+        } catch (expErr) {
+          await clientFid.query('ROLLBACK');
+          console.error('[fidelidade] expirar cliente', row.cliente_id, expErr.message);
+        } finally {
+          clientFid.release();
+        }
       }
 
       return ok(res, { clientes_processados: expirados, mensagem: `${expirados} cliente(s) com pontos expirados processados` });
