@@ -79,7 +79,9 @@ module.exports = ({
       .filter((p) => FORMAS_PENDENTES.includes(normalizarTexto(p.forma)))
       .reduce((acc, p) => acc + p.valor, 0);
 
-    const statusFinal = totalPromissoria > 0 ? 'pendente' : (status_pagamento || 'pago');
+    const STATUS_PAGAMENTO_VALIDOS = ['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado'];
+    const statusInformado = STATUS_PAGAMENTO_VALIDOS.includes(status_pagamento) ? status_pagamento : 'pago';
+    const statusFinal = totalPromissoria > 0 ? 'pendente' : statusInformado;
 
     return { pagamentosArray, pagamentoPrincipal, totalPromissoria: Number(totalPromissoria.toFixed(2)), statusPagamento: statusFinal };
   }
@@ -791,7 +793,7 @@ module.exports = ({
           totalFinal,
           pagamento || 'Dinheiro',
           parcelasFinal,
-          status_pagamento || 'pago',
+          (['pendente','atrasado','pago','parcial','parcial_atrasado'].includes(status_pagamento) ? status_pagamento : 'pago'),
           dataFinal,
           observacao || '',
           id,

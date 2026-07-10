@@ -40,7 +40,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       // KPIs por filial
       const filiaisIds = filiais.map((f) => f.id);
 
-      const params = [e.id];
+      const params = [e.id, e.nome];
       let dataCond = '';
       if (dataInicial) { params.push(dataInicial); dataCond += ` AND data >= $${params.length}`; }
       if (dataFinal)   { params.push(dataFinal);   dataCond += ` AND data <= $${params.length}`; }
@@ -49,7 +49,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const vendasResult = await pool.query(
         `SELECT filial_id, COUNT(*) AS qtd_vendas, COALESCE(SUM(total),0) AS total_vendas
          FROM vendas
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
            ${dataCond}
          GROUP BY filial_id`,
         params
@@ -58,7 +58,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const comprasResult = await pool.query(
         `SELECT filial_id, COUNT(*) AS qtd_compras, COALESCE(SUM(total),0) AS total_compras
          FROM compras
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
            ${dataCond}
          GROUP BY filial_id`,
         params
@@ -116,9 +116,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const filialId = req.params.id === 'sede' ? null : Number(req.params.id);
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
-      const params = [e.id];
-      let cond = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))`;
-      cond += filialId ? ` AND filial_id = $2` : ` AND filial_id IS NULL`;
+      const params = [e.id, e.nome];
+      let cond = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`;
+      cond += filialId ? ` AND filial_id = $3` : ` AND filial_id IS NULL`;
       if (filialId) params.push(filialId);
 
       const pv = [...params];
@@ -273,7 +273,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const filialId = req.params.id === 'sede' ? null : Number(req.params.id);
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
-      const params = [e.id];
+      const params = [e.id, e.nome];
       const cond = filialId ? `AND filial_id = $${params.push(filialId) && params.length}` : `AND filial_id IS NULL`;
       let dataCond = '';
       if (dataInicial) { params.push(dataInicial); dataCond += ` AND data >= $${params.length}`; }
@@ -282,7 +282,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const result = await pool.query(
         `SELECT id, data, cliente_nome, total, pagamento, status_pagamento
          FROM vendas
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $1 LIMIT 1)))
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
          ${cond} ${dataCond}
          ORDER BY data DESC, id DESC LIMIT 500`,
         params

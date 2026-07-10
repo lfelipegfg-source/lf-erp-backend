@@ -340,6 +340,13 @@ module.exports = ({
 
       const { produto_id, grade_id, preco, quantidade_minima } = req.body;
       if (!produto_id || preco == null) return erro(res, 400, 'produto_id e preco são obrigatórios');
+      if (normalizarDecimal(preco) < 0) return erro(res, 400, 'Preço não pode ser negativo');
+
+      const prodCheck = await pool.query(
+        `SELECT id FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+        [Number(produto_id), empresaResolvida.id]
+      );
+      if (prodCheck.rowCount === 0) return erro(res, 404, 'Produto não encontrado');
 
       const result = await pool.query(
         `INSERT INTO tabela_preco_itens

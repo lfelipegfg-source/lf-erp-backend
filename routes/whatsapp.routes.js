@@ -351,10 +351,12 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const { evento, status } = req.query;
+      const EVENTOS_WPP_VALIDOS = EVENTOS.map((ev) => ev.key);
+      const STATUS_WPP_VALIDOS  = ['enviado', 'link', 'erro', 'pendente', 'falhou'];
       const params = [e.id];
       let where = `WHERE empresa_id = $1`;
-      if (evento) { params.push(evento); where += ` AND evento = $${params.length}`; }
-      if (status) { params.push(status); where += ` AND status = $${params.length}`; }
+      if (evento && EVENTOS_WPP_VALIDOS.includes(evento)) { params.push(evento); where += ` AND evento = $${params.length}`; }
+      if (status && STATUS_WPP_VALIDOS.includes(status))  { params.push(status); where += ` AND status = $${params.length}`; }
 
       const result = await pool.query(
         `SELECT * FROM whatsapp_envios ${where} ORDER BY criado_em DESC LIMIT 200`,

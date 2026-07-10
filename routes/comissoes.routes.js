@@ -192,8 +192,9 @@ module.exports = ({
       let where = 'WHERE c.empresa_id = $1';
       let idx = 2;
 
+      const STATUS_COMISSAO_VALIDOS = ['pendente', 'pago', 'cancelado'];
       if (usuario_id)  { where += ` AND c.usuario_id = $${idx++}`;         params.push(Number(usuario_id)); }
-      if (status)      { where += ` AND c.status = $${idx++}`;              params.push(status); }
+      if (status && STATUS_COMISSAO_VALIDOS.includes(status)) { where += ` AND c.status = $${idx++}`; params.push(status); }
       if (dataInicial) { where += ` AND DATE(c.criado_em) >= $${idx++}`;    params.push(dataInicial); }
       if (dataFinal)   { where += ` AND DATE(c.criado_em) <= $${idx++}`;    params.push(dataFinal); }
 

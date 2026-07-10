@@ -352,10 +352,10 @@ module.exports = ({
 
     const campos = Object.entries({ status: novoStatus, ...extraUpdate })
       .map(([k], i) => `${k} = $${i + 2}`).join(', ');
-    const valores = [id, novoStatus, ...Object.values(extraUpdate)];
+    const valores = [id, novoStatus, ...Object.values(extraUpdate), empresaResolvida.id];
 
     const r = await pool.query(
-      `UPDATE orcamentos SET ${campos}, atualizado_em = NOW() WHERE id = $1 RETURNING *`,
+      `UPDATE orcamentos SET ${campos}, atualizado_em = NOW() WHERE id = $1 AND empresa_id = $${valores.length} RETURNING *`,
       valores
     );
     return ok(res, { orcamento: r.rows[0] });
@@ -457,8 +457,8 @@ module.exports = ({
 
         // Marca orçamento como convertido
         await client.query(
-          `UPDATE orcamentos SET status = 'convertido', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`,
-          [id]
+          `UPDATE orcamentos SET status = 'convertido', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          [id, empresaResolvida.id]
         );
 
         await client.query('COMMIT');

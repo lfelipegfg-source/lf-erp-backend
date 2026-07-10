@@ -115,7 +115,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
          LEFT JOIN crm_atividades a ON a.oportunidade_id = o.id
          ${where}
          GROUP BY o.id
-         ORDER BY o.atualizado_em DESC`,
+         ORDER BY o.atualizado_em DESC
+         LIMIT 500`,
         params
       );
 

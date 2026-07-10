@@ -35,6 +35,8 @@ module.exports = function ({
 
   router.get('/financeiro/resumo/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
+
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 

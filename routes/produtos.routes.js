@@ -129,11 +129,21 @@ module.exports = ({
       const precoFinal = normalizarDecimal(preco);
       const custoBase = normalizarDecimal(custo_unitario || custo);
       const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
+
+      if (precoFinal < 0) return erro(res, 400, 'Preço não pode ser negativo');
+      if (custoBase < 0) return erro(res, 400, 'Custo não pode ser negativo');
+      if (normalizarInt(estoque) < 0) return erro(res, 400, 'Estoque inicial não pode ser negativo');
+      if (normalizarInt(estoque_minimo) < 0) return erro(res, 400, 'Estoque mínimo não pode ser negativo');
+
       const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
       const margemLucro =
         custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
 
-      const result = await pool.query(
+      const prodClient = await pool.connect();
+      let produtoId;
+      try {
+        await prodClient.query('BEGIN');
+        const result = await prodClient.query(
         `INSERT INTO produtos
         (empresa, empresa_id, nome, preco, custo, custo_unitario, custo_medio, lucro_unitario, margem_lucro,
          preco_promocional, promocao_ativa, estoque, estoque_minimo, codigo_barras, categoria,
@@ -193,20 +203,29 @@ module.exports = ({
         ]
       );
 
-      const produtoId = result.rows[0].id;
+        produtoId = result.rows[0].id;
 
-      if (normalizarInt(estoque) > 0) {
-        await registrarMovimentacaoEstoque({
-          empresa: empresaResolvida.nome,
-          empresa_id: empresaResolvida.id,
-          produto_id: produtoId,
-          tipo: 'cadastro_inicial',
-          quantidade: normalizarInt(estoque),
-          observacao: 'Estoque inicial do cadastro',
-          referencia_tipo: 'produto',
-          referencia_id: produtoId,
-          usuario_id: req.user.id
-        });
+        if (normalizarInt(estoque) > 0) {
+          await registrarMovimentacaoEstoque({
+            empresa: empresaResolvida.nome,
+            empresa_id: empresaResolvida.id,
+            produto_id: produtoId,
+            tipo: 'cadastro_inicial',
+            quantidade: normalizarInt(estoque),
+            observacao: 'Estoque inicial do cadastro',
+            referencia_tipo: 'produto',
+            referencia_id: produtoId,
+            usuario_id: req.user.id,
+            client: prodClient
+          });
+        }
+
+        await prodClient.query('COMMIT');
+      } catch (txErr) {
+        await prodClient.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        prodClient.release();
       }
 
       await registrarAuditoria({
@@ -273,6 +292,7 @@ module.exports = ({
             )
           )
         ORDER BY p.nome
+        LIMIT 1000
       `, [empresaResolvida.id, empresaResolvida.nome]);
 
       return ok(res, { dados: rows.map(normalizarProduto) });

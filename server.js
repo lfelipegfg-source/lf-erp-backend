@@ -2635,6 +2635,11 @@ app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios',
       return jsonErro(res, 400, 'Dados obrigatórios');
     }
 
+    const TIPOS_USUARIO_VALIDOS = ['admin', 'gerente', 'funcionario'];
+    if (!TIPOS_USUARIO_VALIDOS.includes(tipo)) {
+      return jsonErro(res, 400, 'Tipo de usuário inválido');
+    }
+
     const forcaSenha = validarForcaSenha(senha.trim());
     if (!forcaSenha.valido) return jsonErro(res, 400, forcaSenha.mensagem);
 
@@ -2706,6 +2711,11 @@ app.put('/usuarios/:id', auth, writeRateLimiter, requirePermissao(pool, 'usuario
 
     if (!nome || !usuario || !tipo) {
       return jsonErro(res, 400, 'Dados obrigatórios');
+    }
+
+    const TIPOS_USUARIO_VALIDOS = ['admin', 'gerente', 'funcionario'];
+    if (!TIPOS_USUARIO_VALIDOS.includes(tipo)) {
+      return jsonErro(res, 400, 'Tipo de usuário inválido');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -3843,6 +3853,7 @@ THEN 'atrasado'
       WHERE cliente_id = $1
         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       ORDER BY id DESC
+      LIMIT 500
       `,
       [clienteId, empresaResolvida.id, empresaResolvida.nome, hoje()]
     );
@@ -4160,17 +4171,20 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
 });
 
 app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
+  const id = Number(req.params.id);
+  const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
+    await client.query('BEGIN');
 
     const contaResult = req.user.is_saas_owner
-      ? await pool.query(`SELECT * FROM contas_receber WHERE id = $1`, [id])
-      : await pool.query(
-          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      ? await client.query(`SELECT * FROM contas_receber WHERE id = $1 FOR UPDATE`, [id])
+      : await client.query(
+          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
           [id, req.user.empresa_id || 0, req.user.empresa || '']
         );
 
     if (contaResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       return jsonErro(res, 404, 'Conta não encontrada');
     }
 
@@ -4178,10 +4192,12 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
+      await client.query('ROLLBACK');
       return jsonErro(res, 403, 'Sem acesso');
     }
 
     if (String(conta.status || '').toLowerCase() !== 'pago') {
+      await client.query('ROLLBACK');
       return jsonErro(res, 400, 'Esta conta não está paga');
     }
 
@@ -4191,7 +4207,7 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
         ? 'atrasado'
         : 'pendente';
 
-    await pool.query(
+    await client.query(
       `
       UPDATE contas_receber
       SET status = $1,
@@ -4202,6 +4218,8 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       `,
       [novoStatus, id, empresaResolvida.id, empresaResolvida.nome]
     );
+
+    await client.query('COMMIT');
 
     try {
       await registrarLogFinanceiro({
@@ -4246,8 +4264,11 @@ app.post('/contas-receber/estornar/:id', auth, writeRateLimiter, requirePermissa
       }
     });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Erro ao estornar baixa de conta a receber:', error);
     jsonErro(res, 500, 'Erro ao estornar baixa de conta a receber');
+  } finally {
+    client.release();
   }
 });
 
@@ -4758,7 +4779,7 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
   }
 });
 
-app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
+app.get('/contas-pagar/detalhe/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const _cpEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
@@ -4805,7 +4826,7 @@ app.get('/contas-pagar/detalhe/:id', auth, async (req, res) => {
   }
 });
 
-app.get('/contas-pagar/origem-compra/:id', auth, async (req, res) => {
+app.get('/contas-pagar/origem-compra/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -4956,20 +4977,24 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
       [novoStatusCP, novoValorCP, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: pagamentoTotalCP ? 'baixa' : 'baixa_parcial',
-      entidade: 'contas_pagar',
-      entidade_id: id,
-      descricao: pagamentoTotalCP
-        ? `Baixa total da conta a pagar #${id}`
-        : `Baixa parcial da conta a pagar #${id}`,
-      valor: valorPagoFinal,
-      usuario_id: req.user?.id
-    });
-
     await client.query('COMMIT');
+
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: pagamentoTotalCP ? 'baixa' : 'baixa_parcial',
+        entidade: 'contas_pagar',
+        entidade_id: id,
+        descricao: pagamentoTotalCP
+          ? `Baixa total da conta a pagar #${id}`
+          : `Baixa parcial da conta a pagar #${id}`,
+        valor: valorPagoFinal,
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) {
+      console.error('[cp-pagar] log financeiro:', logErr.message);
+    }
 
     // Notifica integração contábil em background
     dispararWebhookComRetry(pool, empresaResolvida.id, 'pagamento.registrado', {
@@ -5361,16 +5386,20 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
       ]
     );
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'edicao',
-      entidade: 'lancamentos_financeiros',
-      entidade_id: id,
-      descricao: `Lançamento editado: ${descricao}`,
-      valor: valorFinal,
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'edicao',
+        entidade: 'lancamentos_financeiros',
+        entidade_id: id,
+        descricao: `Lançamento editado: ${descricao}`,
+        valor: valorFinal,
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) {
+      console.error('[lancamentos-put] log financeiro:', logErr.message);
+    }
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -5416,16 +5445,20 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
       [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'pagamento',
-      entidade: 'lancamentos_financeiros',
-      entidade_id: id,
-      descricao: `Lançamento pago: ${atual.descricao || ''}`,
-      valor: Number(atual.valor || 0),
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'pagamento',
+        entidade: 'lancamentos_financeiros',
+        entidade_id: id,
+        descricao: `Lançamento pago: ${atual.descricao || ''}`,
+        valor: Number(atual.valor || 0),
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) {
+      console.error('[lancamentos-pagar] log financeiro:', logErr.message);
+    }
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -5465,16 +5498,20 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'exclusao',
-      entidade: 'lancamentos_financeiros',
-      entidade_id: id,
-      descricao: `Lançamento excluído: ${atual.descricao || ''}`,
-      valor: Number(atual.valor || 0),
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'exclusao',
+        entidade: 'lancamentos_financeiros',
+        entidade_id: id,
+        descricao: `Lançamento excluído: ${atual.descricao || ''}`,
+        valor: Number(atual.valor || 0),
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) {
+      console.error('[lancamentos-delete] log financeiro:', logErr.message);
+    }
 
     res.json({ sucesso: true });
   } catch (error) {
@@ -7011,8 +7048,8 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
       );
     }
 
-    // Se Asaas confirma pagamento, baixa automaticamente a conta
-    if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status)) {
+    // Se Asaas confirma pagamento, baixa automaticamente a conta (requer permissão financeira)
+    if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status) && podeGerenciarFinanceiro(req)) {
       await pool.query(
         `UPDATE contas_receber
          SET status = 'pago', data_pagamento = COALESCE($1::date, CURRENT_DATE),
@@ -8562,6 +8599,9 @@ app.get('/sse-notificacoes', auth, async (req, res) => {
     const empresaId = empresaResolvida.id;
     if (!_sseClients.has(empresaId)) _sseClients.set(empresaId, new Set());
     const clientes = _sseClients.get(empresaId);
+    if (clientes.size >= 30) {
+      return jsonErro(res, 429, 'Limite de conexões SSE atingido para esta empresa');
+    }
     clientes.add(res);
 
     // Envio imediato

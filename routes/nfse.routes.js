@@ -194,6 +194,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       // Envia para FocusNFe em background
       const emissao = emissaoResult.rows[0];
+      const emissaoEmpresaId = emissao.empresa_id;
 
       emitirNfse(cfg.token_focus, cfg.ambiente, ref, payload)
         .then(async (r) => {
@@ -206,14 +207,15 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
                codigo_verificacao = $4,
                mensagem_erro = $5,
                atualizado_em = NOW()
-             WHERE ref = $6`,
+             WHERE ref = $6 AND empresa_id = $7`,
             [
               status,
               r.data?.numero_nfse || null,
               r.data?.caminho_pdf_nota_fiscal || null,
               r.data?.codigo_verificacao || null,
               status === 'erro' ? JSON.stringify(r.data?.erros || r.data) : null,
-              ref
+              ref,
+              emissaoEmpresaId
             ]
           );
         })

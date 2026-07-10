@@ -270,8 +270,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         await client.query('BEGIN');
 
         await client.query(
-          `UPDATE lotes SET quantidade_atual = quantidade_atual - $1, atualizado_em = NOW() WHERE id = $2`,
-          [qtd, loteId]
+          `UPDATE lotes SET quantidade_atual = quantidade_atual - $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+          [qtd, loteId, e.id]
         );
 
         await client.query(

@@ -307,8 +307,8 @@ module.exports = ({
       }
 
       await pool.query(
-        `UPDATE produtos SET tem_grade = $1, atualizado_em = NOW() WHERE id = $2`,
-        [novoValor, produtoId]
+        `UPDATE produtos SET tem_grade = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+        [novoValor, produtoId, empresaResolvida.id]
       );
 
       return ok(res, { tem_grade: novoValor });

@@ -120,55 +120,81 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
 
   // ── POST /caixa/sangria ──────────────────────────────────────────────────
   router.post('/sangria', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
+    const emp = await getEmpresa(req);
+    if (!emp) return erro(res, 403, 'Sem acesso');
+
+    const { valor, descricao } = req.body;
+    const v = normalizarDecimal(valor);
+    if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para a sangria');
+
+    const client = await pool.connect();
     try {
-      const emp = await getEmpresa(req);
-      if (!emp) return erro(res, 403, 'Sem acesso');
+      await client.query('BEGIN');
+      const sessaoResult = await client.query(
+        `SELECT * FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' ORDER BY aberto_em DESC LIMIT 1 FOR UPDATE`,
+        [emp.id]
+      );
+      const sessao = sessaoResult.rows[0];
+      if (!sessao) { await client.query('ROLLBACK'); return erro(res, 400, 'Nenhum caixa aberto'); }
 
-      const sessao = await getSessaoAberta(emp.id);
-      if (!sessao) return erro(res, 400, 'Nenhum caixa aberto');
-
-      const { valor, descricao } = req.body;
-      const v = normalizarDecimal(valor);
-      if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para a sangria');
-
-      await pool.query(
+      await client.query(
         `INSERT INTO caixa_movimentos (sessao_id, empresa_id, tipo, valor, descricao)
          VALUES ($1,$2,'sangria',$3,$4)`,
         [sessao.id, emp.id, -Math.abs(v), descricao || 'Sangria de caixa']
       );
 
-      const novoSaldo = await calcularSaldo(sessao.id);
-      return ok(res, { saldo_atual: +novoSaldo.toFixed(2), mensagem: 'Sangria registrada' });
+      const saldoResult = await client.query(
+        `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
+        [sessao.id]
+      );
+      await client.query('COMMIT');
+      return ok(res, { saldo_atual: +Number(saldoResult.rows[0].saldo || 0).toFixed(2), mensagem: 'Sangria registrada' });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST sangria:', err.message);
       return erro(res, 500, 'Erro ao registrar sangria');
+    } finally {
+      client.release();
     }
   });
 
   // ── POST /caixa/suprimento ───────────────────────────────────────────────
   router.post('/suprimento', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
+    const emp = await getEmpresa(req);
+    if (!emp) return erro(res, 403, 'Sem acesso');
+
+    const { valor, descricao } = req.body;
+    const v = normalizarDecimal(valor);
+    if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para o suprimento');
+
+    const client = await pool.connect();
     try {
-      const emp = await getEmpresa(req);
-      if (!emp) return erro(res, 403, 'Sem acesso');
+      await client.query('BEGIN');
+      const sessaoResult = await client.query(
+        `SELECT * FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' ORDER BY aberto_em DESC LIMIT 1 FOR UPDATE`,
+        [emp.id]
+      );
+      const sessao = sessaoResult.rows[0];
+      if (!sessao) { await client.query('ROLLBACK'); return erro(res, 400, 'Nenhum caixa aberto'); }
 
-      const sessao = await getSessaoAberta(emp.id);
-      if (!sessao) return erro(res, 400, 'Nenhum caixa aberto');
-
-      const { valor, descricao } = req.body;
-      const v = normalizarDecimal(valor);
-      if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para o suprimento');
-
-      await pool.query(
+      await client.query(
         `INSERT INTO caixa_movimentos (sessao_id, empresa_id, tipo, valor, descricao)
          VALUES ($1,$2,'suprimento',$3,$4)`,
         [sessao.id, emp.id, Math.abs(v), descricao || 'Suprimento de caixa']
       );
 
-      const novoSaldo = await calcularSaldo(sessao.id);
-      return ok(res, { saldo_atual: +novoSaldo.toFixed(2), mensagem: 'Suprimento registrado' });
+      const saldoResult = await client.query(
+        `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
+        [sessao.id]
+      );
+      await client.query('COMMIT');
+      return ok(res, { saldo_atual: +Number(saldoResult.rows[0].saldo || 0).toFixed(2), mensagem: 'Suprimento registrado' });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST suprimento:', err.message);
       return erro(res, 500, 'Erro ao registrar suprimento');
+    } finally {
+      client.release();
     }
   });
 

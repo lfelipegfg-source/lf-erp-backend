@@ -84,7 +84,14 @@ module.exports = function ({
         return erro(res, 400, 'Itens da compra inválidos');
       }
 
+      const FORMAS_PAGAMENTO_COMPRA_VALIDAS = [
+        'dinheiro', 'pix', 'cartao', 'boleto', 'promissoria', 'duplicata mercantil', 'outros'
+      ];
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
+      if (pagamentoNormalizado && !FORMAS_PAGAMENTO_COMPRA_VALIDAS.includes(pagamentoNormalizado)) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'Forma de pagamento inválida');
+      }
       const geraContaPagar =
         pagamentoNormalizado === 'boleto' ||
         pagamentoNormalizado === 'promissoria' ||
@@ -630,6 +637,10 @@ module.exports = function ({
 
       const { conteudo } = req.body;
       if (!conteudo) return erro(res, 400, 'Conteúdo XML não informado');
+      const MAX_XML_BYTES = 5 * 1024 * 1024; // 5 MB
+      if (Buffer.byteLength(String(conteudo), 'utf8') > MAX_XML_BYTES) {
+        return erro(res, 400, 'XML excede o limite máximo de 5 MB');
+      }
 
       // ── Emitente (fornecedor) ────────────────────────────────────────────
       const emitBloco = xmlTag(conteudo, 'emit');

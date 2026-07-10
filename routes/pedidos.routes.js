@@ -349,9 +349,9 @@ module.exports = ({
         );
 
         if (produto.tem_grade && gradeId) {
-          const g = await client.query(`SELECT estoque FROM produto_grades WHERE id = $1 FOR UPDATE`, [gradeId]);
+          const g = await client.query(`SELECT estoque FROM produto_grades WHERE id = $1 AND empresa_id = $2 FOR UPDATE`, [gradeId, empresaResolvida.id]);
           if (g.rowCount === 0 || Number(g.rows[0].estoque) < qtd) throw new Error(`Estoque insuficiente para ${produto.nome}`);
-          await client.query(`UPDATE produto_grades SET estoque = estoque - $1, atualizado_em = NOW() WHERE id = $2`, [qtd, gradeId]);
+          await client.query(`UPDATE produto_grades SET estoque = estoque - $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`, [qtd, gradeId, empresaResolvida.id]);
           await client.query(
             `UPDATE produtos SET estoque = (SELECT COALESCE(SUM(estoque),0) FROM produto_grades WHERE produto_id = $1 AND empresa_id = $2 AND ativo=true), atualizado_em=NOW() WHERE id=$1 AND empresa_id=$2`,
             [produtoId, empresaResolvida.id]
@@ -381,7 +381,7 @@ module.exports = ({
           venda_id: venda.id, cliente_id: pedido.cliente_id, cliente_nome: pedido.cliente_nome,
           parcelas: parcelasFinal, valor_total: Number(pedido.total),
           forma_pagamento: formaFinal,
-          data_base: data || new Date().toISOString().slice(0, 10),
+          data_base: data || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date()),
           criado_por: req.user.id
         });
       }
