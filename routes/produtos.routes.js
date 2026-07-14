@@ -143,6 +143,20 @@ module.exports = ({
       let produtoId;
       try {
         await prodClient.query('BEGIN');
+
+        // Gerar código de barras automático se não informado
+        let codigoBarrasFinal = (codigo_barras || '').trim();
+        if (!codigoBarrasFinal) {
+          const cbRes = await prodClient.query(
+            `SELECT COALESCE(MAX(CAST(codigo_barras AS BIGINT)), 0) AS max_cb
+             FROM produtos
+             WHERE empresa_id = $1
+               AND codigo_barras ~ '^[0-9]+$'`,
+            [empresaResolvida.id]
+          );
+          codigoBarrasFinal = String(Number(cbRes.rows[0].max_cb) + 1).padStart(6, '0');
+        }
+
         const result = await prodClient.query(
         `INSERT INTO produtos
         (empresa, empresa_id, nome, preco, custo, custo_unitario, custo_medio, lucro_unitario, margem_lucro,
@@ -175,7 +189,7 @@ module.exports = ({
           Boolean(promocao_ativa),
           normalizarInt(estoque),
           normalizarInt(estoque_minimo),
-          codigo_barras || '',
+          codigoBarrasFinal,
           categoria || '',
           // novos F2
           codigo_interno || null,
