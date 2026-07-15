@@ -156,6 +156,7 @@ const filiaisRoutes          = require('./routes/filiais.routes');
 const biRoutes               = require('./routes/bi.routes');
 
 const app = express();
+app.set('trust proxy', 1); // S-0: Render usa proxy reverso — necessário para req.ip correto no rate limiter
 
 // S-1: CORS — default seguro; sem ALLOWED_ORIGINS usa o domínio Vercel conhecido
 const allowedOrigins = process.env.ALLOWED_ORIGINS
