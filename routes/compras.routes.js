@@ -126,19 +126,16 @@ module.exports = function ({
       );
       const produtosMap = Object.fromEntries(produtosResult.rows.map(p => [Number(p.id), p]));
 
-      // ── Acumula dados dos itens em arrays (zero queries no loop) ──────────
-      const ciProdIds = [], ciNomes = [], ciQtds = [], ciCustos = [], ciSubs = [];
-        // para UPDATE produtos (deduplicado: mantém último valor por produto_id)
-      const prodUpdMap = {};
-      const movProdIds = [], movQtds = [];
+      // ── Loop acumula dados em JS puro (zero queries) ──────────────────────
+      const compraItensRows = [];   // para INSERT compra_itens
+      const prodUpdMap      = {};   // para UPDATE produtos (deduplicado por produto_id)
+      const movRows         = [];   // para INSERT movimentacoes_estoque
 
       for (const item of itens) {
-        const produtoId = Number(item.produto_id);
-        const quantidade = normalizarInt(item.quantidade);
-        const custoUnitario = normalizarDecimal(
-          item.custo_unitario || item.preco_unitario || item.custo
-        );
-        const subtotalItem = Number((quantidade * custoUnitario).toFixed(2));
+        const produtoId     = Number(item.produto_id);
+        const quantidade    = normalizarInt(item.quantidade);
+        const custoUnitario = normalizarDecimal(item.custo_unitario || item.preco_unitario || item.custo);
+        const subtotalItem  = Number((quantidade * custoUnitario).toFixed(2));
 
         const produto = produtosMap[produtoId];
         if (!produto) {
@@ -146,115 +143,123 @@ module.exports = function ({
           return erro(res, 404, `Produto ${produtoId} não encontrado`);
         }
 
-        const estoqueAtual = normalizarInt(produto.estoque);
-        const novoEstoque = estoqueAtual + quantidade;
-        const custoAtual = normalizarDecimal(produto.custo_medio || produto.custo || 0);
-        const novoCustoMedio =
-          novoEstoque > 0
-            ? Number(((estoqueAtual * custoAtual + quantidade * custoUnitario) / novoEstoque).toFixed(2))
-            : custoUnitario;
-        const precoProduto = normalizarDecimal(produto.preco || 0);
-        const lucroUnitario = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucroRaw =
-          novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const estoqueAtual  = normalizarInt(produto.estoque);
+        const novoEstoque   = estoqueAtual + quantidade;
+        const custoAtual    = normalizarDecimal(produto.custo_medio || produto.custo || 0);
+        const novoCustoMedio = novoEstoque > 0
+          ? Number(((estoqueAtual * custoAtual + quantidade * custoUnitario) / novoEstoque).toFixed(2))
+          : custoUnitario;
+        const precoProduto   = normalizarDecimal(produto.preco || 0);
+        const lucroUnitario  = Number((precoProduto - novoCustoMedio).toFixed(2));
+        const margemLucroRaw = novoCustoMedio > 0
+          ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
         const margemLucro = Math.min(Math.max(margemLucroRaw, -9999), 9999);
 
-        ciProdIds.push(produto.id);
-        ciNomes.push(produto.nome);
-        ciQtds.push(quantidade);
-        ciCustos.push(custoUnitario);
-        ciSubs.push(subtotalItem);
+        compraItensRows.push([
+          compra.id, empresaResolvida.nome, empresaResolvida.id,
+          produto.id, produto.nome, quantidade, custoUnitario, subtotalItem
+        ]);
 
-        prodUpdMap[produtoId] = [produto.id, novoEstoque, custoUnitario, novoCustoMedio, lucroUnitario, margemLucro];
+        // Mantém só o último update por produto (produto duplicado na mesma compra)
+        prodUpdMap[produtoId] = {
+          id: produto.id, novoEstoque, custoUnitario, novoCustoMedio, lucroUnitario, margemLucro
+        };
 
-        movProdIds.push(produto.id);
-        movQtds.push(quantidade);
+        movRows.push([
+          empresaResolvida.nome, empresaResolvida.id, produto.id, null,
+          'entrada_compra', quantidade,
+          `Entrada por compra #${compra.id}`, 'compra', compra.id, req.user.id
+        ]);
 
         // Atualiza mapa para itens duplicados do mesmo produto na mesma compra
         produtosMap[produtoId] = { ...produto, estoque: novoEstoque, custo_medio: novoCustoMedio };
       }
 
-      // ── Batch INSERT compra_itens (1 query) ───────────────────────────────
-      await client.query(
-        `INSERT INTO compra_itens (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
-         SELECT $1, $2, $3, v.produto_id, v.nome, v.qtd, v.custo, v.sub
-         FROM unnest($4::int[], $5::text[], $6::int[], $7::numeric[], $8::numeric[])
-           AS v(produto_id, nome, qtd, custo, sub)`,
-        [compra.id, empresaResolvida.nome, empresaResolvida.id, ciProdIds, ciNomes, ciQtds, ciCustos, ciSubs]
-      );
-
-      // ── Batch UPDATE produtos via unnest (1 query, sem duplicatas) ────────
-      const prodUpds = Object.values(prodUpdMap);
-      await client.query(
-        `UPDATE produtos AS p SET
-           estoque       = v.estoque::int,
-           custo         = v.custo::numeric,
-           custo_unitario = v.custo::numeric,
-           custo_medio   = v.custo_medio::numeric,
-           lucro_unitario = v.lucro::numeric,
-           margem_lucro  = v.margem::numeric,
-           atualizado_em = NOW()
-         FROM unnest($1::int[], $2::int[], $3::numeric[], $4::numeric[], $5::numeric[], $6::numeric[])
-           AS v(id, estoque, custo, custo_medio, lucro, margem)
-         WHERE p.id = v.id AND (p.empresa_id = $7 OR (p.empresa_id IS NULL AND p.empresa = $8))`,
-        [
-          prodUpds.map(r => r[0]),
-          prodUpds.map(r => r[1]),
-          prodUpds.map(r => r[2]),
-          prodUpds.map(r => r[3]),
-          prodUpds.map(r => r[4]),
-          prodUpds.map(r => r[5]),
-          empresaResolvida.id,
-          empresaResolvida.nome
-        ]
-      );
-
-      // ── Batch INSERT movimentacoes_estoque (1 query) ──────────────────────
-      if (typeof registrarMovimentacaoEstoque === 'function' && movProdIds.length > 0) {
+      // ── Batch INSERT compra_itens (1 query, multi-row VALUES) ─────────────
+      {
+        const COLS = 8;
+        let idx = 1;
+        const placeholders = compraItensRows.map(() =>
+          `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')})`
+        ).join(',');
         await client.query(
-          `INSERT INTO movimentacoes_estoque
-             (empresa, empresa_id, produto_id, grade_id, tipo, quantidade, observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
-           SELECT $1, $2, v.produto_id, NULL, 'entrada_compra', v.qtd,
-                  'Entrada por compra #' || $3::text, 'compra', $3, $4, NOW()
-           FROM unnest($5::int[], $6::int[]) AS v(produto_id, qtd)`,
-          [empresaResolvida.nome, empresaResolvida.id, compra.id, req.user.id, movProdIds, movQtds]
+          `INSERT INTO compra_itens
+             (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
+           VALUES ${placeholders}`,
+          compraItensRows.flat()
         );
       }
 
-      // ── Batch INSERT contas_pagar (1 query) ───────────────────────────────
+      // ── UPDATE produtos — sequential, deduplicado por produto_id ─────────
+      for (const upd of Object.values(prodUpdMap)) {
+        await client.query(
+          `UPDATE produtos
+             SET estoque=$1, custo=$2, custo_unitario=$3, custo_medio=$4,
+                 lucro_unitario=$5, margem_lucro=$6, atualizado_em=NOW()
+           WHERE id=$7 AND (empresa_id=$8 OR (empresa_id IS NULL AND empresa=$9))`,
+          [
+            upd.novoEstoque, upd.custoUnitario, upd.custoUnitario,
+            upd.novoCustoMedio, upd.lucroUnitario, upd.margemLucro,
+            upd.id, empresaResolvida.id, empresaResolvida.nome
+          ]
+        );
+      }
+
+      // ── Batch INSERT movimentacoes_estoque (1 query, multi-row VALUES) ────
+      if (typeof registrarMovimentacaoEstoque === 'function' && movRows.length > 0) {
+        const COLS = 10; // data_movimentacao = NOW() está inline
+        let idx = 1;
+        const placeholders = movRows.map(() =>
+          `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')},NOW())`
+        ).join(',');
+        await client.query(
+          `INSERT INTO movimentacoes_estoque
+             (empresa, empresa_id, produto_id, grade_id, tipo, quantidade,
+              observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
+           VALUES ${placeholders}`,
+          movRows.flat()
+        );
+      }
+
+      // ── Batch INSERT contas_pagar (1 query, multi-row VALUES) ─────────────
       if (geraContaPagar) {
         const dataPrimeiroVencimento =
           normalizarDataISO(primeiro_vencimento || data) || normalizarDataISO(data) || hoje();
         const intervaloDias = 30;
-        const valorBase = Number((totalCalculado / parcelasFinal).toFixed(2));
+        const valorBase     = Number((totalCalculado / parcelasFinal).toFixed(2));
 
-        const cpDescricoes = [], cpParcelas = [], cpValores = [], cpVencimentos = [];
+        const contasRows = [];
         let acumulado = 0;
         for (let i = 1; i <= parcelasFinal; i++) {
-          let valorParcela = i === parcelasFinal
+          const valorParcela = i === parcelasFinal
             ? Number((totalCalculado - acumulado).toFixed(2))
             : valorBase;
           acumulado = Number((acumulado + valorParcela).toFixed(2));
-          const vencimento = i === 1
+          const vencimento  = i === 1
             ? dataPrimeiroVencimento
             : addDias(dataPrimeiroVencimento, (i - 1) * intervaloDias);
-          cpDescricoes.push(`Parcela ${i}/${parcelasFinal} - Compra #${compra.id}`);
-          cpParcelas.push(i);
-          cpValores.push(valorParcela);
-          cpVencimentos.push(vencimento);
+          contasRows.push([
+            empresaResolvida.nome, empresaResolvida.id,
+            fornecedor.id, fornecedor.nome, compra.id,
+            `Parcela ${i}/${parcelasFinal} - Compra #${compra.id}`,
+            i, parcelasFinal, valorParcela, vencimento,
+            pagamentoNormalizado, observacao || '', req.user.id
+          ]);
         }
 
+        // 13 colunas parametrizadas + data_pagamento=NULL, status='pendente', criado_em=NOW(), atualizado_em=NOW() inline
+        let idx = 1;
+        const placeholders = contasRows.map(() =>
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},NULL,'pendente',$${idx++},$${idx++},$${idx++},NOW(),NOW())`
+        ).join(',');
         await client.query(
           `INSERT INTO contas_pagar
-             (empresa, empresa_id, fornecedor_id, fornecedor_nome, compra_id, descricao, parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
-           SELECT $1, $2, $3, $4, $5, v.descricao, v.parcela, $6, v.valor, v.vencimento::date, NULL, 'pendente', $7, $8, $9, NOW(), NOW()
-           FROM unnest($10::text[], $11::int[], $12::numeric[], $13::date[])
-             AS v(descricao, parcela, valor, vencimento)`,
-          [
-            empresaResolvida.nome, empresaResolvida.id, fornecedor.id, fornecedor.nome, compra.id,
-            parcelasFinal, pagamentoNormalizado, observacao || '', req.user.id,
-            cpDescricoes, cpParcelas, cpValores, cpVencimentos
-          ]
+             (empresa, empresa_id, fornecedor_id, fornecedor_nome, compra_id,
+              descricao, parcela, total_parcelas, valor, data_vencimento,
+              data_pagamento, status, forma_pagamento, observacao, criado_por,
+              criado_em, atualizado_em)
+           VALUES ${placeholders}`,
+          contasRows.flat()
         );
       }
 
