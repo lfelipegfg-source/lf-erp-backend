@@ -7489,7 +7489,7 @@ app.get('/configuracoes/:empresa', auth, requirePermissao(pool, 'configuracoes',
 // SALVAR CONFIGURAÇÕES
 app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
-    const { empresa, nome_empresa, taxa_multa, taxa_juros_dia } = req.body;
+    const { empresa, nome_empresa, taxa_multa, taxa_juros_dia, logo_url } = req.body;
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
     if (!empresaResolvida) {
@@ -7501,16 +7501,28 @@ app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'
     const taxaJurosDiaFinal =
       taxa_juros_dia !== undefined ? Number(taxa_juros_dia) : null;
 
+    // logo_url pode ser data URL (base64) ou URL externa; null remove o logo
+    const logoFinal = logo_url !== undefined ? (logo_url || null) : undefined;
+
     await pool.query(
       `
         UPDATE configuracoes
         SET nome_empresa = $1,
             taxa_multa = COALESCE($3, taxa_multa),
             taxa_juros_dia = COALESCE($4, taxa_juros_dia),
+            logo_url = CASE WHEN $6 THEN $5 ELSE logo_url END,
             atualizado_em = NOW()
-        WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $5))
+        WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $7))
         `,
-      [nome_empresa, empresaResolvida.id, taxaMultaFinal, taxaJurosDiaFinal, empresaResolvida.nome]
+      [
+        nome_empresa,
+        empresaResolvida.id,
+        taxaMultaFinal,
+        taxaJurosDiaFinal,
+        logoFinal,
+        logoFinal !== undefined,
+        empresaResolvida.nome
+      ]
     );
 
     _configCache.delete(empresaResolvida.nome);
