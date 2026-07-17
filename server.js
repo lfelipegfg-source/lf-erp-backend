@@ -1353,6 +1353,13 @@ async function criarParcelasContasReceber({
 }
 
 async function initDb() {
+  // Fast-path: banco já inicializado → pula as ~168 queries DDL (cold start 8–15s → <1s)
+  // Novas colunas/tabelas devem ir em backend/migrations/, não aqui
+  const { rows: _chk } = await pool.query(
+    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='empresas' LIMIT 1"
+  );
+  if (_chk.length > 0) return;
+
   // ================= EMPRESAS / PLANOS / CONFIGURAÇÕES =================
   await pool.query(`
     CREATE TABLE IF NOT EXISTS empresas (
