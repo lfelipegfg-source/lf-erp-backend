@@ -1807,6 +1807,7 @@ async function initDb() {
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS email TEXT;
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS endereco TEXT;
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS logo_url TEXT;
+    ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS cor_primaria TEXT;
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS criado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP NOT NULL DEFAULT NOW();
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS taxa_multa NUMERIC(8,4) NOT NULL DEFAULT 0.02;
@@ -7489,7 +7490,7 @@ app.get('/configuracoes/:empresa', auth, requirePermissao(pool, 'configuracoes',
 // SALVAR CONFIGURAÇÕES
 app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
-    const { empresa, nome_empresa, taxa_multa, taxa_juros_dia, logo_url } = req.body;
+    const { empresa, nome_empresa, taxa_multa, taxa_juros_dia, logo_url, cor_primaria } = req.body;
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
     if (!empresaResolvida) {
@@ -7501,8 +7502,12 @@ app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'
     const taxaJurosDiaFinal =
       taxa_juros_dia !== undefined ? Number(taxa_juros_dia) : null;
 
-    // logo_url pode ser data URL (base64) ou URL externa; null remove o logo
     const logoFinal = logo_url !== undefined ? (logo_url || null) : undefined;
+
+    // cor_primaria: hex válido ou null para remover; undefined = não alterar
+    const corFinal = cor_primaria !== undefined
+      ? (/^#[0-9a-fA-F]{6}$/.test(cor_primaria) ? cor_primaria : null)
+      : undefined;
 
     await pool.query(
       `
@@ -7511,6 +7516,7 @@ app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'
             taxa_multa = COALESCE($3, taxa_multa),
             taxa_juros_dia = COALESCE($4, taxa_juros_dia),
             logo_url = CASE WHEN $6 THEN $5 ELSE logo_url END,
+            cor_primaria = CASE WHEN $9 THEN $8 ELSE cor_primaria END,
             atualizado_em = NOW()
         WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $7))
         `,
@@ -7521,7 +7527,9 @@ app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'
         taxaJurosDiaFinal,
         logoFinal,
         logoFinal !== undefined,
-        empresaResolvida.nome
+        empresaResolvida.nome,
+        corFinal,
+        corFinal !== undefined
       ]
     );
 
