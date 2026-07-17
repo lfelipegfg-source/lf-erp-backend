@@ -16,6 +16,7 @@
 
 const crypto = require('crypto');
 const { dispatchWebhook } = require('../utils/webhooks');
+const { erro } = require('../utils/routeHelpers');
 
 module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje }) {
   const router = require('express').Router();
@@ -23,7 +24,7 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
   const VERSAO = '1.0.0';
 
   function ok(res, dados = {})              { return res.json({ sucesso: true, versao: VERSAO, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   function paginacao(req) {
     const page  = Math.max(1, normalizarInt(req.query.page)  || 1);

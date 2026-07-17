@@ -20,6 +20,7 @@
 
 const crypto = require('crypto');
 const { dispatchWebhook, enviarWebhook } = require('../utils/webhooks');
+const { erro, ok } = require('../utils/routeHelpers');
 
 const EVENTOS_DISPONIVEIS = [
   'venda.criada',
@@ -33,8 +34,7 @@ const EVENTOS_DISPONIVEIS = [
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) {
   const router = require('express').Router();
 
-  function ok(res, dados = {})              { return res.json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   async function resolveEmp(req) { return validarAcessoEmpresa(req, null, req.empresa_id); }
 

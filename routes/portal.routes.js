@@ -21,15 +21,12 @@ const jwt    = require('jsonwebtoken');
 const SECRET      = process.env.JWT_SECRET;
 const SALT_ROUNDS = 10;
 
+const { erro, ok } = require('../utils/routeHelpers');
+
 module.exports = ({ auth, pool }) => {
   const router = require('express').Router();
 
-  function ok(res, dados = {}) {
-    return res.status(200).json({ sucesso: true, ...dados });
-  }
-  function erro(res, status = 500, msg = 'Erro interno') {
-    return res.status(status).json({ sucesso: false, erro: msg });
-  }
+
 
   // ── Rate limiter por IP para login do portal (10 req/min) ─────────────────
   const _portalLoginBuckets = new Map();

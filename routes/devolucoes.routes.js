@@ -10,6 +10,7 @@
  */
 
 const { estornarPontosFidelidade } = require('../utils/fidelidade');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({
   auth,
@@ -22,8 +23,7 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  function ok(res, d = {}) { return res.status(200).json({ sucesso: true, ...d }); }
-  function erro(res, s = 500, m = 'Erro') { return res.status(s).json({ sucesso: false, erro: m }); }
+
 
   async function getEmpresa(req) {
     return validarAcessoEmpresa(req, req.query.empresa || req.body?.empresa, req.empresa_id);

@@ -5,6 +5,7 @@ const { requirePermissao } = require('../utils/permissoes');
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 
 const { normalizarFormaPagamentoFluxo } = require('../utils/financeiroUtils');
+const { erro } = require('../utils/routeHelpers');
 
 module.exports = function ({
   auth,
@@ -14,12 +15,7 @@ module.exports = function ({
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa
 }) {
-  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
-    return res.status(status).json({
-      sucesso: false,
-      erro: mensagem
-    });
-  }
+
 
   // ================= FLUXO DE CAIXA =================
 

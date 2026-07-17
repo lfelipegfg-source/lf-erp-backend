@@ -16,6 +16,7 @@
  */
 
 const { enviarMensagem, aplicarTemplate } = require('../utils/whatsapp');
+const { erro, ok } = require('../utils/routeHelpers');
 
 const EVENTOS = [
   { key: 'cobranca.atrasada',  label: 'Cobrança atrasada',         variaveis: ['nome', 'valor', 'dias', 'empresa'] },
@@ -46,8 +47,7 @@ const TEMPLATES_PADRAO = {
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }) {
   const router = require('express').Router();
 
-  function ok(res, d = {})               { return res.json({ sucesso: true, ...d }); }
-  function erro(res, s = 500, m = 'Erro') { return res.status(s).json({ sucesso: false, erro: m }); }
+
   async function emp(req)                 { return validarAcessoEmpresa(req, null, req.empresa_id); }
 
   async function getCfg(empresaId) {

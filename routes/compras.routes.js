@@ -9,6 +9,7 @@ const {
   addDias,
   validarECalcularTotalItens
 } = require('../utils/normalizadores');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({
   auth,
@@ -22,19 +23,7 @@ module.exports = function ({
 }) {
   const router = express.Router();
 
-  function ok(res, dados = {}, status = 200) {
-    return res.status(status).json({
-      sucesso: true,
-      ...dados
-    });
-  }
 
-  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
-    return res.status(status).json({
-      sucesso: false,
-      erro: mensagem
-    });
-  }
 
   router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
     if (!podeGerenciarCompras(req)) {

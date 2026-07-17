@@ -23,11 +23,12 @@
  *   GET    /rastreabilidade/dashboard           — KPIs: lotes vencendo, series disponíveis, etc.
  */
 
+const { erro, ok } = require('../utils/routeHelpers');
+
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }) {
   const router = require('express').Router();
 
-  function ok(res, dados = {})              { return res.json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
   async function emp(req)                   { return validarAcessoEmpresa(req, null, req.empresa_id); }
 
   // ── Dashboard ─────────────────────────────────────────────────────────────

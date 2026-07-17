@@ -17,12 +17,12 @@ const crypto = require('crypto');
 const {
   emitirNfse, consultarNfse, cancelarNfse, downloadNfsePdf, listarNfse
 } = require('../utils/focusnfe');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }) {
   const router = require('express').Router();
 
-  function ok(res, dados = {}) { return res.json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   async function getConfig(empresaId) {
     const r = await pool.query(

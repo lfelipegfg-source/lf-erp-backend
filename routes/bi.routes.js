@@ -12,11 +12,12 @@
  * GET /bi/funil              — orçamentos → pedidos → vendas
  */
 
+const { erro, ok } = require('../utils/routeHelpers');
+
 module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
   const router = require('express').Router();
 
-  function ok(res, d = {})              { return res.json({ sucesso: true, ...d }); }
-  function erro(res, s = 500, m = 'Erro interno') { return res.status(s).json({ sucesso: false, erro: m }); }
+
   async function emp(req)               { return validarAcessoEmpresa(req, null, req.empresa_id); }
 
   // ── Tendência de vendas (últimos N meses) ─────────────────────────────────

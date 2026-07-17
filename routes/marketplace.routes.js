@@ -17,12 +17,12 @@
 
 const https = require('https');
 const crypto = require('crypto');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje, registrarMovimentacaoEstoque, criarParcelasContasReceber }) {
   const router = require('express').Router();
 
-  function ok(res, dados = {}) { return res.json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   const ML_BASE = 'https://api.mercadolibre.com';
   const ML_AUTH = 'https://auth.mercadolivre.com.br/authorization';

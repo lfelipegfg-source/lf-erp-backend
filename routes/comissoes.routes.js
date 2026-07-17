@@ -20,6 +20,7 @@
 
 const { calcularComissaoVenda } = require('../utils/comissoes');
 const { requirePermissao } = require('../utils/permissoes');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({
   auth,
@@ -32,8 +33,7 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  function ok(res, dados = {}) { return res.status(200).json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   // ── Helper: verifica acesso e retorna empresa ─────────────────────────────
   async function empresa(req) {

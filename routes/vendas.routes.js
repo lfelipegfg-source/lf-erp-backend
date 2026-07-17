@@ -4,6 +4,7 @@ const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincron
 const { calcularComissaoVenda } = require('../utils/comissoes');
 const { acumularPontosFidelidade } = require('../utils/fidelidade');
 const { dispararWebhookComRetry } = require('../utils/webhookContabil');
+const { erro } = require('../utils/routeHelpers');
 
 module.exports = ({
   auth,
@@ -27,12 +28,7 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
-    return res.status(status).json({
-      sucesso: false,
-      erro: mensagem
-    });
-  }
+
 
   function normalizarTexto(valor) {
     return String(valor || '')

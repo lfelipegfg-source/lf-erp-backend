@@ -1,4 +1,5 @@
 const { requirePermissao } = require('../utils/permissoes');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({
   auth,
@@ -17,19 +18,7 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  function ok(res, dados = {}, status = 200) {
-    return res.status(status).json({
-      sucesso: true,
-      ...dados
-    });
-  }
 
-  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
-    return res.status(status).json({
-      sucesso: false,
-      erro: mensagem
-    });
-  }
 
   function normalizarProduto(row) {
     return {

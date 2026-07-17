@@ -19,12 +19,12 @@ const crypto = require('crypto');
 const { gerarPixCopiaCola } = require('../utils/pix');
 const { resolverClienteAsaas, criarBoleto } = require('../utils/asaas');
 const { decryptField } = require('../utils/pixCrypto');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }) {
   const router = require('express').Router();
 
-  function ok(res, d = {})              { return res.json({ sucesso: true, ...d }); }
-  function erro(res, s = 500, m = 'Erro interno') { return res.status(s).json({ sucesso: false, erro: m }); }
+
   async function emp(req)               { return validarAcessoEmpresa(req, null, req.empresa_id); }
 
   function gerarToken() {

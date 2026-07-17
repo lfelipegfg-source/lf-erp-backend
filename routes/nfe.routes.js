@@ -16,6 +16,7 @@
 const { emitirNfe, consultarNfe, cancelarNfe, downloadDanfe, downloadXml } = require('../utils/focusnfe');
 const { montarPayloadNfe } = require('../utils/nfe_builder');
 const { randomUUID } = require('crypto');
+const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({
   auth,
@@ -26,12 +27,7 @@ module.exports = ({
 }) => {
   const router = require('express').Router();
 
-  function ok(res, dados = {}) {
-    return res.status(200).json({ sucesso: true, ...dados });
-  }
-  function erro(res, status = 500, mensagem = 'Erro interno') {
-    return res.status(status).json({ sucesso: false, erro: mensagem });
-  }
+
 
   // ── Helper: obtém config NF-e validada da empresa ────────────────────────
   async function obterConfigNfe(empresaId) {

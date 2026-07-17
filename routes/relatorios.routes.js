@@ -8,6 +8,7 @@ const {
 } = require('../utils/periodoUtils');
 
 const { requirePermissao } = require('../utils/permissoes');
+const { erro } = require('../utils/routeHelpers');
 
 module.exports = function ({
   auth,
@@ -18,12 +19,7 @@ module.exports = function ({
   atualizarStatusContasPagarPorEmpresa,
   podeGerenciarFinanceiro
 }) {
-  function erro(res, status = 500, mensagem = 'Erro interno do servidor') {
-    return res.status(status).json({
-      sucesso: false,
-      erro: mensagem
-    });
-  }
+
 
   function checkFinanceiro(req, res) {
     if (typeof podeGerenciarFinanceiro === 'function' && !podeGerenciarFinanceiro(req)) {

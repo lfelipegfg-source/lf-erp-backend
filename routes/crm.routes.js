@@ -17,11 +17,12 @@
 
 const ESTAGIOS = ['lead', 'qualificado', 'proposta', 'negociacao', 'ganho', 'perdido'];
 
+const { erro, ok } = require('../utils/routeHelpers');
+
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje }) {
   const router = require('express').Router();
 
-  function ok(res, dados = {})              { return res.json({ sucesso: true, ...dados }); }
-  function erro(res, status = 500, msg = 'Erro interno') { return res.status(status).json({ sucesso: false, erro: msg }); }
+
 
   function normOp(row) {
     return {
