@@ -281,7 +281,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const r = await cancelarNfse(cfg.token_focus, cfg.ambiente, ref);
 
-      if (r.ok || r.status === 404) {
+      if (r.ok) {
         await pool.query(
           `UPDATE nfse_emissoes SET status = 'cancelada', atualizado_em = NOW()
            WHERE ref = $1 AND empresa_id = $2`,

@@ -30,6 +30,7 @@ const upload = multer({
 });
 
 const { erro, ok } = require('../utils/routeHelpers');
+const { requirePermissao } = require('../utils/permissoes');
 
 module.exports = ({
   auth,
@@ -62,14 +63,14 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /imagens/config — verifica configuração Cloudinary
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/config', auth, (_req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'produtos', 'ver'), (_req, res) => {
     return ok(res, { configurado: isConfigurado() });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
   // GET /imagens/produto/:produtoId
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/produto/:produtoId', auth, async (req, res) => {
+  router.get('/produto/:produtoId', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
     try {
       const produtoId = Number(req.params.produtoId);
       if (!produtoId) return erro(res, 400, 'ID de produto inválido');
@@ -101,6 +102,7 @@ module.exports = ({
     '/produto/:produtoId',
     auth,
     writeRateLimiter,
+    requirePermissao(pool, 'produtos', 'editar'),
     (req, res, next) => {
       upload.single('imagem')(req, res, (err) => {
         if (err instanceof multer.MulterError) {
@@ -176,7 +178,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PATCH /imagens/:imagemId/principal — define como imagem principal
   // ─────────────────────────────────────────────────────────────────────────
-  router.patch('/:imagemId/principal', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/:imagemId/principal', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const imagemId = Number(req.params.imagemId);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -208,7 +210,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /imagens/:imagemId/ordem — atualiza ordem de exibição
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/:imagemId/ordem', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:imagemId/ordem', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const imagemId = Number(req.params.imagemId);
       const { ordem } = req.body;
@@ -233,7 +235,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /imagens/:imagemId — exclui imagem do banco e do Cloudinary
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/:imagemId', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:imagemId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const imagemId = Number(req.params.imagemId);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -252,9 +254,12 @@ module.exports = ({
       if (imagem.principal) {
         await pool.query(
           `UPDATE produto_imagens SET principal = true
-           WHERE produto_id = $1 AND empresa_id = $2
-           ORDER BY ordem ASC, criado_em ASC
-           LIMIT 1`,
+           WHERE id = (
+             SELECT id FROM produto_imagens
+             WHERE produto_id = $1 AND empresa_id = $2
+             ORDER BY ordem ASC, criado_em ASC
+             LIMIT 1
+           )`,
           [imagem.produto_id, empresaResolvida.id]
         );
       }

@@ -15,6 +15,7 @@
 
 const { calcularEstoqueKit, sincronizarEstoqueKit } = require('../utils/kits');
 const { erro, ok } = require('../utils/routeHelpers');
+const { requirePermissao } = require('../utils/permissoes');
 
 module.exports = ({
   auth,
@@ -39,7 +40,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /kits/produto/:kitId/componentes
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/produto/:kitId/componentes', auth, async (req, res) => {
+  router.get('/produto/:kitId/componentes', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
     try {
       const kitId = Number(req.params.kitId);
       if (!kitId) return erro(res, 400, 'ID de kit inválido');
@@ -83,7 +84,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /kits/produto/:kitId/componentes
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/produto/:kitId/componentes', auth, writeRateLimiter, async (req, res) => {
+  router.post('/produto/:kitId/componentes', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const kitId = Number(req.params.kitId);
       if (!kitId) return erro(res, 400, 'ID de kit inválido');
@@ -141,7 +142,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /kits/produto/:kitId/componentes/:compId
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/produto/:kitId/componentes/:compId', auth, writeRateLimiter, async (req, res) => {
+  router.put('/produto/:kitId/componentes/:compId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const kitId  = Number(req.params.kitId);
       const compId = Number(req.params.compId);
@@ -182,7 +183,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /kits/produto/:kitId/componentes/:compId
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/produto/:kitId/componentes/:compId', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/produto/:kitId/componentes/:compId', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const kitId  = Number(req.params.kitId);
       const compId = Number(req.params.compId);
@@ -212,7 +213,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PATCH /kits/produto/:kitId/toggle — ativa/desativa modo kit
   // ─────────────────────────────────────────────────────────────────────────
-  router.patch('/produto/:kitId/toggle', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/produto/:kitId/toggle', auth, writeRateLimiter, requirePermissao(pool, 'produtos', 'editar'), async (req, res) => {
     try {
       const kitId = Number(req.params.kitId);
 
@@ -244,7 +245,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /kits/produto/:kitId/estoque — estoque calculado em tempo real
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/produto/:kitId/estoque', auth, async (req, res) => {
+  router.get('/produto/:kitId/estoque', auth, requirePermissao(pool, 'produtos', 'ver'), async (req, res) => {
     try {
       const kitId = Number(req.params.kitId);
 

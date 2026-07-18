@@ -147,8 +147,13 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
         `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
         [sessao.id]
       );
+      const saldo = +Number(saldoResult.rows[0].saldo || 0).toFixed(2);
+      if (saldo < 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, `Saldo insuficiente para sangria de R$ ${v.toFixed(2)}`);
+      }
       await client.query('COMMIT');
-      return ok(res, { saldo_atual: +Number(saldoResult.rows[0].saldo || 0).toFixed(2), mensagem: 'Sangria registrada' });
+      return ok(res, { saldo_atual: saldo, mensagem: 'Sangria registrada' });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST sangria:', err.message);

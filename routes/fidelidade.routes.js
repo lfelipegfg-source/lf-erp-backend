@@ -227,27 +227,38 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const qtd = normalizarInt(pontos);
       if (qtd < cfg.minimo_resgate) return erro(res, 400, `Mínimo de ${cfg.minimo_resgate} pontos para resgatar`);
 
-      const cliResult = await pool.query(
-        `SELECT id, nome, pontos_fidelidade FROM clientes WHERE id = $1 AND empresa_id = $2`,
-        [Number(cliente_id), e.id]
-      );
-      if (cliResult.rowCount === 0) return erro(res, 404, 'Cliente não encontrado');
-
-      const cli = cliResult.rows[0];
-      if (cli.pontos_fidelidade < qtd) return erro(res, 400, `Saldo insuficiente. Disponível: ${cli.pontos_fidelidade} pontos`);
-
       const valorDesconto = Number((qtd * Number(cfg.reais_por_ponto)).toFixed(2));
 
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        await client.query(
-          `UPDATE clientes SET pontos_fidelidade = pontos_fidelidade - $1, atualizado_em = NOW() WHERE id = $2`,
+        // FOR UPDATE previne race condition em resgates simultâneos
+        const cliResult = await client.query(
+          `SELECT id, nome, pontos_fidelidade FROM clientes WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+          [Number(cliente_id), e.id]
+        );
+        if (cliResult.rowCount === 0) { await client.query('ROLLBACK'); return erro(res, 404, 'Cliente não encontrado'); }
+
+        const cli = cliResult.rows[0];
+        if (cli.pontos_fidelidade < qtd) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Saldo insuficiente. Disponível: ${cli.pontos_fidelidade} pontos`);
+        }
+
+        // WHERE pontos_fidelidade >= $1 garante atomicidade mesmo em concorrência
+        const updRes = await client.query(
+          `UPDATE clientes SET pontos_fidelidade = pontos_fidelidade - $1, atualizado_em = NOW()
+           WHERE id = $2 AND pontos_fidelidade >= $1
+           RETURNING pontos_fidelidade`,
           [qtd, cli.id]
         );
+        if (updRes.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, 'Saldo insuficiente');
+        }
 
-        const novoSaldo = cli.pontos_fidelidade - qtd;
+        const novoSaldo = updRes.rows[0].pontos_fidelidade;
 
         await client.query(
           `INSERT INTO fidelidade_movimentos
@@ -281,6 +292,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
+
+      if (!['admin', 'gerente'].includes(req.user?.papel)) return erro(res, 403, 'Apenas administradores e gerentes podem ajustar pontos manualmente');
 
       const { cliente_id, pontos, descricao } = req.body;
       if (!cliente_id || pontos == null) return erro(res, 400, 'cliente_id e pontos são obrigatórios');

@@ -772,11 +772,11 @@ module.exports = function ({
         COALESCE(MAX(p.margem_lucro), 0) AS margem_lucro,
 
         COALESCE(SUM(
-          vi.quantidade * p.custo_medio
+          vi.quantidade * COALESCE(vi.custo_unitario, p.custo_medio, 0)
         ), 0) AS custo_total,
 
         COALESCE(SUM(
-          vi.quantidade * p.lucro_unitario
+          vi.total - vi.quantidade * COALESCE(vi.custo_unitario, p.custo_medio, 0)
         ), 0) AS lucro_total,
 
         COALESCE(MAX(p.estoque), 0) AS estoque_atual,

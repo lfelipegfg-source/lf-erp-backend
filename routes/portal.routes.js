@@ -93,7 +93,9 @@ module.exports = ({ auth, pool }) => {
       );
 
       if (result.rowCount === 0) {
-        return erro(res, 401, 'CPF/CNPJ não encontrado, portal inativo ou senha não configurada');
+        // Dummy compare para equalizar tempo de resposta e evitar timing oracle
+        await bcrypt.compare(senha, '$2b$12$invalidhashplaceholderXXXXXXXXXXXXXXXXXXXXXXXXXXX');
+        return erro(res, 401, 'Credenciais inválidas');
       }
 
       if (result.rowCount > 1) {
@@ -102,7 +104,7 @@ module.exports = ({ auth, pool }) => {
 
       const cliente = result.rows[0];
       const senhaOk = await bcrypt.compare(senha, cliente.senha_portal);
-      if (!senhaOk) return erro(res, 401, 'Senha incorreta');
+      if (!senhaOk) return erro(res, 401, 'Credenciais inválidas');
 
       await pool.query(
         `UPDATE clientes SET portal_ultimo_acesso = NOW() WHERE id = $1`,

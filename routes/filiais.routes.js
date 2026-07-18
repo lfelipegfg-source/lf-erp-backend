@@ -134,7 +134,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
           `SELECT COALESCE(SUM(CASE WHEN tipo='entrada' THEN valor ELSE 0 END),0) AS entradas,
                   COALESCE(SUM(CASE WHEN tipo='saida'   THEN valor ELSE 0 END),0) AS saidas
            FROM caixa_movimentos
-           WHERE (empresa_id = $1) ${filialId ? `AND filial_id = $2` : `AND filial_id IS NULL`}
+           WHERE (empresa_id = $1) ${filialId ? `AND filial_id = $3` : `AND filial_id IS NULL`}
              ${dv.replace(/data/g,'data_movimento')}`,
           pv
         )

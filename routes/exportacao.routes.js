@@ -63,7 +63,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/vendas ────────────────────────────────────────────────
 
-  router.get('/vendas', auth, async (req, res) => {
+  router.get('/vendas', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -102,7 +102,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/compras ───────────────────────────────────────────────
 
-  router.get('/compras', auth, async (req, res) => {
+  router.get('/compras', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -142,7 +142,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/contas-receber ────────────────────────────────────────
 
-  router.get('/contas-receber', auth, async (req, res) => {
+  router.get('/contas-receber', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -180,7 +180,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/contas-pagar ──────────────────────────────────────────
 
-  router.get('/contas-pagar', auth, async (req, res) => {
+  router.get('/contas-pagar', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -218,7 +218,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/lancamentos ───────────────────────────────────────────
 
-  router.get('/lancamentos', auth, async (req, res) => {
+  router.get('/lancamentos', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -257,7 +257,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/dre ───────────────────────────────────────────────────
 
-  router.get('/dre', auth, async (req, res) => {
+  router.get('/dre', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
@@ -332,7 +332,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
   // Gera rascunho de arquivo EFD (SPED) para entrega ao contador.
   // Inclui blocos 0, C (NF-e emitidas), 9.
 
-  router.get('/efd', auth, async (req, res) => {
+  router.get('/efd', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });

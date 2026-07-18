@@ -128,6 +128,22 @@ module.exports = ({
         if (!original) { await client.query('ROLLBACK'); return erro(res, 400, `Produto ${produtoId} não encontrado na venda`); }
         if (qtd > Number(original.quantidade)) { await client.query('ROLLBACK'); return erro(res, 400, `Quantidade a devolver (${qtd}) maior que a vendida (${original.quantidade}) para ${original.produto_nome}`); }
 
+        // Verifica quantidade já devolvida anteriormente para este item
+        const jaDevRes = await client.query(
+          `SELECT COALESCE(SUM(di.quantidade), 0) AS ja_devolvido
+           FROM devolucao_itens di
+           JOIN devolucoes d ON d.id = di.devolucao_id
+           WHERE d.venda_id = $1 AND di.produto_id = $2 AND di.empresa_id = $3
+             ${gradeId ? 'AND di.grade_id = $4' : 'AND di.grade_id IS NULL'}`,
+          gradeId ? [Number(venda_id), produtoId, emp.id, gradeId] : [Number(venda_id), produtoId, emp.id]
+        );
+        const jaDevolvido = Number(jaDevRes.rows[0].ja_devolvido || 0);
+        const disponivelParaDevolucao = Number(original.quantidade) - jaDevolvido;
+        if (qtd > disponivelParaDevolucao) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Quantidade a devolver (${qtd}) excede o disponível (${disponivelParaDevolucao}) para ${original.produto_nome}. Já devolvido: ${jaDevolvido}.`);
+        }
+
         const preco = Number(original.preco_unitario || 0);
         const total = +(qtd * preco).toFixed(2);
         totalDevolvido += total;
