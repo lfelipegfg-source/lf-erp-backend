@@ -126,7 +126,7 @@ module.exports = ({
 
       const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
       const margemLucro =
-        custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
+        precoFinal > 0 ? Number(((lucroUnitario / precoFinal) * 100).toFixed(2)) : 0;
 
       const prodClient = await pool.connect();
       let produtoId;
@@ -519,7 +519,7 @@ ${adicionarFiltroEmpresaSaaS({
         const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
         const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
         const margemLucro =
-          custoMedioFinal > 0 ? Number(((lucroUnitario / custoMedioFinal) * 100).toFixed(2)) : 0;
+          precoFinal > 0 ? Number(((lucroUnitario / precoFinal) * 100).toFixed(2)) : 0;
 
         const estoqueAtual = normalizarInt(atual.estoque);
         const estoqueNovo = normalizarInt(estoque);

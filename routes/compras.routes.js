@@ -140,8 +140,8 @@ module.exports = function ({
           : custoUnitario;
         const precoProduto   = normalizarDecimal(produto.preco || 0);
         const lucroUnitario  = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucroRaw = novoCustoMedio > 0
-          ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const margemLucroRaw = precoProduto > 0
+          ? Number(((lucroUnitario / precoProduto) * 100).toFixed(2)) : 0;
         const margemLucro = Math.min(Math.max(margemLucroRaw, -9999), 9999);
 
         compraItensRows.push([
@@ -447,7 +447,7 @@ module.exports = function ({
           : custoUnitario;
         const precoProduto  = normalizarDecimal(produto.preco || 0);
         const lucroUnitario  = Number((precoProduto - novoCustoMedio).toFixed(2));
-        const margemLucroRaw = novoCustoMedio > 0 ? Number(((lucroUnitario / novoCustoMedio) * 100).toFixed(2)) : 0;
+        const margemLucroRaw = precoProduto > 0 ? Number(((lucroUnitario / precoProduto) * 100).toFixed(2)) : 0;
         const margemLucro    = Math.min(Math.max(margemLucroRaw, -9999), 9999);
 
         await client.query(
