@@ -19,6 +19,25 @@ const https = require('https');
 const crypto = require('crypto');
 const { erro, ok } = require('../utils/routeHelpers');
 
+// Rate limiter por IP para o endpoint de webhook (sem auth JWT)
+const _webhookIpMap = new Map();
+const WEBHOOK_MAX = 60;       // 60 notificações por janela
+const WEBHOOK_WINDOW = 60000; // 1 minuto
+
+function webhookRateLimit(req, res, next) {
+  const ip = req.ip || (req.connection && req.connection.remoteAddress) || 'unknown';
+  const now = Date.now();
+  const entry = _webhookIpMap.get(ip) || { count: 0, start: now };
+  if (now - entry.start > WEBHOOK_WINDOW) { entry.count = 1; entry.start = now; }
+  else entry.count += 1;
+  if (_webhookIpMap.size > 2000) {
+    for (const [k, v] of _webhookIpMap) { if (now - v.start > WEBHOOK_WINDOW) _webhookIpMap.delete(k); }
+  }
+  _webhookIpMap.set(ip, entry);
+  if (entry.count > WEBHOOK_MAX) { res.status(429).json({ error: 'Too many requests' }); return; }
+  next();
+}
+
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje, registrarMovimentacaoEstoque, criarParcelasContasReceber }) {
   const router = require('express').Router();
 
@@ -541,7 +560,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Webhook (notificações de pedidos) ─────────────────────────────────────
 
-  router.post('/webhook/:plataforma', async (req, res) => {
+  router.post('/webhook/:plataforma', webhookRateLimit, async (req, res) => {
     // Responde 200 imediatamente — ML considera falha se demorar > 5s
     res.status(200).json({ ok: true });
 

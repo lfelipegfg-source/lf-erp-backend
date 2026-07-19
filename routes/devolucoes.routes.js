@@ -210,6 +210,47 @@ module.exports = ({
             motivo || null
           ]
         );
+
+        // RF-A2: reduzir contas_receber pendentes da venda pelo valor devolvido
+        const crPendentesRes = await client.query(
+          `SELECT id, valor FROM contas_receber
+           WHERE venda_id = $1 AND empresa_id = $2
+             AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
+           ORDER BY data_vencimento ASC NULLS LAST`,
+          [Number(venda_id), emp.id]
+        );
+
+        if (crPendentesRes.rowCount > 0) {
+          let restante = +totalDevolvido.toFixed(2);
+          for (const cr of crPendentesRes.rows) {
+            if (restante <= 0) break;
+            const valorCr = +Number(cr.valor || 0).toFixed(2);
+            const reducao = +Math.min(valorCr, restante).toFixed(2);
+            const novoValor = +(valorCr - reducao).toFixed(2);
+            restante = +(restante - reducao).toFixed(2);
+            const nota = `Devolução #${numero} — redução R$ ${reducao.toFixed(2)}`;
+
+            if (novoValor <= 0) {
+              await client.query(
+                `UPDATE contas_receber
+                 SET valor = 0, status = 'pago', data_pagamento = CURRENT_DATE,
+                     observacao = CASE WHEN observacao IS NULL THEN $2 ELSE observacao || ' | ' || $2 END,
+                     atualizado_em = NOW()
+                 WHERE id = $1 AND empresa_id = $3`,
+                [cr.id, `Cancelado por Devolução #${numero}`, emp.id]
+              );
+            } else {
+              await client.query(
+                `UPDATE contas_receber
+                 SET valor = $2,
+                     observacao = CASE WHEN observacao IS NULL THEN $3 ELSE observacao || ' | ' || $3 END,
+                     atualizado_em = NOW()
+                 WHERE id = $1 AND empresa_id = $4`,
+                [cr.id, novoValor, nota, emp.id]
+              );
+            }
+          }
+        }
       }
 
       await client.query('COMMIT');
