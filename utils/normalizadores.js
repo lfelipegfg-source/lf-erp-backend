@@ -43,7 +43,11 @@ function normalizarDataISO(valor) {
 
   if (typeof valor === 'string') {
     const s = valor.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const d = new Date(s + 'T12:00:00');
+      if (isNaN(d.getTime())) return null;
+      return s;
+    }
     // Suporte a DD/MM/YYYY (formato BR)
     const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
     if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
@@ -79,7 +83,7 @@ function validarECalcularTotalItens(itens) {
     const produtoId = Number(item.produto_id);
     const quantidade = normalizarInt(item.quantidade);
     const custoUnitario = normalizarDecimal(
-      item.custo_unitario || item.preco_unitario || item.custo
+      item.custo_unitario ?? item.preco_unitario ?? item.custo
     );
 
     if (!produtoId || quantidade <= 0 || custoUnitario < 0) return null;

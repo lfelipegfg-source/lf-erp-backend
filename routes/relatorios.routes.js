@@ -84,7 +84,8 @@ module.exports = function ({
     params: paramsFluxoReceber,
     empresaResolvida
   })}
-  AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+  AND LOWER(COALESCE(status, 'pendente')) IN ('pago', 'parcial', 'parcial_atrasado')
+  AND data_pagamento IS NOT NULL
 `;
 
       let whereFluxoPagar = `
@@ -93,7 +94,8 @@ module.exports = function ({
     params: paramsFluxoPagar,
     empresaResolvida
   })}
-  AND LOWER(COALESCE(status, 'pendente')) = 'pago'
+  AND LOWER(COALESCE(status, 'pendente')) IN ('pago', 'parcial', 'parcial_atrasado')
+  AND data_pagamento IS NOT NULL
 `;
 
       let whereInvest = `

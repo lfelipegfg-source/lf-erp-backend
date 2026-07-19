@@ -213,11 +213,13 @@ module.exports = ({
   }
 
   async function removerDadosDependentesVenda({ client, vendaId, empresaResolvida }) {
+    // VP-C1: preservar parcelas já pagas — só deleta as pendentes/atrasadas/parciais
     await client.query(
       `
       DELETE FROM contas_receber
       WHERE venda_id = $1
         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+        AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
 `,
       [vendaId, empresaResolvida.id, empresaResolvida.nome]
     );
@@ -744,6 +746,17 @@ module.exports = ({
       const parcelasFinal = Math.max(1, normalizarInt(parcelas || 1));
       const dataFinal = normalizarDataISO(data) || hoje();
 
+      // Salvar total já pago antes de deletar parcelas (VP-C1/C2)
+      const parcelasJaPagasResult = await client.query(
+        `SELECT COALESCE(SUM(COALESCE(valor_original, valor)), 0) AS total_pago
+         FROM contas_receber
+         WHERE venda_id = $1
+           AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           AND LOWER(COALESCE(status, 'pendente')) = 'pago'`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      const totalJaPago = Number(parcelasJaPagasResult.rows[0].total_pago || 0);
+
       await estornarEstoqueVenda({
         client,
         vendaId: id,
@@ -827,21 +840,26 @@ module.exports = ({
           parcelas: parcelasFinal
         })
       ) {
-        await criarParcelasContasReceber({
-          client,
-          empresa: empresaResolvida.nome,
-          empresa_id: empresaResolvida.id,
-          venda_id: id,
-          cliente_id: clienteIdFinal,
-          cliente_nome: clienteNomeFinal,
-          total: totalFinal,
-          quantidade_parcelas: parcelasFinal,
-          data_primeiro_vencimento: dataFinal,
-          intervalo_dias: 30,
-          observacao: observacao || '',
-          criado_por: req.user.id,
-          forma_pagamento: pagamento || 'Promissória'
-        });
+        const saldoPendente = Number((totalFinal - totalJaPago).toFixed(2));
+        if (saldoPendente > 0) {
+          // VP-C2: garantir que o vencimento não seja no passado
+          const dataVenc = dataFinal < hoje() ? hoje() : dataFinal;
+          await criarParcelasContasReceber({
+            client,
+            empresa: empresaResolvida.nome,
+            empresa_id: empresaResolvida.id,
+            venda_id: id,
+            cliente_id: clienteIdFinal,
+            cliente_nome: clienteNomeFinal,
+            total: saldoPendente,
+            quantidade_parcelas: parcelasFinal,
+            data_primeiro_vencimento: dataVenc,
+            intervalo_dias: 30,
+            observacao: observacao || '',
+            criado_por: req.user.id,
+            forma_pagamento: pagamento || 'Promissória'
+          });
+        }
       }
 
       await client.query('COMMIT');

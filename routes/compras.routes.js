@@ -123,7 +123,7 @@ module.exports = function ({
       for (const item of itens) {
         const produtoId     = Number(item.produto_id);
         const quantidade    = normalizarInt(item.quantidade);
-        const custoUnitario = normalizarDecimal(item.custo_unitario || item.preco_unitario || item.custo);
+        const custoUnitario = normalizarDecimal(item.custo_unitario ?? item.preco_unitario ?? item.custo);
         const subtotalItem  = Number((quantidade * custoUnitario).toFixed(2));
 
         const produto = produtosMap[produtoId];
@@ -239,16 +239,21 @@ module.exports = function ({
         // 13 colunas parametrizadas + data_pagamento=NULL, status='pendente', criado_em=NOW(), atualizado_em=NOW() inline
         let idx = 1;
         const placeholders = contasRows.map(() =>
-          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},NULL,'pendente',$${idx++},$${idx++},$${idx++},NOW(),NOW())`
+          `($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++},NULL,'pendente',$${idx++},$${idx++},$${idx++},NOW(),NOW())`
         ).join(',');
+        // SJ-B2: incluir valor_original igual a valor para permitir auditoria de saldo devedor
+        const contasRowsComOriginal = contasRows.map(row => {
+          const valor = row[8]; // índice do campo valor
+          return [...row.slice(0, 9), valor, ...row.slice(9)];
+        });
         await client.query(
           `INSERT INTO contas_pagar
              (empresa, empresa_id, fornecedor_id, fornecedor_nome, compra_id,
-              descricao, parcela, total_parcelas, valor, data_vencimento,
+              descricao, parcela, total_parcelas, valor, valor_original, data_vencimento,
               data_pagamento, status, forma_pagamento, observacao, criado_por,
               criado_em, atualizado_em)
            VALUES ${placeholders}`,
-          contasRows.flat()
+          contasRowsComOriginal.flat()
         );
       }
 

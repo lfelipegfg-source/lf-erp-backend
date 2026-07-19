@@ -340,17 +340,17 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const hojeStr = hoje();
 
-      // Pontos expirados hoje ou antes, que ainda não foram processados
+      // Pontos expirados hoje ou antes, processados individualmente por movimento (idempotência via referencia_id)
       const vencidosResult = await pool.query(
-        `SELECT cliente_id, SUM(pontos) AS pontos_a_expirar
+        `SELECT id, cliente_id, ABS(pontos) AS pontos_a_expirar
          FROM fidelidade_movimentos
-         WHERE empresa_id = $1 AND tipo = 'credito' AND expira_em <= $2
+         WHERE empresa_id = $1 AND tipo = 'credito' AND pontos > 0 AND expira_em <= $2
            AND NOT EXISTS (
              SELECT 1 FROM fidelidade_movimentos e2
-             WHERE e2.empresa_id = $1 AND e2.cliente_id = fidelidade_movimentos.cliente_id
-               AND e2.tipo = 'expiracao' AND e2.referencia_id = fidelidade_movimentos.id
-           )
-         GROUP BY cliente_id`,
+             WHERE e2.empresa_id = $1
+               AND e2.tipo = 'expiracao'
+               AND e2.referencia_id = fidelidade_movimentos.id
+           )`,
         [e.id, hojeStr]
       );
 
@@ -371,10 +371,11 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
             [pontosBaixar, row.cliente_id]
           );
           const novoSaldo = (saldoRes.rows[0]?.p || 0) - pontosBaixar;
+          // CF-C1: salvar referencia_id para garantir idempotência nas próximas execuções
           await clientFid.query(
-            `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo)
-             VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao')`,
-            [e.id, row.cliente_id, -pontosBaixar, novoSaldo]
+            `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo, referencia_id)
+             VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao',$5)`,
+            [e.id, row.cliente_id, -pontosBaixar, novoSaldo, row.id]
           );
           await clientFid.query('COMMIT');
           expirados++;

@@ -1144,7 +1144,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
           ),
           atualizado_em = NOW()
       WHERE (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $1))
-        AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
+        AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado', 'parcial')
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $2
       `,
@@ -1161,6 +1161,23 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
           atualizado_em = NOW()
       WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
+        AND data_vencimento IS NOT NULL
+        AND data_vencimento >= $2
+      `,
+      [empresa, dataHoje, empresaId]
+    );
+
+    await client.query(
+      `
+      UPDATE contas_receber
+      SET status = 'pendente',
+          dias_atraso = 0,
+          multa = 0,
+          juros = 0,
+          valor_atualizado = valor,
+          atualizado_em = NOW()
+      WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
+        AND LOWER(COALESCE(status, 'pendente')) = 'atrasado'
         AND data_vencimento IS NOT NULL
         AND data_vencimento >= $2
       `,
@@ -1206,9 +1223,19 @@ async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
         SET status = 'atrasado',
             atualizado_em = NOW()
         WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
-          AND status = 'pendente'
+          AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
           AND data_vencimento IS NOT NULL
           AND data_vencimento < $2`,
+      [empresa, hoje(), empresaId]
+    );
+    await client.query(
+      `UPDATE contas_pagar
+        SET status = 'pendente',
+            atualizado_em = NOW()
+        WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
+          AND LOWER(COALESCE(status, 'pendente')) = 'atrasado'
+          AND data_vencimento IS NOT NULL
+          AND data_vencimento >= $2`,
       [empresa, hoje(), empresaId]
     );
     await client.query('COMMIT');
@@ -3593,7 +3620,7 @@ THEN 'atrasado'
         (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
         OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g')::INTEGER ELSE NULL END)
       )
-        AND cr.empresa_id = lf.empresa_id
+        AND (cr.empresa_id = lf.empresa_id OR (cr.empresa_id IS NULL AND cr.empresa = lf.empresa))
     )
   `,
         [empresaResolvida.nome, empresaResolvida.id]
@@ -3996,6 +4023,7 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
     const novoValor = pagamentoTotal ? valorAtual : Number((valorAtual - valorPago).toFixed(2));
     const novoStatus = pagamentoTotal ? 'pago' : 'parcial';
 
+    const formaPagamentoBaixa = req.body?.forma_pagamento ? String(req.body.forma_pagamento).trim() : null;
     await client.query(
       `
       UPDATE contas_receber
@@ -4003,10 +4031,11 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
           valor_original = COALESCE(valor_original, valor),
           valor = $2,
           data_pagamento = CASE WHEN $1 = 'pago' THEN $3 ELSE data_pagamento END,
+          forma_pagamento = CASE WHEN $7 IS NOT NULL AND $7 != '' THEN $7 ELSE forma_pagamento END,
           atualizado_em = NOW()
       WHERE id = $4 AND (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $6))
       `,
-      [novoStatus, novoValor, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
+      [novoStatus, novoValor, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome, formaPagamentoBaixa]
     );
 
     if (!pagamentoTotal) {
@@ -4549,6 +4578,7 @@ app.post('/contas-receber/manual', auth, writeRateLimiter, requirePermissao(pool
   parcela,
   total_parcelas,
   data_vencimento,
+  forma_pagamento,
   criado_em,
   atualizado_em
 )
@@ -4558,6 +4588,7 @@ VALUES (
   1,
   1,
   $7,
+  $8,
   NOW(),
   NOW()
 )
@@ -4570,7 +4601,8 @@ RETURNING *
         nomeCliente || 'Cliente avulso',
         observacao || descricao || 'Promissória antiga cadastrada manualmente',
         valorFinal,
-        dataVencimento
+        dataVencimento,
+        forma_pagamento || 'promissoria'
       ]
     );
 
@@ -6116,6 +6148,7 @@ app.get('/dashboard', auth, async (req, res) => {
     let produtosWhere = `
   WHERE 1=1
   ${adicionarFiltroEmpresaSaaS({ params: produtosParams, empresaResolvida })}
+  AND deletado_em IS NULL
 `;
 
     let lancamentosWhere = `
@@ -6281,6 +6314,7 @@ app.get('/dashboard', auth, async (req, res) => {
   })}
     AND estoque <= estoque_minimo
     AND estoque_minimo > 0
+    AND deletado_em IS NULL
   `,
         estoqueBaixoParams
       ),
@@ -6303,6 +6337,7 @@ app.get('/dashboard', auth, async (req, res) => {
     params: indicadoresFinanceirosParams,
     empresaResolvida
   })}
+  AND deletado_em IS NULL
   `,
         indicadoresFinanceirosParams
       ),
@@ -6319,6 +6354,7 @@ app.get('/dashboard', auth, async (req, res) => {
       params: abcParams,
       empresaResolvida
     })}
+    AND deletado_em IS NULL
   ),
   ordenado AS (
     SELECT

@@ -515,8 +515,12 @@ ${adicionarFiltroEmpresaSaaS({
         const atual = atualResult.rows[0];
 
         const precoFinal = normalizarDecimal(preco);
-        const custoBase = normalizarDecimal(custo_unitario || custo || atual.custo || 0);
-        const custoMedioFinal = normalizarDecimal(custo_medio || custoBase);
+        const custoBase = normalizarDecimal(custo_unitario ?? custo ?? atual.custo ?? 0);
+        // Preservar custo_medio histórico: só atualiza se o usuário enviou explicitamente
+        // ou se ainda é nulo. Nunca substituir por custoBase no PUT.
+        const custoMedioFinal = (custo_medio != null && custo_medio !== '')
+          ? normalizarDecimal(custo_medio)
+          : normalizarDecimal(atual.custo_medio || custoBase);
         const lucroUnitario = Number((precoFinal - custoMedioFinal).toFixed(2));
         const margemLucro =
           precoFinal > 0 ? Number(((lucroUnitario / precoFinal) * 100).toFixed(2)) : 0;

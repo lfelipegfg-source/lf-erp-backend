@@ -191,7 +191,7 @@ module.exports = function ({
         ),
 
         pool.query(
-          `SELECT id,'lancamento' origem,
+          `SELECT id,'lancamento_financeiro' origem,
           CASE WHEN tipo='receita' THEN 'entrada' ELSE 'saida' END tipo,
           descricao,valor,pagamento_data data_movimento,
           NULL forma_pagamento,NULL referencia_id,observacao
@@ -258,13 +258,23 @@ module.exports = function ({
         .filter((m) => m.tipo === 'saida')
         .reduce((acc, m) => acc + m.valor, 0);
 
+      // F-A2: construir resumo por forma de pagamento via agregação em JS
+      const resumoFormasPagamento = movimentos.reduce((acc, m) => {
+        const k = m.forma_pagamento || 'nao_informado';
+        if (!acc[k]) acc[k] = { entradas: 0, saidas: 0 };
+        if (m.tipo === 'entrada') acc[k].entradas = Number((acc[k].entradas + m.valor).toFixed(2));
+        else acc[k].saidas = Number((acc[k].saidas + m.valor).toFixed(2));
+        return acc;
+      }, {});
+
       return res.json({
         sucesso: true,
         truncado,
         entradas,
         saidas,
         saldo: entradas - saidas,
-        movimentos
+        movimentos,
+        resumo_formas_pagamento: resumoFormasPagamento
       });
     } catch (error) {
       console.error('Erro real no fluxo de caixa:', error);
@@ -312,7 +322,7 @@ module.exports = function ({
         pool.query(
           `SELECT
              data_vencimento AS data,
-             SUM(valor) AS valor,
+             SUM(COALESCE(valor_atualizado, valor)) AS valor,
              COUNT(*) AS qtd
            FROM contas_pagar
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))

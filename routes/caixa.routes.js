@@ -226,11 +226,25 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
 
       const { saldo_contado, observacao } = req.body;
       const saldoContado  = normalizarDecimal(saldo_contado ?? 0);
-      const saldoCalculadoResult = await client.query(
-        `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
-        [sessao.id]
-      );
-      const saldoCalculado = Number(saldoCalculadoResult.rows[0].saldo || 0);
+
+      const [movimentosResult, vendasResult] = await Promise.all([
+        client.query(
+          `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
+          [sessao.id]
+        ),
+        client.query(
+          `SELECT COALESCE(SUM(total), 0) AS total_vendas
+           FROM vendas
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
+             AND LOWER(COALESCE(status, 'finalizada')) != 'cancelada'
+             AND criado_em >= $2`,
+          [emp.id, sessao.aberto_em, emp.nome]
+        )
+      ]);
+
+      const saldoMovimentos = Number(movimentosResult.rows[0].saldo || 0);
+      const totalVendas     = Number(vendasResult.rows[0].total_vendas || 0);
+      const saldoCalculado  = Number((saldoMovimentos + totalVendas).toFixed(2));
       const diferenca = +(saldoContado - saldoCalculado).toFixed(2);
 
       await client.query(
