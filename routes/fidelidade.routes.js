@@ -197,11 +197,14 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const qtd = normalizarInt(pontos);
       if (qtd <= 0) return erro(res, 400, 'Pontos deve ser positivo');
 
+      const cfg = await getCfg(e.id);
+      if (!cfg?.ativo) return erro(res, 400, 'Programa de fidelidade não está ativo');
+
       await acumularPontosFidelidade(pool, {
         empresaId: e.id,
         clienteId: Number(cliente_id),
         vendaId:   venda_id || null,
-        totalVenda: qtd / ((await getCfg(e.id))?.pontos_por_real || 1)
+        totalVenda: qtd / (cfg.pontos_por_real || 1)
       });
 
       return ok(res, { mensagem: `${qtd} pontos acumulados` });
@@ -355,36 +358,38 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       );
 
       let expirados = 0;
-      for (const row of vencidosResult.rows) {
-        const clientFid = await pool.connect();
-        try {
-          await clientFid.query('BEGIN');
-          const saldoRes = await clientFid.query(
-            `SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2 FOR UPDATE`,
-            [row.cliente_id, e.id]
-          );
-          const pontosBaixar = Math.min(Number(row.pontos_a_expirar), saldoRes.rows[0]?.p || 0);
-          if (pontosBaixar <= 0) { await clientFid.query('ROLLBACK'); continue; }
+      const clientFid = await pool.connect();
+      try {
+        for (const row of vencidosResult.rows) {
+          try {
+            await clientFid.query('BEGIN');
+            const saldoRes = await clientFid.query(
+              `SELECT COALESCE(pontos_fidelidade,0) AS p FROM clientes WHERE id=$1 AND empresa_id=$2 FOR UPDATE`,
+              [row.cliente_id, e.id]
+            );
+            const pontosBaixar = Math.min(Number(row.pontos_a_expirar), saldoRes.rows[0]?.p || 0);
+            if (pontosBaixar <= 0) { await clientFid.query('ROLLBACK'); continue; }
 
-          await clientFid.query(
-            `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2`,
-            [pontosBaixar, row.cliente_id]
-          );
-          const novoSaldo = (saldoRes.rows[0]?.p || 0) - pontosBaixar;
-          // CF-C1: salvar referencia_id para garantir idempotência nas próximas execuções
-          await clientFid.query(
-            `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo, referencia_id)
-             VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao',$5)`,
-            [e.id, row.cliente_id, -pontosBaixar, novoSaldo, row.id]
-          );
-          await clientFid.query('COMMIT');
-          expirados++;
-        } catch (expErr) {
-          await clientFid.query('ROLLBACK');
-          console.error('[fidelidade] expirar cliente', row.cliente_id, expErr.message);
-        } finally {
-          clientFid.release();
+            await clientFid.query(
+              `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2`,
+              [pontosBaixar, row.cliente_id]
+            );
+            const novoSaldo = (saldoRes.rows[0]?.p || 0) - pontosBaixar;
+            // CF-C1: salvar referencia_id para garantir idempotência nas próximas execuções
+            await clientFid.query(
+              `INSERT INTO fidelidade_movimentos (empresa_id, cliente_id, tipo, pontos, saldo_apos, descricao, referencia_tipo, referencia_id)
+               VALUES ($1,$2,'expiracao',$3,$4,'Pontos expirados por prazo de validade','expiracao',$5)`,
+              [e.id, row.cliente_id, -pontosBaixar, novoSaldo, row.id]
+            );
+            await clientFid.query('COMMIT');
+            expirados++;
+          } catch (expErr) {
+            await clientFid.query('ROLLBACK');
+            console.error('[fidelidade] expirar cliente', row.cliente_id, expErr.message);
+          }
         }
+      } finally {
+        clientFid.release();
       }
 
       return ok(res, { clientes_processados: expirados, mensagem: `${expirados} cliente(s) com pontos expirados processados` });
