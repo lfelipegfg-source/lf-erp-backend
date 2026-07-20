@@ -191,8 +191,8 @@ module.exports = function ({
           return erro(res, 403, 'Sem acesso');
         }
 
-        params.push(empresaResolvida.id);
-        where += ` AND empresa_id = $${params.length}`;
+        params.push(empresaResolvida.id, empresaResolvida.nome);
+        where += ` AND (empresa_id = $${params.length - 1} OR (empresa_id IS NULL AND empresa = $${params.length}))`;
       }
 
       if (busca) {
@@ -277,7 +277,7 @@ module.exports = function ({
             endereco = $5,
             observacao = $6,
             atualizado_em = NOW()
-        WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9))`,
+        WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9)) AND deletado_em IS NULL`,
         [
           nome,
           cnpj || '',

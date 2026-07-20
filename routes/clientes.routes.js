@@ -113,7 +113,7 @@ module.exports = ({
         }
       });
     } catch (error) {
-      console.error('Erro real ao cadastrar cliente:', error);
+      console.error('Erro ao cadastrar cliente:', error.message);
       return erro(res, 500, 'Erro ao cadastrar cliente');
     }
   });

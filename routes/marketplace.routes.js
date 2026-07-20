@@ -18,6 +18,7 @@
 const https = require('https');
 const crypto = require('crypto');
 const { erro, ok } = require('../utils/routeHelpers');
+const { requirePermissao } = require('../utils/permissoes');
 
 // Rate limiter por IP para o endpoint de webhook (sem auth JWT)
 const _webhookIpMap = new Map();
@@ -46,6 +47,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   const ML_BASE = 'https://api.mercadolibre.com';
   const ML_AUTH = 'https://auth.mercadolivre.com.br/authorization';
   const ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token';
+  const PLATAFORMAS_VALIDAS = ['mercadolivre', 'shopee'];
 
   async function apiGet(url, token) {
     return new Promise((resolve, reject) => {
@@ -302,7 +304,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Config ─────────────────────────────────────────────────────────────────
 
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'marketplace', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -322,13 +324,14 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, requirePermissao(pool, 'marketplace', 'configurar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const { plataforma, app_id, client_secret } = req.body;
       if (!plataforma || !app_id) return erro(res, 400, 'plataforma e app_id são obrigatórios');
+      if (!PLATAFORMAS_VALIDAS.includes(plataforma)) return erro(res, 400, 'Plataforma inválida');
 
       await pool.query(
         `INSERT INTO marketplace_config (empresa_id, plataforma, app_id, client_secret)
@@ -348,17 +351,18 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── OAuth ──────────────────────────────────────────────────────────────────
 
-  router.get('/oauth/url', auth, async (req, res) => {
+  router.get('/oauth/url', auth, requirePermissao(pool, 'marketplace', 'configurar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const { plataforma } = req.query;
+      if (!PLATAFORMAS_VALIDAS.includes(plataforma)) return erro(res, 400, 'Plataforma inválida');
       const cfg = await getConfig(empresaResolvida.id, plataforma);
       if (!cfg?.app_id) return erro(res, 400, 'Configure o App ID antes de autorizar');
 
       const redirectUri = process.env.MARKETPLACE_REDIRECT_URI || `${process.env.BACKEND_URL || ''}/marketplace/oauth/callback`;
-      const stateSecret = process.env.JWT_SECRET || 'lferp-marketplace-state';
+      const stateSecret = process.env.MARKETPLACE_STATE_SECRET || process.env.JWT_SECRET || 'lferp-marketplace-state';
       const statePayload = JSON.stringify({ empresa_id: empresaResolvida.id, plataforma, ts: Date.now() });
       const stateSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
       const state = Buffer.from(JSON.stringify({ p: statePayload, s: stateSig })).toString('base64url');
@@ -384,7 +388,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       let empresa_id, plataforma;
       try {
-        const stateSecret = process.env.JWT_SECRET || 'lferp-marketplace-state';
+        const stateSecret = process.env.MARKETPLACE_STATE_SECRET || process.env.JWT_SECRET || 'lferp-marketplace-state';
         const { p: statePayload, s: stateSig } = JSON.parse(Buffer.from(state, 'base64url').toString());
         const expectedSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
         if (stateSig !== expectedSig) return res.send('<h3>State inválido ou adulterado</h3>');
@@ -443,7 +447,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Sync estoque ───────────────────────────────────────────────────────────
 
-  router.post('/sync-estoque', auth, writeRateLimiter, async (req, res) => {
+  router.post('/sync-estoque', auth, requirePermissao(pool, 'marketplace', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -499,7 +503,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Produtos vinculados ────────────────────────────────────────────────────
 
-  router.get('/produtos', auth, async (req, res) => {
+  router.get('/produtos', auth, requirePermissao(pool, 'marketplace', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -519,7 +523,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.post('/vincular', auth, writeRateLimiter, async (req, res) => {
+  router.post('/vincular', auth, requirePermissao(pool, 'marketplace', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -545,7 +549,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.delete('/vincular/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/vincular/:id', auth, requirePermissao(pool, 'marketplace', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -568,6 +572,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
     try {
       const { plataforma } = req.params;
+      if (!PLATAFORMAS_VALIDAS.includes(plataforma)) return;
       const payload = req.body;
 
       console.log(`[marketplace] webhook ${plataforma}:`, JSON.stringify(payload).slice(0, 300));

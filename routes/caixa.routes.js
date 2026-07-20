@@ -65,6 +65,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
          FROM vendas
          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
            AND data >= $2::date
+           AND LOWER(COALESCE(status, 'finalizada')) != 'cancelada'
            AND LOWER(pagamento) IN ('dinheiro','pix')`,
         [emp.id, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date(sessao.aberto_em)), emp.nome]
       );

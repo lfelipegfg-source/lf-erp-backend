@@ -105,8 +105,8 @@ module.exports = ({
       const itensVendaRes = await client.query(
         `SELECT vi.*, p.tem_grade FROM venda_itens vi
          LEFT JOIN produtos p ON p.id = vi.produto_id
-         WHERE vi.venda_id = $1 AND vi.empresa_id = $2`,
-        [Number(venda_id), emp.id]
+         WHERE vi.venda_id = $1 AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))`,
+        [Number(venda_id), emp.id, emp.nome]
       );
       const itensVendaMap = new Map(itensVendaRes.rows.map((i) => [i.id || `${i.produto_id}-${i.grade_id}`, i]));
 
@@ -214,10 +214,11 @@ module.exports = ({
         // RF-A2: reduzir contas_receber pendentes da venda pelo valor devolvido
         const crPendentesRes = await client.query(
           `SELECT id, valor FROM contas_receber
-           WHERE venda_id = $1 AND empresa_id = $2
+           WHERE venda_id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
              AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
            ORDER BY data_vencimento ASC NULLS LAST`,
-          [Number(venda_id), emp.id]
+          [Number(venda_id), emp.id, emp.nome]
         );
 
         if (crPendentesRes.rowCount > 0) {
@@ -233,7 +234,8 @@ module.exports = ({
             if (novoValor <= 0) {
               await client.query(
                 `UPDATE contas_receber
-                 SET valor = 0, status = 'pago', data_pagamento = CURRENT_DATE,
+                 SET valor = 0, status = 'pago',
+                     data_pagamento = (NOW() AT TIME ZONE 'America/Fortaleza')::DATE,
                      observacao = CASE WHEN observacao IS NULL THEN $2 ELSE observacao || ' | ' || $2 END,
                      atualizado_em = NOW()
                  WHERE id = $1 AND empresa_id = $3`,

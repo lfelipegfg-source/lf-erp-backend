@@ -438,7 +438,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
 
   // ── GET /exportacao/painel — KPIs contábeis em tempo real ────────────────
 
-  router.get('/painel', auth, readRateLimit, async (req, res) => {
+  router.get('/painel', auth, requirePermissao(pool, 'relatorios', 'ver'), readRateLimit, async (req, res) => {
     try {
       const emp = await resolveEmpresa(req);
       if (!emp) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });

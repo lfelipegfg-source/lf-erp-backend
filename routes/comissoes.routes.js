@@ -336,18 +336,26 @@ module.exports = ({
       const venda = await pool.query(`SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, emp.id]);
       if (venda.rowCount === 0) return erro(res, 404, 'Venda não encontrada');
 
-      // Remove comissão anterior pendente (se existir)
-      await pool.query(
-        `DELETE FROM comissoes WHERE venda_id = $1 AND empresa_id = $2 AND status = 'pendente'`,
-        [vendaId, emp.id]
-      );
-
       const v = venda.rows[0];
-      await calcularComissaoVenda(pool, {
-        vendaId,
-        usuarioId: v.criado_por || req.user.id,
-        empresaId: emp.id
-      });
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `DELETE FROM comissoes WHERE venda_id = $1 AND empresa_id = $2 AND status = 'pendente'`,
+          [vendaId, emp.id]
+        );
+        await calcularComissaoVenda(client, {
+          vendaId,
+          usuarioId: v.criado_por || req.user.id,
+          empresaId: emp.id
+        });
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       const nova = await pool.query(`SELECT * FROM comissoes WHERE venda_id = $1 AND empresa_id = $2`, [vendaId, emp.id]);
       return ok(res, { comissao: nova.rows[0] || null, mensagem: 'Comissão recalculada' });

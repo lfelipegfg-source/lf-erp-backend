@@ -3829,7 +3829,7 @@ app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
 });
 
 // ================= HISTÓRICO FINANCEIRO DO CLIENTE =================
-app.get('/contas-receber/cliente-historico/:clienteId', auth, async (req, res) => {
+app.get('/contas-receber/cliente-historico/:clienteId', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const clienteId = Number(req.params.clienteId);
 
@@ -4694,6 +4694,9 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
         c.total AS compra_total,
         CASE
           WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'pago' THEN 'pago'
+          WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'parcial'
+            AND cp.data_vencimento IS NOT NULL AND cp.data_vencimento < $2 THEN 'parcial_atrasado'
+          WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'parcial' THEN 'parcial'
           WHEN cp.data_vencimento IS NOT NULL AND cp.data_vencimento < $2 THEN 'atrasado'
           ELSE 'pendente'
         END AS status_exibicao
@@ -4765,11 +4768,11 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
         COUNT(*)::int AS total,
         COALESCE(SUM(q.valor),0)::numeric AS total_valor,
         COALESCE(SUM(CASE WHEN q.status_exibicao='pago' THEN q.valor ELSE 0 END),0)::numeric AS total_pago,
-        COALESCE(SUM(CASE WHEN q.status_exibicao='atrasado' THEN q.valor ELSE 0 END),0)::numeric AS total_atrasado,
-        COALESCE(SUM(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_pendente,
+        COALESCE(SUM(CASE WHEN q.status_exibicao IN ('atrasado','parcial_atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_atrasado,
+        COALESCE(SUM(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado','parcial_atrasado') THEN q.valor ELSE 0 END),0)::numeric AS total_pendente,
         COUNT(CASE WHEN q.status_exibicao='pago' THEN 1 END)::int AS qtd_pago,
-        COUNT(CASE WHEN q.status_exibicao='atrasado' THEN 1 END)::int AS qtd_atrasado,
-        COUNT(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado') THEN 1 END)::int AS qtd_pendente
+        COUNT(CASE WHEN q.status_exibicao IN ('atrasado','parcial_atrasado') THEN 1 END)::int AS qtd_atrasado,
+        COUNT(CASE WHEN q.status_exibicao NOT IN ('pago','atrasado','parcial_atrasado') THEN 1 END)::int AS qtd_pendente
       FROM (${sql}) AS q
     `;
 
@@ -5302,7 +5305,7 @@ app.get('/financeiro/lancamentos/:empresa', auth, requirePermissao(pool, 'financ
   }
 });
 
-app.get('/financeiro/lancamentos-detalhe/:id', auth, async (req, res) => {
+app.get('/financeiro/lancamentos-detalhe/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -5534,10 +5537,11 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    await pool.query(
-      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2))`,
+    const delResult = await pool.query(
+      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2)) RETURNING id`,
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
+    if (delResult.rowCount === 0) return jsonErro(res, 404, 'Lançamento não encontrado');
 
     try {
       await registrarLogFinanceiro({
@@ -5769,6 +5773,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
         AND NOT EXISTS (
           SELECT 1 FROM contas_receber cr
           WHERE cr.venda_id = v.id
+            AND (cr.empresa_id = v.empresa_id OR cr.empresa = v.empresa)
         )
     `;
 
@@ -6131,13 +6136,13 @@ app.get('/dashboard', auth, async (req, res) => {
     let receberWhere = `
   WHERE 1=1
   ${adicionarFiltroEmpresaSaaS({ params: receberParams, empresaResolvida })}
-  AND status IN ('pendente', 'atrasado')
+  AND status IN ('pendente', 'atrasado', 'parcial', 'parcial_atrasado')
 `;
 
     let pagarWhere = `
   WHERE 1=1
   ${adicionarFiltroEmpresaSaaS({ params: pagarParams, empresaResolvida })}
-  AND status IN ('pendente', 'atrasado')
+  AND status IN ('pendente', 'atrasado', 'parcial', 'parcial_atrasado')
 `;
 
     let clientesWhere = `

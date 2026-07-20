@@ -137,7 +137,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const { busca } = req.query;
       const params = [e.id];
       let where = `WHERE empresa_id = $1 AND pontos_fidelidade > 0 AND deletado_em IS NULL`;
-      if (busca) { params.push(`%${busca}%`); where += ` AND nome ILIKE $${params.length}`; }
+      if (busca) { params.push(`%${busca.replace(/[%_]/g, '\\$&')}%`); where += ` AND nome ILIKE $${params.length} ESCAPE '\\'`; }
 
       const result = await pool.query(
         `SELECT id, nome, telefone, email, pontos_fidelidade
