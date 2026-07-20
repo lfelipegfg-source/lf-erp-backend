@@ -23,7 +23,8 @@ module.exports = ({
   writeRateLimiter,
   pool,
   validarAcessoEmpresa,
-  normalizarDecimal
+  normalizarDecimal,
+  requirePermissao
 }) => {
   const router = require('express').Router();
 
@@ -63,7 +64,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /nfe/config
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'nfe', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -88,7 +89,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /nfe/config
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, requirePermissao(pool, 'nfe', 'configurar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -160,7 +161,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /nfe/emitir/:vendaId
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/emitir/:vendaId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/emitir/:vendaId', auth, requirePermissao(pool, 'nfe', 'emitir'), writeRateLimiter, async (req, res) => {
     try {
       const vendaId = Number(req.params.vendaId);
       if (!vendaId) return erro(res, 400, 'ID de venda inválido');
@@ -297,7 +298,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /nfe/consultar/:ref — sincroniza status do Focus NFe
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/consultar/:ref', auth, async (req, res) => {
+  router.get('/consultar/:ref', auth, requirePermissao(pool, 'nfe', 'ver'), async (req, res) => {
     try {
       const ref = req.params.ref;
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -339,7 +340,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /nfe/cancelar/:nfeId
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/cancelar/:nfeId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/cancelar/:nfeId', auth, requirePermissao(pool, 'nfe', 'cancelar'), writeRateLimiter, async (req, res) => {
     try {
       const nfeId = Number(req.params.nfeId);
       const { justificativa } = req.body;
@@ -401,7 +402,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /nfe/lista
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/lista', auth, async (req, res) => {
+  router.get('/lista', auth, requirePermissao(pool, 'nfe', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -446,7 +447,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /nfe/pdf/:ref — proxy DANFE
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/pdf/:ref', auth, async (req, res) => {
+  router.get('/pdf/:ref', auth, requirePermissao(pool, 'nfe', 'ver'), async (req, res) => {
     try {
       const ref = req.params.ref;
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -477,7 +478,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /nfe/xml/:ref — proxy XML
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/xml/:ref', auth, async (req, res) => {
+  router.get('/xml/:ref', auth, requirePermissao(pool, 'nfe', 'ver'), async (req, res) => {
     try {
       const ref = req.params.ref;
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);

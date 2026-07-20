@@ -181,17 +181,13 @@ module.exports = ({
         });
         await sincronizarEstoqueKit(client, produtoId, empresaResolvida.id);
       } else {
-        const produtoResult = await client.query(
-          `SELECT estoque FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
-          [produtoId, empresaResolvida.id, empresaResolvida.nome]
+        const updProd = await client.query(
+          `UPDATE produtos SET estoque = estoque + $1, atualizado_em = NOW()
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
+           RETURNING id`,
+          [quantidade, produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
-        if (produtoResult.rowCount === 0) continue;
-
-        const estoqueAtual = normalizarInt(produtoResult.rows[0].estoque);
-        await client.query(
-          `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
-          [estoqueAtual + quantidade, produtoId, empresaResolvida.id, empresaResolvida.nome]
-        );
+        if (updProd.rowCount === 0) continue;
       }
 
       if (!eKit) {

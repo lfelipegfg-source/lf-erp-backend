@@ -4084,7 +4084,9 @@ VALUES (
       );
     }
 
-    await registrarLogFinanceiro({
+    await client.query('COMMIT');
+
+    try { await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
       empresa_id: empresaResolvida.id,
       tipo: pagamentoTotal ? 'baixa' : 'baixa_parcial',
@@ -4095,9 +4097,7 @@ VALUES (
         : `Baixa parcial da conta a receber #${id}`,
       valor: valorPago,
       usuario_id: req.user?.id
-    });
-
-    await client.query('COMMIT');
+    }); } catch (logErr) { console.error('[cr-pagar] log:', logErr.message); }
 
     // Notifica integração contábil em background
     dispararWebhookComRetry(pool, empresaResolvida.id, 'recebimento.registrado', {

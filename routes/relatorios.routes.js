@@ -1147,9 +1147,9 @@ MAX(v.data) AS ultima_venda
           COALESCE(SUM(vi.total), 0)                                                  AS faturamento_total,
           COALESCE(MAX(pg.preco), MAX(p.preco), 0)                                    AS preco_atual,
           COALESCE(MAX(pg.custo), MAX(p.custo_medio), 0)                              AS custo_atual,
-          COALESCE(SUM(vi.quantidade * COALESCE(pg.custo, p.custo_medio, 0)), 0)      AS custo_total,
+          COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario, pg.custo, p.custo_medio, 0)), 0)      AS custo_total,
           COALESCE(SUM(vi.total), 0)
-            - COALESCE(SUM(vi.quantidade * COALESCE(pg.custo, p.custo_medio, 0)), 0) AS lucro_total,
+            - COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario, pg.custo, p.custo_medio, 0)), 0) AS lucro_total,
           COALESCE(MAX(pg.estoque), 0)                                                AS estoque_atual,
           MAX(v.data)                                                                 AS ultima_venda
         FROM venda_itens vi

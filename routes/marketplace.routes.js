@@ -417,7 +417,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         });
         const tokenData = await tokenRes.json();
         if (!tokenData.access_token) {
-          return res.send(`<h3>Erro na autenticação: ${JSON.stringify(tokenData)}</h3>`);
+          const _escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return res.send(`<h3>Erro na autenticação: ${_escHtml(JSON.stringify(tokenData))}</h3>`);
         }
         accessToken  = tokenData.access_token;
         refreshToken = tokenData.refresh_token;
@@ -435,7 +436,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       res.send(`<h3>✅ Autorização concluída!</h3><p>Feche esta janela e volte ao LF ERP.</p><script>window.close();</script>`);
     } catch (err) {
       console.error('[marketplace] oauth callback:', err.message);
-      res.send(`<h3>Erro: ${err.message}</h3>`);
+      const _escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      res.send(`<h3>Erro: ${_escHtml(err.message)}</h3>`);
     }
   });
 

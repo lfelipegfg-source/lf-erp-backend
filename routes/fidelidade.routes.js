@@ -16,7 +16,7 @@
 const { acumularPontosFidelidade } = require('../utils/fidelidade');
 const { erro, ok } = require('../utils/routeHelpers');
 
-module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }) {
+module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje, requirePermissao }) {
   const router = require('express').Router();
 
 
@@ -29,7 +29,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Config ────────────────────────────────────────────────────────────────
 
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'fidelidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -43,7 +43,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     } catch (err) { return erro(res, 500, 'Erro ao buscar configuração'); }
   });
 
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, requirePermissao(pool, 'fidelidade', 'configurar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -82,7 +82,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
-  router.get('/dashboard', auth, async (req, res) => {
+  router.get('/dashboard', auth, requirePermissao(pool, 'fidelidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -129,7 +129,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Ranking de clientes ───────────────────────────────────────────────────
 
-  router.get('/clientes', auth, async (req, res) => {
+  router.get('/clientes', auth, requirePermissao(pool, 'fidelidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -151,7 +151,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Extrato do cliente ────────────────────────────────────────────────────
 
-  router.get('/clientes/:id/extrato', auth, async (req, res) => {
+  router.get('/clientes/:id/extrato', auth, requirePermissao(pool, 'fidelidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -187,7 +187,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Acumular manualmente ──────────────────────────────────────────────────
 
-  router.post('/acumular', auth, writeRateLimiter, async (req, res) => {
+  router.post('/acumular', auth, requirePermissao(pool, 'fidelidade', 'acumular'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -213,7 +213,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Resgatar pontos ───────────────────────────────────────────────────────
 
-  router.post('/resgatar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/resgatar', auth, requirePermissao(pool, 'fidelidade', 'resgatar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -288,7 +288,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Ajuste manual ─────────────────────────────────────────────────────────
 
-  router.post('/ajustar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/ajustar', auth, requirePermissao(pool, 'fidelidade', 'ajustar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -333,7 +333,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Processar expiração ───────────────────────────────────────────────────
 
-  router.post('/expirar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/expirar', auth, requirePermissao(pool, 'fidelidade', 'configurar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');

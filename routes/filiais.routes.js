@@ -170,42 +170,47 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   });
 
   router.post('/', auth, writeRateLimiter, async (req, res) => {
+    const e = await emp(req);
+    if (!e) return erro(res, 403, 'Sem acesso');
+
+    const { nome, cnpj, telefone, endereco, cidade, uf, responsavel, principal } = req.body;
+    if (!nome?.trim()) return erro(res, 400, 'Nome é obrigatório');
+
+    const client = await pool.connect();
     try {
-      const e = await emp(req);
-      if (!e) return erro(res, 403, 'Sem acesso');
-
-      const { nome, cnpj, telefone, endereco, cidade, uf, responsavel, principal } = req.body;
-      if (!nome?.trim()) return erro(res, 400, 'Nome é obrigatório');
-
-      // Só pode haver uma filial principal
+      await client.query('BEGIN');
       if (principal) {
-        await pool.query(`UPDATE filiais SET principal = false WHERE empresa_id = $1`, [e.id]);
+        await client.query(`UPDATE filiais SET principal = false WHERE empresa_id = $1`, [e.id]);
       }
-
-      const result = await pool.query(
+      const result = await client.query(
         `INSERT INTO filiais (empresa_id, nome, cnpj, telefone, endereco, cidade, uf, responsavel, principal)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [e.id, nome.trim(), cnpj?.trim()||null, telefone?.trim()||null, endereco?.trim()||null, cidade?.trim()||null, uf?.trim()||null, responsavel?.trim()||null, Boolean(principal)]
       );
+      await client.query('COMMIT');
       return res.status(201).json({ sucesso: true, filial: result.rows[0] });
     } catch (err) {
+      await client.query('ROLLBACK');
       if (err.code === '23505') return erro(res, 409, 'Já existe uma filial com este nome');
       return erro(res, 500, err.message);
+    } finally {
+      client.release();
     }
   });
 
   router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+    const e = await emp(req);
+    if (!e) return erro(res, 403, 'Sem acesso');
+
+    const { nome, cnpj, telefone, endereco, cidade, uf, responsavel, principal } = req.body;
+
+    const client = await pool.connect();
     try {
-      const e = await emp(req);
-      if (!e) return erro(res, 403, 'Sem acesso');
-
-      const { nome, cnpj, telefone, endereco, cidade, uf, responsavel, principal } = req.body;
-
+      await client.query('BEGIN');
       if (principal) {
-        await pool.query(`UPDATE filiais SET principal = false WHERE empresa_id = $1 AND id != $2`, [e.id, Number(req.params.id)]);
+        await client.query(`UPDATE filiais SET principal = false WHERE empresa_id = $1 AND id != $2`, [e.id, Number(req.params.id)]);
       }
-
-      const r = await pool.query(
+      const r = await client.query(
         `UPDATE filiais SET
            nome        = COALESCE(NULLIF($1,''), nome),
            cnpj        = COALESCE($2, cnpj),
@@ -222,10 +227,18 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
          principal != null ? Boolean(principal) : null,
          Number(req.params.id), e.id]
       );
-
-      if (r.rowCount === 0) return erro(res, 404, 'Filial não encontrada');
+      if (r.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 404, 'Filial não encontrada');
+      }
+      await client.query('COMMIT');
       return ok(res, { filial: r.rows[0] });
-    } catch (err) { return erro(res, 500, err.message); }
+    } catch (err) {
+      await client.query('ROLLBACK');
+      return erro(res, 500, err.message);
+    } finally {
+      client.release();
+    }
   });
 
   router.patch('/:id/ativo', auth, writeRateLimiter, async (req, res) => {

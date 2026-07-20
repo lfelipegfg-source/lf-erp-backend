@@ -618,6 +618,14 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       const headers = { 'Content-Type': 'application/json' };
       if (webhook_secret) headers['X-LF-Secret'] = webhook_secret;
 
+      try {
+        const _u = new URL(webhook_url);
+        if (!['http:', 'https:'].includes(_u.protocol)) throw new Error('Protocolo inválido');
+        if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/i.test(_u.hostname)) throw new Error('URL aponta para rede interna');
+      } catch (validErr) {
+        return res.json({ sucesso: false, erro: validErr.message || 'URL de webhook inválida' });
+      }
+
       const resp = await fetch(webhook_url, {
         method: 'POST',
         headers,

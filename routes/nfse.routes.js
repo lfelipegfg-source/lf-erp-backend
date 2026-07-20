@@ -19,7 +19,7 @@ const {
 } = require('../utils/focusnfe');
 const { erro, ok } = require('../utils/routeHelpers');
 
-module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }) {
+module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, requirePermissao }) {
   const router = require('express').Router();
 
 
@@ -43,7 +43,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Config ─────────────────────────────────────────────────────────────────
 
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'nfse', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -63,7 +63,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, requirePermissao(pool, 'nfse', 'configurar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -108,7 +108,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Lista ──────────────────────────────────────────────────────────────────
 
-  router.get('/lista', auth, async (req, res) => {
+  router.get('/lista', auth, requirePermissao(pool, 'nfse', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -127,7 +127,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Emitir ─────────────────────────────────────────────────────────────────
 
-  router.post('/emitir', auth, writeRateLimiter, async (req, res) => {
+  router.post('/emitir', auth, requirePermissao(pool, 'nfse', 'emitir'), writeRateLimiter, async (req, res) => {
     const client = await pool.connect();
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -237,12 +237,19 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Consultar ──────────────────────────────────────────────────────────────
 
-  router.get('/consultar/:ref', auth, async (req, res) => {
+  router.get('/consultar/:ref', auth, requirePermissao(pool, 'nfse', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const { ref } = req.params;
+
+      const emissaoCheck = await pool.query(
+        `SELECT id FROM nfse_emissoes WHERE ref = $1 AND empresa_id = $2 LIMIT 1`,
+        [ref, empresaResolvida.id]
+      );
+      if (emissaoCheck.rowCount === 0) return erro(res, 404, 'NFS-e não encontrada');
+
       const cfg = await getConfig(empresaResolvida.id);
       if (!cfg?.token_focus) return erro(res, 400, 'FocusNFe não configurado');
 
@@ -270,12 +277,19 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Cancelar ───────────────────────────────────────────────────────────────
 
-  router.post('/cancelar/:ref', auth, writeRateLimiter, async (req, res) => {
+  router.post('/cancelar/:ref', auth, requirePermissao(pool, 'nfse', 'cancelar'), writeRateLimiter, async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const { ref } = req.params;
+
+      const emissaoCheck = await pool.query(
+        `SELECT id FROM nfse_emissoes WHERE ref = $1 AND empresa_id = $2 LIMIT 1`,
+        [ref, empresaResolvida.id]
+      );
+      if (emissaoCheck.rowCount === 0) return erro(res, 404, 'NFS-e não encontrada');
+
       const cfg = await getConfig(empresaResolvida.id);
       if (!cfg?.token_focus) return erro(res, 400, 'FocusNFe não configurado');
 
@@ -298,10 +312,16 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── PDF ────────────────────────────────────────────────────────────────────
 
-  router.get('/pdf/:ref', auth, async (req, res) => {
+  router.get('/pdf/:ref', auth, requirePermissao(pool, 'nfse', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
+
+      const emissaoCheck = await pool.query(
+        `SELECT id FROM nfse_emissoes WHERE ref = $1 AND empresa_id = $2 LIMIT 1`,
+        [req.params.ref, empresaResolvida.id]
+      );
+      if (emissaoCheck.rowCount === 0) return erro(res, 404, 'NFS-e não encontrada');
 
       const cfg = await getConfig(empresaResolvida.id);
       if (!cfg?.token_focus) return erro(res, 400, 'FocusNFe não configurado');
