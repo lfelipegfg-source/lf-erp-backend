@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { gerarPixCopiaCola } = require('../utils/pix');
 const { resolverClienteAsaas, criarBoleto } = require('../utils/asaas');
 const { decryptField } = require('../utils/pixCrypto');
+const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }) {
@@ -43,7 +44,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
-  router.get('/dashboard', auth, async (req, res) => {
+  router.get('/dashboard', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -74,7 +75,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Listar links ──────────────────────────────────────────────────────────
 
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -92,7 +93,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Criar link ────────────────────────────────────────────────────────────
 
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -159,7 +160,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Marcar pago manualmente ───────────────────────────────────────────────
 
-  router.patch('/:id/pago', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/:id/pago', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -176,7 +177,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Cancelar link ─────────────────────────────────────────────────────────
 
-  router.patch('/:id/cancelar', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/:id/cancelar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');

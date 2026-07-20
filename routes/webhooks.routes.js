@@ -19,6 +19,7 @@
  */
 
 const crypto = require('crypto');
+const { requirePermissao } = require('../utils/permissoes');
 const { dispatchWebhook, enviarWebhook } = require('../utils/webhooks');
 const { erro, ok } = require('../utils/routeHelpers');
 
@@ -42,7 +43,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
   // API KEYS
   // ─────────────────────────────────────────────────────────────────────────
 
-  router.get('/api-keys', auth, async (req, res) => {
+  router.get('/api-keys', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -58,7 +59,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
     }
   });
 
-  router.post('/api-keys', auth, writeRateLimiter, async (req, res) => {
+  router.post('/api-keys', auth, requirePermissao(pool, 'configuracoes', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -95,7 +96,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
     }
   });
 
-  router.delete('/api-keys/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/api-keys/:id', auth, requirePermissao(pool, 'configuracoes', 'deletar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -115,7 +116,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
   // ENDPOINTS DE WEBHOOK
   // ─────────────────────────────────────────────────────────────────────────
 
-  router.get('/endpoints', auth, async (req, res) => {
+  router.get('/endpoints', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -133,7 +134,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
     }
   });
 
-  router.post('/endpoints', auth, writeRateLimiter, async (req, res) => {
+  router.post('/endpoints', auth, requirePermissao(pool, 'configuracoes', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -167,7 +168,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
     }
   });
 
-  router.put('/endpoints/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/endpoints/:id', auth, requirePermissao(pool, 'configuracoes', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -216,7 +217,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
     }
   });
 
-  router.delete('/endpoints/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/endpoints/:id', auth, requirePermissao(pool, 'configuracoes', 'deletar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -234,7 +235,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
 
   // ── Teste ─────────────────────────────────────────────────────────────────
 
-  router.post('/endpoints/:id/teste', auth, writeRateLimiter, async (req, res) => {
+  router.post('/endpoints/:id/teste', auth, requirePermissao(pool, 'configuracoes', 'ver'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -267,7 +268,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
   // LOGS
   // ─────────────────────────────────────────────────────────────────────────
 
-  router.get('/logs', auth, async (req, res) => {
+  router.get('/logs', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
     try {
       const emp = await resolveEmp(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

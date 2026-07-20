@@ -2966,7 +2966,7 @@ app.put('/usuarios/:id/permissoes', auth, writeRateLimiter, requirePermissao(poo
 const TABELAS_LIXEIRA = new Set(['produtos', 'clientes', 'fornecedores']);
 
 // GET /lixeira — lista registros deletados da empresa
-app.get('/lixeira', auth, async (req, res) => {
+app.get('/lixeira', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -3011,7 +3011,7 @@ app.get('/lixeira', auth, async (req, res) => {
 });
 
 // PUT /lixeira/recuperar/:tabela/:id — restaura registro (deletado_em = NULL)
-app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, async (req, res) => {
+app.put('/lixeira/recuperar/:tabela/:id', auth, requirePermissao(pool, 'configuracoes', 'editar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -3051,7 +3051,7 @@ app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, async (req, re
 });
 
 // DELETE /lixeira/excluir/:tabela/:id — exclusão permanente (somente admin)
-app.delete('/lixeira/excluir/:tabela/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/lixeira/excluir/:tabela/:id', auth, requirePermissao(pool, 'configuracoes', 'deletar'), writeRateLimiter, async (req, res) => {
   try {
     if (req.user.tipo !== 'admin' && !req.user.is_saas_owner) {
       return jsonErro(res, 403, 'Exclusão permanente restrita a administradores');
@@ -3646,7 +3646,7 @@ THEN 'atrasado'
   }
 });
 
-app.get('/contas-receber/detalhe/:id', auth, async (req, res) => {
+app.get('/contas-receber/detalhe/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -3709,7 +3709,7 @@ ELSE 'pendente'
   }
 });
 
-app.get('/contas-receber/origem-venda/:id', auth, async (req, res) => {
+app.get('/contas-receber/origem-venda/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -4131,7 +4131,7 @@ WHEN data_vencimento IS NOT NULL AND data_vencimento < $2 THEN 'atrasado'
   }
 });
 
-app.get('/contas-receber/:id/recebimentos-parciais', auth, async (req, res) => {
+app.get('/contas-receber/:id/recebimentos-parciais', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -4385,7 +4385,9 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       [lancamentoId, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    await registrarLogFinanceiro({
+    await client.query('COMMIT');
+
+    try { await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
       empresa_id: empresaResolvida.id,
       tipo: 'estorno_baixa_parcial',
@@ -4394,9 +4396,7 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
       descricao: `Estorno do recebimento parcial #${lancamentoId} da conta #${contaId}`,
       valor: valorEstorno,
       usuario_id: req.user?.id
-    });
-
-    await client.query('COMMIT');
+    }); } catch (logErr) { console.error('[log-financeiro] estorno parcial:', logErr.message); }
 
     res.json({
       sucesso: true,
@@ -5549,7 +5549,7 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
 });
 
 // ================= INVESTIMENTOS =================
-app.post('/investimentos', auth, writeRateLimiter, async (req, res) => {
+app.post('/investimentos', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -5597,7 +5597,7 @@ app.post('/investimentos', auth, writeRateLimiter, async (req, res) => {
   }
 });
 
-app.get('/investimentos/:empresa', auth, async (req, res) => {
+app.get('/investimentos/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -6694,7 +6694,7 @@ function resolvePixConfig(config) {
 }
 
 // GET /pagamentos/pix/config
-app.get('/pagamentos/pix/config', auth, async (req, res) => {
+app.get('/pagamentos/pix/config', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
@@ -6755,7 +6755,7 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool,
 });
 
 // POST /pagamentos/pix/gerar
-app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, async (req, res) => {
+app.post('/pagamentos/pix/gerar', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
@@ -6844,7 +6844,7 @@ app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, async (req, res) => {
 });
 
 // GET /pagamentos/pix/status/:txid
-app.get('/pagamentos/pix/status/:txid', auth, async (req, res) => {
+app.get('/pagamentos/pix/status/:txid', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const { txid } = req.params;
@@ -6911,7 +6911,7 @@ async function getAsaasConfig(empresaResolvida) {
 }
 
 // GET /pagamentos/boleto/config
-app.get('/pagamentos/boleto/config', auth, async (req, res) => {
+app.get('/pagamentos/boleto/config', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
@@ -6961,7 +6961,7 @@ app.put('/pagamentos/boleto/config', auth, writeRateLimiter, requirePermissao(po
 });
 
 // POST /pagamentos/boleto/gerar
-app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, async (req, res) => {
+app.post('/pagamentos/boleto/gerar', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa, req.empresa_id);
@@ -7053,7 +7053,7 @@ app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, async (req, res) =>
 });
 
 // GET /pagamentos/boleto/status/:contaReceberID
-app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
+app.get('/pagamentos/boleto/status/:contaReceberID', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -7085,7 +7085,7 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, async (req, res) => {
     if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status) && podeGerenciarFinanceiro(req)) {
       await pool.query(
         `UPDATE contas_receber
-         SET status = 'pago', data_pagamento = COALESCE($1::date, CURRENT_DATE),
+         SET status = 'pago', data_pagamento = COALESCE($1::date, (NOW() AT TIME ZONE 'America/Fortaleza')::DATE),
              atualizado_em = NOW()
          WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
         [boleto.dataPagamento, crId, empresaResolvida.id, empresaResolvida.nome]
@@ -7142,7 +7142,7 @@ app.post('/pagamentos/boleto/webhook', async (req, res) => {
         await pool.query(
           `UPDATE contas_receber
            SET status = 'pago', boleto_status = 'RECEIVED',
-               data_pagamento = COALESCE($2::date, CURRENT_DATE), atualizado_em = NOW()
+               data_pagamento = COALESCE($2::date, (NOW() AT TIME ZONE 'America/Fortaleza')::DATE), atualizado_em = NOW()
            WHERE id = $1 AND boleto_id = $3 AND LOWER(COALESCE(status,'pendente')) != 'pago'
              AND (empresa_id = $4 OR (empresa_id IS NULL AND empresa = $5))`,
           [contaId, payment.paymentDate || null, payment.id || '', empId || 0, empNome || '']
@@ -7295,7 +7295,7 @@ app.post('/conciliacao/importar', auth, writeRateLimiter, jsonUpload, async (req
 });
 
 // GET /conciliacao
-app.get('/conciliacao', auth, async (req, res) => {
+app.get('/conciliacao', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
@@ -7317,7 +7317,7 @@ app.get('/conciliacao', auth, async (req, res) => {
 });
 
 // GET /conciliacao/:id/itens
-app.get('/conciliacao/:id/itens', auth, async (req, res) => {
+app.get('/conciliacao/:id/itens', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7349,7 +7349,7 @@ app.get('/conciliacao/:id/itens', auth, async (req, res) => {
 });
 
 // POST /conciliacao/itens/:id/ignorar
-app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/itens/:id/ignorar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7390,7 +7390,7 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, async (req, r
 });
 
 // POST /conciliacao/itens/:id/criar-lancamento
-app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/itens/:id/criar-lancamento', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7452,7 +7452,7 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, asyn
 });
 
 // DELETE /conciliacao/:id
-app.delete('/conciliacao/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/conciliacao/:id', auth, requirePermissao(pool, 'financeiro', 'deletar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7995,7 +7995,7 @@ app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
 // ── Metas de vendas ───────────────────────────────────────────────────────────
 
 // GET /metas-vendas?periodo=YYYY-MM — lista metas com progresso real
-app.get('/metas-vendas', auth, async (req, res) => {
+app.get('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -8055,7 +8055,7 @@ app.get('/metas-vendas', auth, async (req, res) => {
 });
 
 // POST /metas-vendas — criar ou atualizar meta
-app.post('/metas-vendas', auth, writeRateLimiter, async (req, res) => {
+app.post('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8091,7 +8091,7 @@ app.post('/metas-vendas', auth, writeRateLimiter, async (req, res) => {
 });
 
 // DELETE /metas-vendas/:id
-app.delete('/metas-vendas/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/metas-vendas/:id', auth, requirePermissao(pool, 'relatorios', 'deletar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8111,7 +8111,7 @@ app.delete('/metas-vendas/:id', auth, writeRateLimiter, async (req, res) => {
 // ── Multi-depósito ────────────────────────────────────────────────────────────
 
 // GET /depositos — lista depósitos da empresa
-app.get('/depositos', auth, async (req, res) => {
+app.get('/depositos', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -8136,7 +8136,7 @@ app.get('/depositos', auth, async (req, res) => {
 });
 
 // POST /depositos — criar depósito
-app.post('/depositos', auth, writeRateLimiter, async (req, res) => {
+app.post('/depositos', auth, requirePermissao(pool, 'estoque', 'criar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8161,7 +8161,7 @@ app.post('/depositos', auth, writeRateLimiter, async (req, res) => {
 });
 
 // PUT /depositos/:id — editar depósito
-app.put('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
+app.put('/depositos/:id', auth, requirePermissao(pool, 'estoque', 'editar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8191,7 +8191,7 @@ app.put('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
 });
 
 // DELETE /depositos/:id — remover depósito (só se sem estoque)
-app.delete('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
+app.delete('/depositos/:id', auth, requirePermissao(pool, 'estoque', 'deletar'), writeRateLimiter, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8225,7 +8225,7 @@ app.delete('/depositos/:id', auth, writeRateLimiter, async (req, res) => {
 });
 
 // GET /depositos/:id/estoque — estoque de um depósito
-app.get('/depositos/:id/estoque', auth, async (req, res) => {
+app.get('/depositos/:id/estoque', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
@@ -8270,7 +8270,7 @@ app.get('/depositos/:id/estoque', auth, async (req, res) => {
 });
 
 // POST /depositos/transferir — mover estoque entre depósitos
-app.post('/depositos/transferir', auth, writeRateLimiter, async (req, res) => {
+app.post('/depositos/transferir', auth, requirePermissao(pool, 'estoque', 'editar'), writeRateLimiter, async (req, res) => {
   const client = await pool.connect();
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8359,7 +8359,7 @@ async function garantirDepositoPrincipal(empresaId, empresaNome, client) {
 }
 
 // ── LGPD — exportação de dados da própria empresa ─────────────────────────────
-app.get('/empresa/exportar-dados', auth, async (req, res) => {
+app.get('/empresa/exportar-dados', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);

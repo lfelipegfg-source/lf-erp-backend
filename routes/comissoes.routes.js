@@ -338,6 +338,14 @@ module.exports = ({
       const venda = await pool.query(`SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, emp.id]);
       if (venda.rowCount === 0) return erro(res, 404, 'Venda não encontrada');
 
+      const paga = await pool.query(
+        `SELECT id FROM comissoes WHERE venda_id = $1 AND empresa_id = $2 AND status = 'pago' LIMIT 1`,
+        [vendaId, emp.id]
+      );
+      if (paga.rowCount > 0) {
+        return erro(res, 400, 'Não é possível recalcular comissão já paga. Estorne o pagamento antes de recalcular.');
+      }
+
       const v = venda.rows[0];
       const client = await pool.connect();
       try {

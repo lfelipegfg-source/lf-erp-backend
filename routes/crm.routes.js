@@ -17,6 +17,7 @@
 
 const ESTAGIOS = ['lead', 'qualificado', 'proposta', 'negociacao', 'ganho', 'perdido'];
 
+const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje }) {
@@ -35,7 +36,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
-  router.get('/dashboard', auth, async (req, res) => {
+  router.get('/dashboard', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -85,7 +86,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Listar oportunidades ──────────────────────────────────────────────────
 
-  router.get('/oportunidades', auth, async (req, res) => {
+  router.get('/oportunidades', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -130,7 +131,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Criar oportunidade ────────────────────────────────────────────────────
 
-  router.post('/oportunidades', auth, writeRateLimiter, async (req, res) => {
+  router.post('/oportunidades', auth, requirePermissao(pool, 'vendas', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -173,7 +174,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Detalhe ───────────────────────────────────────────────────────────────
 
-  router.get('/oportunidades/:id', auth, async (req, res) => {
+  router.get('/oportunidades/:id', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -207,7 +208,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Editar oportunidade ───────────────────────────────────────────────────
 
-  router.put('/oportunidades/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/oportunidades/:id', auth, requirePermissao(pool, 'vendas', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -257,7 +258,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Mover de estágio (PATCH) ──────────────────────────────────────────────
 
-  router.patch('/oportunidades/:id/estagio', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/oportunidades/:id/estagio', auth, requirePermissao(pool, 'vendas', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -282,7 +283,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Excluir ───────────────────────────────────────────────────────────────
 
-  router.delete('/oportunidades/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/oportunidades/:id', auth, requirePermissao(pool, 'vendas', 'deletar'), writeRateLimiter, async (req, res) => {
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -303,7 +304,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Converter em orçamento ────────────────────────────────────────────────
 
-  router.post('/oportunidades/:id/converter', auth, writeRateLimiter, async (req, res) => {
+  router.post('/oportunidades/:id/converter', auth, requirePermissao(pool, 'vendas', 'criar'), writeRateLimiter, async (req, res) => {
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -352,7 +353,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Atividades ────────────────────────────────────────────────────────────
 
-  router.post('/oportunidades/:id/atividades', auth, writeRateLimiter, async (req, res) => {
+  router.post('/oportunidades/:id/atividades', auth, requirePermissao(pool, 'vendas', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const oportunidadeId = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -388,7 +389,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.delete('/oportunidades/:id/atividades/:atId', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/oportunidades/:id/atividades/:atId', auth, requirePermissao(pool, 'vendas', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!emp) return erro(res, 403, 'Sem acesso');

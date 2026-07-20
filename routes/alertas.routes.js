@@ -28,6 +28,7 @@ function gerarLinkWhatsApp(telefone, mensagem) {
   return `https://wa.me/${num}?text=${encodeURIComponent(mensagem)}`;
 }
 
+const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
@@ -45,7 +46,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
   }
 
   // ── GET /alertas/config ───────────────────────────────────────────────────
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -61,7 +62,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
   });
 
   // ── PUT /alertas/config ───────────────────────────────────────────────────
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -115,7 +116,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
   });
 
   // ── POST /alertas/disparar ────────────────────────────────────────────────
-  router.post('/disparar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/disparar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -165,8 +166,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
             host: cfg.smtp_host,
             port: Number(cfg.smtp_port || 587),
             secure: Number(cfg.smtp_port) === 465,
-            auth: { user: cfg.smtp_user, pass: cfg.smtp_pass },
-            tls: { rejectUnauthorized: false }
+            auth: { user: cfg.smtp_user, pass: cfg.smtp_pass }
           });
         } catch (te) {
           console.error('[alertas] transporter error:', te.message);
@@ -244,7 +244,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
   });
 
   // ── GET /alertas/historico ────────────────────────────────────────────────
-  router.get('/historico', auth, async (req, res) => {
+  router.get('/historico', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

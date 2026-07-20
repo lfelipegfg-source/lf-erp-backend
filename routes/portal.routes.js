@@ -21,6 +21,7 @@ const jwt    = require('jsonwebtoken');
 const SECRET      = process.env.JWT_SECRET;
 const SALT_ROUNDS = 10;
 
+const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({ auth, pool }) => {
@@ -249,7 +250,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // POST /portal/admin/clientes/:id/senha — define senha (ERP auth)
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/admin/clientes/:id/senha', auth, async (req, res) => {
+  router.post('/admin/clientes/:id/senha', auth, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
     try {
       const clienteId = Number(req.params.id);
       const { senha } = req.body;
@@ -284,7 +285,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // PATCH /portal/admin/clientes/:id/toggle — ativa/desativa portal (ERP auth)
   // ─────────────────────────────────────────────────────────────────────────
-  router.patch('/admin/clientes/:id/toggle', auth, async (req, res) => {
+  router.patch('/admin/clientes/:id/toggle', auth, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
     try {
       const clienteId = Number(req.params.id);
 

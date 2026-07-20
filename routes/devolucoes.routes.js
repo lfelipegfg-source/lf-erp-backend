@@ -10,6 +10,7 @@
  */
 
 const { estornarPontosFidelidade } = require('../utils/fidelidade');
+const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
 module.exports = ({
@@ -30,7 +31,7 @@ module.exports = ({
   }
 
   // ── GET /devolucoes/venda/:vendaId — deve vir ANTES de /:id ────────────────
-  router.get('/venda/:vendaId', auth, async (req, res) => {
+  router.get('/venda/:vendaId', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -52,7 +53,7 @@ module.exports = ({
   });
 
   // ── GET /devolucoes ───────────────────────────────────────────────────────
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -81,7 +82,7 @@ module.exports = ({
   });
 
   // ── POST /devolucoes ──────────────────────────────────────────────────────
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, requirePermissao(pool, 'vendas', 'criar'), writeRateLimiter, async (req, res) => {
     const { venda_id, motivo, itens = [] } = req.body;
 
     if (!venda_id) return erro(res, 400, 'venda_id é obrigatório');
@@ -258,6 +259,22 @@ module.exports = ({
 
       await client.query('COMMIT');
 
+      // Estorna comissão proporcionalmente para comissões pendentes da venda
+      if (Number(venda.total) > 0 && totalDevolvido > 0) {
+        pool.query(
+          `UPDATE comissoes
+           SET valor = GREATEST(0, valor - valor * ($1::numeric / NULLIF($2::numeric, 0))),
+               status = CASE
+                 WHEN GREATEST(0, valor - valor * ($1::numeric / NULLIF($2::numeric, 0))) = 0 THEN 'cancelado'
+                 ELSE status
+               END,
+               observacao = COALESCE(observacao, '') || ' | Reduzido por Devolução #' || $3::text,
+               atualizado_em = NOW()
+           WHERE venda_id = $4 AND empresa_id = $5 AND status = 'pendente'`,
+          [+totalDevolvido.toFixed(2), Number(venda.total), numero, Number(venda_id), emp.id]
+        ).catch((e) => console.error(`[comissoes] falha estorno devolucao=${devolucao.id}:`, e.message));
+      }
+
       // Estorna pontos de fidelidade em background (idempotente, não bloqueia a resposta)
       if (venda.cliente_id) {
         estornarPontosFidelidade(pool, {
@@ -284,7 +301,7 @@ module.exports = ({
   });
 
   // ── GET /devolucoes/:id ───────────────────────────────────────────────────
-  router.get('/:id', auth, async (req, res) => {
+  router.get('/:id', auth, requirePermissao(pool, 'vendas', 'ver'), async (req, res) => {
     try {
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

@@ -391,7 +391,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         const stateSecret = process.env.MARKETPLACE_STATE_SECRET || process.env.JWT_SECRET || 'lferp-marketplace-state';
         const { p: statePayload, s: stateSig } = JSON.parse(Buffer.from(state, 'base64url').toString());
         const expectedSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
-        if (stateSig !== expectedSig) return res.send('<h3>State inválido ou adulterado</h3>');
+        const bufA = Buffer.from(stateSig);
+        const bufB = Buffer.from(expectedSig);
+        if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) return res.send('<h3>State inválido ou adulterado</h3>');
         const parsed = JSON.parse(statePayload);
         if (Date.now() - parsed.ts > 15 * 60 * 1000) return res.send('<h3>Autorização expirada. Tente novamente.</h3>');
         empresa_id = parsed.empresa_id;
