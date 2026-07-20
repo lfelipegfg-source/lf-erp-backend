@@ -88,34 +88,47 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
 
   // ── POST /caixa/abrir ────────────────────────────────────────────────────
   router.post('/abrir', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
+    const emp = await getEmpresa(req);
+    if (!emp) return erro(res, 403, 'Sem acesso');
+
+    const { saldo_inicial = 0, observacao } = req.body;
+    const saldoInicial = normalizarDecimal(saldo_inicial);
+
+    const client = await pool.connect();
     try {
-      const emp = await getEmpresa(req);
-      if (!emp) return erro(res, 403, 'Sem acesso');
+      await client.query('BEGIN');
 
-      const jaAberto = await getSessaoAberta(emp.id);
-      if (jaAberto) return erro(res, 400, 'Já existe um caixa aberto. Feche o caixa atual antes de abrir um novo.');
+      // FOR UPDATE garante que duas requisições simultâneas não abram dois caixas
+      const aberto = await client.query(
+        `SELECT id FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' LIMIT 1 FOR UPDATE`,
+        [emp.id]
+      );
+      if (aberto.rowCount > 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'Já existe um caixa aberto. Feche o caixa atual antes de abrir um novo.');
+      }
 
-      const { saldo_inicial = 0, observacao } = req.body;
-      const saldoInicial = normalizarDecimal(saldo_inicial);
-
-      const sessaoRes = await pool.query(
+      const sessaoRes = await client.query(
         `INSERT INTO caixa_sessoes (empresa_id, usuario_id, usuario_nome, saldo_abertura, observacao)
          VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [emp.id, req.user.id, req.user.nome || req.user.usuario || null, saldoInicial, observacao || null]
       );
       const sessao = sessaoRes.rows[0];
 
-      // Registra movimento de abertura
-      await pool.query(
+      await client.query(
         `INSERT INTO caixa_movimentos (sessao_id, empresa_id, tipo, valor, descricao)
          VALUES ($1,$2,'abertura',$3,'Saldo de abertura')`,
         [sessao.id, emp.id, saldoInicial]
       );
 
+      await client.query('COMMIT');
       return ok(res, { sessao, mensagem: 'Caixa aberto com sucesso' });
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error('[caixa] POST abrir:', err.message);
       return erro(res, 500, 'Erro ao abrir caixa');
+    } finally {
+      client.release();
     }
   });
 

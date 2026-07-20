@@ -145,7 +145,15 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
       const eventosValidos = eventos.filter((e) => EVENTOS_DISPONIVEIS.includes(e));
       if (eventosValidos.length === 0) return erro(res, 400, 'Nenhum evento válido selecionado');
 
-      try { new URL(url.trim()); } catch { return erro(res, 400, 'URL inválida'); }
+      let parsedUrl;
+      try { parsedUrl = new URL(url.trim()); } catch { return erro(res, 400, 'URL inválida'); }
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) return erro(res, 400, 'URL deve usar protocolo http ou https');
+      const h = parsedUrl.hostname;
+      if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|::1$|::ffff:)/.test(h)
+        || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+        || h === 'metadata.google.internal') {
+        return erro(res, 400, 'URL aponta para endereço interno não permitido');
+      }
 
       const result = await pool.query(
         `INSERT INTO webhook_endpoints (empresa_id, nome, url, eventos, secret)
@@ -165,6 +173,18 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const { nome, url, eventos, secret, ativo } = req.body;
+
+      if (url?.trim()) {
+        let pu;
+        try { pu = new URL(url.trim()); } catch { return erro(res, 400, 'URL inválida'); }
+        if (!['http:', 'https:'].includes(pu.protocol)) return erro(res, 400, 'URL deve usar protocolo http ou https');
+        const h = pu.hostname;
+        if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|::1$|::ffff:)/.test(h)
+          || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+          || h === 'metadata.google.internal') {
+          return erro(res, 400, 'URL aponta para endereço interno não permitido');
+        }
+      }
 
       const eventosValidos = Array.isArray(eventos)
         ? eventos.filter((e) => EVENTOS_DISPONIVEIS.includes(e))

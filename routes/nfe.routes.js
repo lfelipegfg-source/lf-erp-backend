@@ -175,13 +175,28 @@ module.exports = ({
         return erro(res, 400, 'Configure o token Focus NFe antes de emitir NF-e. Acesse Configurações → NF-e.');
       }
 
-      // Verifica se já existe NF-e autorizada para esta venda
-      const jaEmitida = await pool.query(
-        `SELECT * FROM nfe_emissoes WHERE venda_id = $1 AND empresa_id = $2 AND status = 'autorizado'`,
-        [vendaId, empresaResolvida.id]
-      );
-      if (jaEmitida.rowCount > 0) {
-        return erro(res, 400, `Esta venda já possui NF-e autorizada. Chave: ${jaEmitida.rows[0].chave_nfe}`);
+      // Advisory lock previne emissão duplicada simultânea para a mesma (empresa, venda)
+      const clientNfe = await pool.connect();
+      try {
+        await clientNfe.query('BEGIN');
+        await clientNfe.query('SELECT pg_advisory_xact_lock($1, $2)', [empresaResolvida.id, vendaId]);
+
+        const jaEmitida = await clientNfe.query(
+          `SELECT id, chave_nfe FROM nfe_emissoes
+           WHERE venda_id = $1 AND empresa_id = $2 AND status NOT IN ('cancelado','erro')
+           LIMIT 1`,
+          [vendaId, empresaResolvida.id]
+        );
+        if (jaEmitida.rowCount > 0) {
+          await clientNfe.query('ROLLBACK');
+          return erro(res, 400, `Esta venda já possui NF-e em processamento ou autorizada. Chave: ${jaEmitida.rows[0].chave_nfe || 'pendente'}`);
+        }
+        await clientNfe.query('COMMIT');
+      } catch (lockErr) {
+        await clientNfe.query('ROLLBACK');
+        throw lockErr;
+      } finally {
+        clientNfe.release();
       }
 
       // Busca venda + itens com dados do produto

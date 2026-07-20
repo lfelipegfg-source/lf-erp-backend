@@ -273,10 +273,6 @@ module.exports = ({
       const { data_pagamento, forma_pagamento, observacao } = req.body;
       const id = Number(req.params.id);
 
-      const atual = await pool.query(`SELECT status FROM comissoes WHERE id = $1 AND empresa_id = $2`, [id, emp.id]);
-      if (atual.rowCount === 0) return erro(res, 404, 'Comissão não encontrada');
-      if (atual.rows[0].status !== 'pendente') return erro(res, 400, `Comissão no status "${atual.rows[0].status}" não pode ser paga`);
-
       const r = await pool.query(
         `UPDATE comissoes SET
            status          = 'pago',
@@ -284,7 +280,7 @@ module.exports = ({
            forma_pagamento = $2,
            observacao      = COALESCE($3, observacao),
            atualizado_em   = NOW()
-         WHERE id = $4 AND empresa_id = $5
+         WHERE id = $4 AND empresa_id = $5 AND status = 'pendente'
          RETURNING *`,
         [
           data_pagamento ? normalizarDataISO(data_pagamento) : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date()),
@@ -294,6 +290,12 @@ module.exports = ({
           emp.id
         ]
       );
+
+      if (r.rowCount === 0) {
+        const check = await pool.query(`SELECT status FROM comissoes WHERE id = $1 AND empresa_id = $2`, [id, emp.id]);
+        if (check.rowCount === 0) return erro(res, 404, 'Comissão não encontrada');
+        return erro(res, 400, `Comissão no status "${check.rows[0].status}" não pode ser paga`);
+      }
 
       return ok(res, { comissao: r.rows[0], mensagem: 'Comissão marcada como paga' });
     } catch (err) {

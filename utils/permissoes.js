@@ -10,14 +10,20 @@
  * 4. Se não encontrar nada → nega acesso
  */
 
-const ACOES_VALIDAS = new Set(['ver', 'criar', 'editar', 'deletar']);
+const ACOES_VALIDAS = new Set([
+  'ver', 'criar', 'editar', 'deletar',
+  // ações de domínio específico
+  'configurar', 'emitir', 'cancelar',
+  'acumular', 'resgatar', 'ajustar'
+]);
 
 const MODULOS_VALIDOS = new Set([
   'produtos', 'clientes', 'fornecedores', 'compras',
   'vendas', 'estoque', 'financeiro', 'relatorios',
   'dre', 'lucratividade',
   'usuarios', 'configuracoes',
-  'caixa', 'comissoes'
+  'caixa', 'comissoes',
+  'fidelidade', 'marketplace', 'nfe', 'nfse', 'filiais'
 ]);
 
 // requirePermissao recebe pool explicitamente — o pool não é acessível via req.app.locals neste projeto

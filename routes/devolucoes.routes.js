@@ -94,9 +94,9 @@ module.exports = ({
     try {
       await client.query('BEGIN');
 
-      // Carrega venda e seus itens originais
+      // Carrega venda e seus itens originais — FOR UPDATE serializa devoluções simultâneas da mesma venda
       const vendaRes = await client.query(
-        `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
         [Number(venda_id), emp.id, emp.nome]
       );
       if (vendaRes.rowCount === 0) { await client.query('ROLLBACK'); return erro(res, 404, 'Venda não encontrada'); }
@@ -153,9 +153,10 @@ module.exports = ({
 
       if (itensValidados.length === 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Nenhum item válido para devolução'); }
 
-      // Próximo número de devolução — FOR UPDATE previne race condition em devoluções simultâneas
+      // Advisory lock garante numeração serial por empresa sem FOR UPDATE em aggregate
+      await client.query(`SELECT pg_advisory_xact_lock($1, 9001)`, [emp.id]);
       const numRes = await client.query(
-        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes WHERE empresa_id = $1 FOR UPDATE`,
+        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes WHERE empresa_id = $1`,
         [emp.id]
       );
       const numero = numRes.rows[0].proximo;

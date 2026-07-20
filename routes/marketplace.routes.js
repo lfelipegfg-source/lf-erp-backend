@@ -532,6 +532,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!produto_id || !plataforma || !listing_id) {
         return erro(res, 400, 'produto_id, plataforma e listing_id são obrigatórios');
       }
+      if (!/^[A-Za-z0-9_\-]{3,60}$/.test(String(listing_id))) {
+        return erro(res, 400, 'listing_id inválido');
+      }
 
       const result = await pool.query(
         `INSERT INTO marketplace_produtos

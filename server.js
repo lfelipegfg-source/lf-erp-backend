@@ -397,14 +397,14 @@ app.use('/api/v1',    apiPublicaRoutes({ pool, writeRateLimiter, normalizarDecim
 app.use('/webhooks',         webhooksRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }));
 app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }));
-app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
+app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje, requirePermissao }));
 app.use('/checkout',     checkoutRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
 app.use('/filiais',     filiaisRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, obterPeriodo, adicionarFiltroPeriodo, hoje }));
 app.use('/bi',         biRoutes({ auth, pool, validarAcessoEmpresa, hoje }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
 app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
-app.use('/nfse', nfseRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
+app.use('/nfse', nfseRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, requirePermissao }));
 
 app.use(
   '/nfe',
@@ -413,7 +413,8 @@ app.use(
     writeRateLimiter,
     pool,
     validarAcessoEmpresa,
-    normalizarDecimal
+    normalizarDecimal,
+    requirePermissao
   })
 );
 
@@ -3206,31 +3207,11 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
     );
 
     for (const item of itensResult.rows) {
-      const produtoResult = await client.query(
-        `
-        SELECT *
-        FROM produtos
-        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-        `,
-        [item.produto_id, empresaResolvida.id, empresaResolvida.nome]
+      await client.query(
+        `UPDATE produtos SET estoque = GREATEST(0, estoque - $1), atualizado_em = NOW()
+         WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+        [normalizarInt(item.quantidade), item.produto_id, empresaResolvida.id, empresaResolvida.nome]
       );
-
-      if (produtoResult.rowCount > 0) {
-        const produto = produtoResult.rows[0];
-        const estoqueAtual = normalizarInt(produto.estoque);
-        const quantidadeItem = normalizarInt(item.quantidade);
-        const novoEstoque = Math.max(0, estoqueAtual - quantidadeItem);
-
-        await client.query(
-          `
-          UPDATE produtos
-          SET estoque = $1,
-              atualizado_em = NOW()
-          WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
-          `,
-          [novoEstoque, item.produto_id, empresaResolvida.id, empresaResolvida.nome]
-        );
-      }
     }
 
     await client.query(
@@ -4434,67 +4415,69 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
 });
 
 app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'deletar'), async (req, res) => {
+  const id = Number(req.params.id);
+  const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
+    await client.query('BEGIN');
 
     const contaResult = req.user?.is_saas_owner
-      ? await pool.query(
-          `SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`,
+      ? await client.query(
+          `SELECT * FROM contas_receber WHERE id = $1 LIMIT 1 FOR UPDATE`,
           [id]
         )
-      : await pool.query(
-          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+      : await client.query(
+          `SELECT * FROM contas_receber WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1 FOR UPDATE`,
           [id, req.user.empresa_id || 0, req.user.empresa || '']
         );
 
     if (contaResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       return jsonErro(res, 404, 'Conta não encontrada');
     }
 
     const conta = contaResult.rows[0];
-
     const empresaResolvida = await validarAcessoEmpresa(req, conta.empresa, conta.empresa_id);
 
     if (!empresaResolvida) {
+      await client.query('ROLLBACK');
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    // 🔒 impedir apagar contas reais de venda
     if (conta.venda_id) {
+      await client.query('ROLLBACK');
       return jsonErro(res, 400, 'Contas originadas de venda não podem ser excluídas');
     }
 
-    // 🔒 impedir apagar conta parcialmente recebida
     if (String(conta.status || '').toLowerCase() === 'parcial') {
-      const recebimentosAtivosResult = await pool.query(
-        `
-    SELECT COUNT(*) AS total
-    FROM lancamentos_financeiros
-    WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
-      AND LOWER(COALESCE(status, '')) = 'pago'
-      AND conta_receber_id = $3
-    `,
+      const recebimentosAtivosResult = await client.query(
+        `SELECT COUNT(*) AS total FROM lancamentos_financeiros
+         WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
+           AND LOWER(COALESCE(status, '')) = 'pago'
+           AND conta_receber_id = $3`,
         [empresaResolvida.nome, empresaResolvida.id, id]
       );
-
       if (Number(recebimentosAtivosResult.rows[0].total || 0) > 0) {
+        await client.query('ROLLBACK');
         return jsonErro(res, 400, 'Conta parcialmente recebida possui recebimentos ativos. Estorne os recebimentos antes de excluir.');
       }
     }
 
-    // 🔒 impedir apagar conta paga
     if (String(conta.status || '').toLowerCase() === 'pago') {
+      await client.query('ROLLBACK');
       return jsonErro(res, 400, 'Conta paga não pode ser excluída');
     }
 
-    await pool.query(
-      `
-      DELETE FROM contas_receber
-      WHERE id = $1
-        AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2))
-      `,
+    const delResult = await client.query(
+      `DELETE FROM contas_receber WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2)) RETURNING id`,
       [id, empresaResolvida.nome, empresaResolvida.id]
     );
+
+    if (delResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 404, 'Conta não encontrada');
+    }
+
+    await client.query('COMMIT');
 
     await registrarLogFinanceiro({
       empresa: empresaResolvida.nome,
@@ -4507,13 +4490,13 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
       usuario_id: req.user?.id
     });
 
-    res.json({
-      sucesso: true,
-      mensagem: 'Conta manual excluída com sucesso'
-    });
+    res.json({ sucesso: true, mensagem: 'Conta manual excluída com sucesso' });
   } catch (error) {
-    console.error('Erro ao excluir conta manual:', error);
+    await client.query('ROLLBACK');
+    console.error('Erro ao excluir conta manual:', error.message);
     jsonErro(res, 500, 'Erro ao excluir conta manual');
+  } finally {
+    client.release();
   }
 });
 

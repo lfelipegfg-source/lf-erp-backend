@@ -371,8 +371,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
             if (pontosBaixar <= 0) { await clientFid.query('ROLLBACK'); continue; }
 
             await clientFid.query(
-              `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2`,
-              [pontosBaixar, row.cliente_id]
+              `UPDATE clientes SET pontos_fidelidade = GREATEST(0, pontos_fidelidade - $1), atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+              [pontosBaixar, row.cliente_id, e.id]
             );
             const novoSaldo = (saldoRes.rows[0]?.p || 0) - pontosBaixar;
             // CF-C1: salvar referencia_id para garantir idempotência nas próximas execuções
