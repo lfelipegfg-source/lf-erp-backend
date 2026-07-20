@@ -4820,6 +4820,9 @@ app.get('/contas-pagar/detalhe/:id', auth, requirePermissao(pool, 'financeiro', 
           cp.*,
           CASE
             WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'pago' THEN 'pago'
+            WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'parcial'
+              AND cp.data_vencimento IS NOT NULL AND cp.data_vencimento < $2 THEN 'parcial_atrasado'
+            WHEN LOWER(COALESCE(cp.status, 'pendente')) = 'parcial' THEN 'parcial'
             WHEN cp.data_vencimento IS NOT NULL AND cp.data_vencimento < $2 THEN 'atrasado'
             ELSE 'pendente'
           END AS status_exibicao

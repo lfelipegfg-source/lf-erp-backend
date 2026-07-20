@@ -240,8 +240,8 @@ module.exports = ({
                      data_pagamento = (NOW() AT TIME ZONE 'America/Fortaleza')::DATE,
                      observacao = CASE WHEN observacao IS NULL THEN $2 ELSE observacao || ' | ' || $2 END,
                      atualizado_em = NOW()
-                 WHERE id = $1 AND empresa_id = $3`,
-                [cr.id, `Cancelado por Devolução #${numero}`, emp.id]
+                 WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+                [cr.id, `Cancelado por Devolução #${numero}`, emp.id, emp.nome]
               );
             } else {
               await client.query(
@@ -249,8 +249,8 @@ module.exports = ({
                  SET valor = $2,
                      observacao = CASE WHEN observacao IS NULL THEN $3 ELSE observacao || ' | ' || $3 END,
                      atualizado_em = NOW()
-                 WHERE id = $1 AND empresa_id = $4`,
-                [cr.id, novoValor, nota, emp.id]
+                 WHERE id = $1 AND (empresa_id = $4 OR (empresa_id IS NULL AND empresa = $5))`,
+                [cr.id, novoValor, nota, emp.id, emp.nome]
               );
             }
           }
