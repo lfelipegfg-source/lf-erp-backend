@@ -500,10 +500,6 @@ app.use(
   })
 );
 
-function agoraISO() {
-  return new Date().toISOString();
-}
-
 async function registrarLogFinanceiro({
   empresa,
   empresa_id,
@@ -877,6 +873,9 @@ async function validarSenhaUsuario(senhaInformada, user) {
 function validarForcaSenha(senha) {
   if (!senha || senha.length < 8) {
     return { valido: false, mensagem: 'A senha deve ter pelo menos 8 caracteres.' };
+  }
+  if (senha.length > 72) {
+    return { valido: false, mensagem: 'A senha deve ter no máximo 72 caracteres.' };
   }
   if (!/[A-Z]/.test(senha)) {
     return { valido: false, mensagem: 'A senha deve conter pelo menos uma letra maiúscula.' };
@@ -3125,14 +3124,15 @@ app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), asy
     }
 
     if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
       sql += `
           AND (
-            LOWER(COALESCE(f.nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(c.observacao, '')) LIKE $${idx}
-            OR CAST(c.id AS TEXT) LIKE $${idx}
+            LOWER(COALESCE(f.nome, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(c.observacao, '')) LIKE $${idx} ESCAPE '\\'
+            OR CAST(c.id AS TEXT) LIKE $${idx} ESCAPE '\\'
           )
         `;
-      params.push(`%${busca}%`);
+      params.push(`%${buscaEsc}%`);
       idx++;
     }
 
@@ -3535,21 +3535,23 @@ THEN 'atrasado'
     }
 
     if (cliente) {
-      sql += ` AND LOWER(COALESCE(cr.cliente_nome, '')) LIKE $${idx} `;
-      params.push(`%${cliente}%`);
+      const clienteEsc = cliente.replace(/[%_\\]/g, '\\$&');
+      sql += ` AND LOWER(COALESCE(cr.cliente_nome, '')) LIKE $${idx} ESCAPE '\\' `;
+      params.push(`%${clienteEsc}%`);
       idx++;
     }
 
     if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
       sql += `
         AND (
-          LOWER(COALESCE(cr.cliente_nome, '')) LIKE $${idx}
-          OR LOWER(COALESCE(cr.observacao, '')) LIKE $${idx}
-          OR CAST(cr.id AS TEXT) LIKE $${idx}
-          OR CAST(cr.venda_id AS TEXT) LIKE $${idx}
+          LOWER(COALESCE(cr.cliente_nome, '')) LIKE $${idx} ESCAPE '\\'
+          OR LOWER(COALESCE(cr.observacao, '')) LIKE $${idx} ESCAPE '\\'
+          OR CAST(cr.id AS TEXT) LIKE $${idx} ESCAPE '\\'
+          OR CAST(cr.venda_id AS TEXT) LIKE $${idx} ESCAPE '\\'
         )
       `;
-      params.push(`%${busca}%`);
+      params.push(`%${buscaEsc}%`);
       idx++;
     }
 
@@ -4715,22 +4717,24 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
     }
 
     if (fornecedor) {
-      sql += ` AND LOWER(COALESCE(cp.fornecedor_nome, '')) LIKE $${idx} `;
-      params.push(`%${fornecedor}%`);
+      const fornecedorEsc = fornecedor.replace(/[%_\\]/g, '\\$&');
+      sql += ` AND LOWER(COALESCE(cp.fornecedor_nome, '')) LIKE $${idx} ESCAPE '\\' `;
+      params.push(`%${fornecedorEsc}%`);
       idx++;
     }
 
     if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
       sql += `
         AND (
-          LOWER(COALESCE(cp.fornecedor_nome, '')) LIKE $${idx}
-          OR LOWER(COALESCE(cp.observacao, '')) LIKE $${idx}
-          OR LOWER(COALESCE(cp.descricao, '')) LIKE $${idx}
-          OR CAST(cp.id AS TEXT) LIKE $${idx}
-          OR CAST(cp.compra_id AS TEXT) LIKE $${idx}
+          LOWER(COALESCE(cp.fornecedor_nome, '')) LIKE $${idx} ESCAPE '\\'
+          OR LOWER(COALESCE(cp.observacao, '')) LIKE $${idx} ESCAPE '\\'
+          OR LOWER(COALESCE(cp.descricao, '')) LIKE $${idx} ESCAPE '\\'
+          OR CAST(cp.id AS TEXT) LIKE $${idx} ESCAPE '\\'
+          OR CAST(cp.compra_id AS TEXT) LIKE $${idx} ESCAPE '\\'
         )
       `;
-      params.push(`%${busca}%`);
+      params.push(`%${buscaEsc}%`);
       idx++;
     }
 
@@ -5217,21 +5221,23 @@ app.get('/financeiro/lancamentos/:empresa', auth, requirePermissao(pool, 'financ
     }
 
     if (categoria) {
-      sql += ` AND LOWER(COALESCE(categoria, '')) LIKE $${idx} `;
-      params.push(`%${categoria}%`);
+      const categoriaEsc = categoria.replace(/[%_\\]/g, '\\$&');
+      sql += ` AND LOWER(COALESCE(categoria, '')) LIKE $${idx} ESCAPE '\\' `;
+      params.push(`%${categoriaEsc}%`);
       idx++;
     }
 
     if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
       sql += `
         AND (
-          LOWER(COALESCE(descricao, '')) LIKE $${idx}
-          OR LOWER(COALESCE(observacao, '')) LIKE $${idx}
-          OR LOWER(COALESCE(categoria, '')) LIKE $${idx}
-          OR CAST(id AS TEXT) LIKE $${idx}
+          LOWER(COALESCE(descricao, '')) LIKE $${idx} ESCAPE '\\'
+          OR LOWER(COALESCE(observacao, '')) LIKE $${idx} ESCAPE '\\'
+          OR LOWER(COALESCE(categoria, '')) LIKE $${idx} ESCAPE '\\'
+          OR CAST(id AS TEXT) LIKE $${idx} ESCAPE '\\'
         )
       `;
-      params.push(`%${busca}%`);
+      params.push(`%${buscaEsc}%`);
       idx++;
     }
 
@@ -5627,14 +5633,15 @@ app.get('/investimentos/:empresa', auth, requirePermissao(pool, 'financeiro', 'v
     }
 
     if (busca) {
+      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
       sql += `
           AND (
-            LOWER(COALESCE(descricao, '')) LIKE $${idx}
-            OR LOWER(COALESCE(tipo_investimento, '')) LIKE $${idx}
-            OR LOWER(COALESCE(observacao, '')) LIKE $${idx}
+            LOWER(COALESCE(descricao, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(tipo_investimento, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(observacao, '')) LIKE $${idx} ESCAPE '\\'
           )
         `;
-      params.push(`%${busca}%`);
+      params.push(`%${buscaEsc}%`);
       idx++;
     }
 

@@ -328,9 +328,9 @@ module.exports = ({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(c.nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(c.cpf, '')) LIKE $${idx}
-            OR LOWER(COALESCE(c.telefone, '')) LIKE $${idx}
+            LOWER(COALESCE(c.nome, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(c.cpf, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(c.telefone, '')) LIKE $${idx} ESCAPE '\\'
           )
         `;
         params.push(`%${buscaEsc}%`);

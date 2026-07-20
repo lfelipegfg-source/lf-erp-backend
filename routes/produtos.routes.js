@@ -336,9 +336,9 @@ ${adicionarFiltroEmpresaSaaS({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(categoria, '')) LIKE $${idx}
-            OR LOWER(COALESCE(codigo_barras, '')) LIKE $${idx}
+            LOWER(COALESCE(nome, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(categoria, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(codigo_barras, '')) LIKE $${idx} ESCAPE '\\'
           )
         `;
         params.push(`%${buscaEsc}%`);

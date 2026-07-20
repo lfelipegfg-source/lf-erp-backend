@@ -630,9 +630,9 @@ module.exports = function ({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(cliente_nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(observacao, '')) LIKE $${idx}
-            OR CAST(id AS TEXT) LIKE $${idx}
+            LOWER(COALESCE(cliente_nome, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(observacao, '')) LIKE $${idx} ESCAPE '\\'
+            OR CAST(id AS TEXT) LIKE $${idx} ESCAPE '\\'
           )
         `;
         params.push(`%${buscaEsc}%`);
@@ -704,10 +704,10 @@ module.exports = function ({
         const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
         sql += `
           AND (
-            LOWER(COALESCE(fornecedor_nome, '')) LIKE $${idx}
-            OR LOWER(COALESCE(descricao, '')) LIKE $${idx}
-            OR LOWER(COALESCE(observacao, '')) LIKE $${idx}
-            OR CAST(id AS TEXT) LIKE $${idx}
+            LOWER(COALESCE(fornecedor_nome, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(descricao, '')) LIKE $${idx} ESCAPE '\\'
+            OR LOWER(COALESCE(observacao, '')) LIKE $${idx} ESCAPE '\\'
+            OR CAST(id AS TEXT) LIKE $${idx} ESCAPE '\\'
           )
         `;
         params.push(`%${buscaEsc}%`);
