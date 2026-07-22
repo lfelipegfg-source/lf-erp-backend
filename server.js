@@ -33,6 +33,7 @@ const {
 // Rate limiter em memória para o endpoint /login
 const loginAttempts     = new Map(); // por IP
 const loginUserAttempts = new Map(); // por username
+const LOGIN_MAP_MAX = 10000;
 const LOGIN_MAX_TENTATIVAS      = 10; // tentativas por IP / 15 min
 const LOGIN_USER_MAX_TENTATIVAS = 15; // tentativas por username / 15 min
 const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
@@ -46,7 +47,7 @@ const WRITE_MAP_MAX = 5000;
 
 function writeRateLimiter(req, res, next) {
   if (!req.user) return next();
-  const chave = `${req.user.id}:${req.path}`;
+  const chave = `${req.user.id}:${req.method}:${req.route?.path || req.path}`;
   const agora = Date.now();
   const entrada = writeAttempts.get(chave) || { count: 0, inicio: agora };
 
@@ -90,6 +91,9 @@ function loginRateLimiter(req, res, next) {
   const entradaIp = loginAttempts.get(ip) || { count: 0, inicio: agora };
   if (agora - entradaIp.inicio > LOGIN_JANELA_MS) { entradaIp.count = 0; entradaIp.inicio = agora; }
   entradaIp.count += 1;
+  if (loginAttempts.size >= LOGIN_MAP_MAX && !loginAttempts.has(ip)) {
+    loginAttempts.delete(loginAttempts.keys().next().value);
+  }
   loginAttempts.set(ip, entradaIp);
   if (entradaIp.count > LOGIN_MAX_TENTATIVAS) {
     const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaIp.inicio)) / 60000);
@@ -101,6 +105,9 @@ function loginRateLimiter(req, res, next) {
     const entradaUser = loginUserAttempts.get(username) || { count: 0, inicio: agora };
     if (agora - entradaUser.inicio > LOGIN_JANELA_MS) { entradaUser.count = 0; entradaUser.inicio = agora; }
     entradaUser.count += 1;
+    if (loginUserAttempts.size >= LOGIN_MAP_MAX && !loginUserAttempts.has(username)) {
+      loginUserAttempts.delete(loginUserAttempts.keys().next().value);
+    }
     loginUserAttempts.set(username, entradaUser);
     if (entradaUser.count > LOGIN_USER_MAX_TENTATIVAS) {
       const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaUser.inicio)) / 60000);
@@ -2146,8 +2153,13 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_jwt_blacklist_expires ON jwt_blacklist (expires_at);
   `);
 
-  try { await atualizarStatusContasReceberGlobal(); } catch (e) { console.error('[initDb] status-cr global:', e.message); }
-  try { await atualizarStatusContasPagarGlobal(); } catch (e) { console.error('[initDb] status-cp global:', e.message); }
+  try {
+    const { rows: _empresasInit } = await pool.query(`SELECT id, nome FROM empresas ORDER BY id`);
+    for (const _emp of _empresasInit) {
+      await atualizarStatusContasReceberPorEmpresa(_emp.nome, _emp.id).catch(e => console.error('[initDb] status-cr:', e.message));
+      await atualizarStatusContasPagarPorEmpresa(_emp.nome, _emp.id).catch(e => console.error('[initDb] status-cp:', e.message));
+    }
+  } catch (e) { console.error('[initDb] status-global:', e.message); }
 }
 
 app.get('/', (req, res) => {
@@ -3201,9 +3213,10 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
       SELECT *
       FROM compra_itens
       WHERE compra_id = $1
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       ORDER BY id ASC
       `,
-      [id]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     for (const item of itensResult.rows) {
@@ -3237,8 +3250,9 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
       `
       DELETE FROM compra_itens
       WHERE compra_id = $1
+        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       `,
-      [id]
+      [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
     await client.query(
@@ -3526,6 +3540,10 @@ THEN 'atrasado'
         AND cr.data_vencimento IS NOT NULL
         AND cr.data_vencimento < $2
       `;
+    } else if (status === 'parcial') {
+      sql += ` AND LOWER(COALESCE(cr.status, 'pendente')) = 'parcial' AND (cr.data_vencimento IS NULL OR cr.data_vencimento >= $2) `;
+    } else if (status === 'parcial_atrasado') {
+      sql += ` AND LOWER(COALESCE(cr.status, 'pendente')) = 'parcial' AND cr.data_vencimento IS NOT NULL AND cr.data_vencimento < $2 `;
     }
 
     if (clienteId > 0) {
@@ -3896,7 +3914,7 @@ THEN 'atrasado'
       SELECT 1
       FROM contas_receber cr
       WHERE cr.cliente_id = $3
-        AND cr.empresa = $1
+        AND (cr.empresa_id = $2 OR (cr.empresa_id IS NULL AND cr.empresa = $1))
         AND (
           (lf.conta_receber_id IS NOT NULL AND cr.id = lf.conta_receber_id)
           OR (lf.conta_receber_id IS NULL AND cr.id = CASE WHEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g') ~ '^[1-9][0-9]*$' THEN REGEXP_REPLACE(lf.descricao, '\\D', '', 'g')::INTEGER ELSE NULL END)
@@ -4481,16 +4499,18 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
 
     await client.query('COMMIT');
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'exclusao',
-      entidade: 'contas_receber',
-      entidade_id: id,
-      descricao: `Exclusão da conta manual #${id}`,
-      valor: conta.valor || 0,
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'exclusao',
+        entidade: 'contas_receber',
+        entidade_id: id,
+        descricao: `Exclusão da conta manual #${id}`,
+        valor: conta.valor || 0,
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) { console.error('[cr-excluir-manual] log financeiro:', logErr.message); }
 
     res.json({ sucesso: true, mensagem: 'Conta manual excluída com sucesso' });
   } catch (error) {
@@ -4593,16 +4613,18 @@ RETURNING *
 
     const conta = insertResult.rows[0];
 
-    await registrarLogFinanceiro({
-      empresa: empresaResolvida.nome,
-      empresa_id: empresaResolvida.id,
-      tipo: 'criacao',
-      entidade: 'contas_receber',
-      entidade_id: conta.id,
-      descricao: `Criação manual da conta a receber #${conta.id}`,
-      valor: valorFinal,
-      usuario_id: req.user?.id
-    });
+    try {
+      await registrarLogFinanceiro({
+        empresa: empresaResolvida.nome,
+        empresa_id: empresaResolvida.id,
+        tipo: 'criacao',
+        entidade: 'contas_receber',
+        entidade_id: conta.id,
+        descricao: `Criação manual da conta a receber #${conta.id}`,
+        valor: valorFinal,
+        usuario_id: req.user?.id
+      });
+    } catch (logErr) { console.error('[cr-criar-manual] log financeiro:', logErr.message); }
 
     res.json({
       sucesso: true,
@@ -4708,6 +4730,10 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
         AND cp.data_vencimento IS NOT NULL
         AND cp.data_vencimento < $2
       `;
+    } else if (status === 'parcial') {
+      sql += ` AND LOWER(COALESCE(cp.status, 'pendente')) = 'parcial' AND (cp.data_vencimento IS NULL OR cp.data_vencimento >= $2) `;
+    } else if (status === 'parcial_atrasado') {
+      sql += ` AND LOWER(COALESCE(cp.status, 'pendente')) = 'parcial' AND cp.data_vencimento IS NOT NULL AND cp.data_vencimento < $2 `;
     }
 
     if (fornecedorId > 0) {
@@ -4992,7 +5018,11 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
     const dataPagamento = normalizarDataISO(req.body?.data_pagamento) || hoje();
     const valorAtualCP = normalizarDecimal(conta.valor || 0);
     const valorPagoCP = normalizarDecimal(req.body?.valor_pago || 0);
-    const valorPagoFinal = valorPagoCP > 0 ? Math.min(valorPagoCP, valorAtualCP) : valorAtualCP;
+    if (valorPagoCP > 0 && valorPagoCP > valorAtualCP) {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 400, 'Valor pago não pode ser maior que o saldo da conta');
+    }
+    const valorPagoFinal = valorPagoCP > 0 ? valorPagoCP : valorAtualCP;
     const pagamentoTotalCP = valorPagoFinal >= valorAtualCP;
     const novoValorCP = pagamentoTotalCP ? valorAtualCP : Number((valorAtualCP - valorPagoFinal).toFixed(2));
     const novoStatusCP = pagamentoTotalCP ? 'pago' : 'parcial';
@@ -5685,7 +5715,7 @@ app.get('/financeiro/auditoria', auth, requirePermissao(pool, 'financeiro', 'ver
 
     if (tipo)    { params.push(tipo);    where += ` AND fl.tipo = $${params.length}`; }
     if (entidade){ params.push(entidade); where += ` AND fl.entidade = $${params.length}`; }
-    if (busca)   { params.push(`%${busca}%`); where += ` AND fl.descricao ILIKE $${params.length}`; }
+    if (busca)   { const buscaEsc = busca.replace(/[%_\\]/g, '\\$&'); params.push(`%${buscaEsc}%`); where += ` AND fl.descricao ILIKE $${params.length} ESCAPE '\\'`; }
 
     where += adicionarFiltroPeriodo({ campo: 'fl.criado_em', params, dataInicial, dataFinal });
 
@@ -5766,7 +5796,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financ
         AND NOT EXISTS (
           SELECT 1 FROM contas_receber cr
           WHERE cr.venda_id = v.id
-            AND (cr.empresa_id = v.empresa_id OR cr.empresa = v.empresa)
+            AND (cr.empresa_id = v.empresa_id OR (cr.empresa_id IS NULL AND cr.empresa = v.empresa))
         )
     `;
 
@@ -5777,7 +5807,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financ
           SELECT 1
           FROM contas_pagar cp
           WHERE cp.compra_id = c.id
-            AND (cp.empresa_id = c.empresa_id OR cp.empresa = c.empresa)
+            AND (cp.empresa_id = c.empresa_id OR (cp.empresa_id IS NULL AND cp.empresa = c.empresa))
         )
     `;
 
@@ -6849,7 +6879,7 @@ app.post('/pagamentos/pix/gerar', auth, requirePermissao(pool, 'financeiro', 'cr
     });
   } catch (error) {
     console.error('Erro ao gerar PIX:', error);
-    jsonErro(res, 500, `Erro ao gerar cobrança PIX: ${error.message}`);
+    jsonErro(res, 500, 'Erro ao gerar cobrança PIX');
   }
 });
 
@@ -7058,7 +7088,7 @@ app.post('/pagamentos/boleto/gerar', auth, requirePermissao(pool, 'financeiro', 
     res.json({ sucesso: true, boleto, sandbox: boleto.demo || sandbox || !apiKey });
   } catch (err) {
     console.error('[boleto] POST gerar:', err.message);
-    jsonErro(res, 500, `Erro ao gerar boleto: ${err.message}`);
+    jsonErro(res, 500, 'Erro ao gerar boleto');
   }
 });
 
@@ -7521,6 +7551,7 @@ app.get('/configuracoes/:empresa', auth, requirePermissao(pool, 'configuracoes',
 
     // Mascarar credenciais sensíveis — gerenciadas via endpoints dedicados /pagamentos/*/config
     const row = { ...result.rows[0] };
+    if (row.pix_client_id !== undefined)     row.pix_client_id     = row.pix_client_id     ? '****' : null;
     if (row.pix_client_secret !== undefined) row.pix_client_secret = row.pix_client_secret ? '****' : null;
     if (row.pix_certificado !== undefined)   row.pix_certificado   = row.pix_certificado   ? 'configurado' : null;
     if (row.asaas_api_key !== undefined)     row.asaas_api_key     = row.asaas_api_key     ? '****' : null;
@@ -7795,7 +7826,7 @@ app.post('/admin/billing/cobrar/:empresaId', auth, apenasAdmin, async (req, res)
     });
   } catch (err) {
     console.error('[billing] cobrar:', err.message);
-    jsonErro(res, 500, `Erro ao gerar cobrança: ${err.message}`);
+    jsonErro(res, 500, 'Erro ao gerar cobrança');
   }
 });
 
@@ -8417,8 +8448,9 @@ app.get('/empresa/exportar-dados', auth, requirePermissao(pool, 'relatorios', 'v
     };
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    const _nomeExport = empresaResolvida.nome.replace(/\s+/g,'_').replace(/["\\]/g,'').replace(/[\r\n]/g,'');
     res.setHeader('Content-Disposition',
-      `attachment; filename="lferp-dados-${empresaResolvida.nome.replace(/\s+/g,'_')}-${hoje()}.json"`
+      `attachment; filename="lferp-dados-${_nomeExport}-${hoje()}.json"`
     );
     res.send(JSON.stringify(payload, null, 2));
   } catch (err) {
@@ -8746,7 +8778,7 @@ app.post('/admin/smtp/testar', auth, apenasAdmin, async (req, res) => {
     });
     res.json({ sucesso: true, mensagem: 'Email de teste enviado com sucesso' });
   } catch (err) {
-    jsonErro(res, 500, `Erro ao enviar teste: ${err.message}`);
+    jsonErro(res, 500, 'Erro ao enviar teste de e-mail');
   }
 });
 
@@ -8885,7 +8917,7 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
       lancamentos_financeiros: lancamentosR.rows
     };
 
-    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_')}-${hoje()}.json`;
+    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_').replace(/["\\]/g,'').replace(/[\r\n]/g,'')}-${hoje()}.json`;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
     res.send(JSON.stringify(payload, null, 2));
@@ -8937,7 +8969,7 @@ app.get('/admin/empresas/:id', auth, apenasAdmin, async (req, res) => {
 // ── Self-service onboarding ───────────────────────────────────────────────────
 // POST /registro — público, cria empresa + usuário admin em trial de 14 dias
 app.post('/registro', loginRateLimiter, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
     const { nome_empresa, nome_responsavel, email, telefone, usuario, senha } = req.body;
 
@@ -8949,15 +8981,16 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
       return jsonErro(res, 400, forcaSenha.mensagem);
     }
 
-    // Verifica unicidade de empresa e usuário
-    const [empresaExiste, usuarioExiste] = await Promise.all([
-      pool.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1`, [nome_empresa.trim()]),
-      pool.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER($1) LIMIT 1`, [usuario.trim()])
-    ]);
-    if (empresaExiste.rowCount > 0) return jsonErro(res, 409, 'Já existe uma empresa com esse nome');
-    if (usuarioExiste.rowCount > 0) return jsonErro(res, 409, 'Esse nome de usuário já está em uso');
-
+    client = await pool.connect();
     await client.query('BEGIN');
+
+    // Verifica unicidade DENTRO da transação para evitar TOCTOU
+    const [empresaExiste, usuarioExiste] = await Promise.all([
+      client.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1 FOR UPDATE`, [nome_empresa.trim()]),
+      client.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER($1) LIMIT 1`, [usuario.trim()])
+    ]);
+    if (empresaExiste.rowCount > 0) { await client.query('ROLLBACK'); return jsonErro(res, 409, 'Já existe uma empresa com esse nome'); }
+    if (usuarioExiste.rowCount > 0) { await client.query('ROLLBACK'); return jsonErro(res, 409, 'Esse nome de usuário já está em uso'); }
 
     // Cria empresa com plano starter em trial de 14 dias
     const planoResult = await client.query(`SELECT id FROM planos WHERE codigo = 'starter' LIMIT 1`);
@@ -9028,11 +9061,11 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
       mensagem:   `Bem-vindo ao LF ERP! Seu período de teste de 14 dias começou.`
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('[registro]', err.message);
     jsonErro(res, 500, 'Erro ao criar conta');
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 

@@ -296,12 +296,12 @@ module.exports = function ({
         atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[cashflow-futuro] status-cp:', e.message))
       ]);
 
-      // Datas em Fortaleza — new Date() puro é UTC; convertemos explicitamente
+      // Datas em Fortaleza — usar UTC noon para evitar off-by-one no servidor em UTC
       const fmtISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' });
       const hojeISO   = fmtISO.format(new Date());
-      const limiteData = new Date(hojeISO + 'T00:00:00');
-      limiteData.setDate(limiteData.getDate() + dias);
-      const limiteISO = fmtISO.format(limiteData);
+      const limiteData = new Date(hojeISO + 'T12:00:00Z');
+      limiteData.setUTCDate(limiteData.getUTCDate() + dias);
+      const limiteISO = limiteData.toISOString().substring(0, 10);
 
       const [receberResult, pagarResult] = await Promise.all([
         pool.query(
@@ -353,13 +353,13 @@ module.exports = function ({
 
       // Cria array de dias com saldo acumulado
       const fmtFortaleza = fmtISO;
-      const hoje = new Date(hojeISO + 'T00:00:00');
+      const hoje = new Date(hojeISO + 'T12:00:00Z');
       let saldoAcum = 0;
       const projecao = [];
 
       for (let i = 0; i <= dias; i++) {
         const d = new Date(hoje);
-        d.setDate(d.getDate() + i);
+        d.setUTCDate(d.getUTCDate() + i);
         const key = fmtFortaleza.format(d);
         const entrada = mapaEntradas[key] || 0;
         const saida   = mapaSaidas[key]   || 0;

@@ -906,7 +906,7 @@ module.exports = ({
     }
   });
 
-  router.patch('/:id/observacao', auth, requirePermissao(pool, 'vendas', 'editar'), async (req, res) => {
+  router.patch('/:id/observacao', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'editar'), async (req, res) => {
     try {
       if (!podeGerenciarVendas(req)) {
         return erro(res, 403, 'Sem permissão para editar vendas');
@@ -1123,8 +1123,7 @@ module.exports = ({
              AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))
            ORDER BY vi.id ASC`,
           [id, empresaResolvida.id, empresaResolvida.nome]
-        ),
-        atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id).catch(e => console.error('[venda-detalhe] status-cr:', e.message))
+        )
       ]);
 
       const contasReceberResult = await pool.query(

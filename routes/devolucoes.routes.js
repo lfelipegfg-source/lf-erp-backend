@@ -40,9 +40,9 @@ module.exports = ({
         `SELECT d.*, COUNT(di.id) AS total_itens
          FROM devolucoes d
          LEFT JOIN devolucao_itens di ON di.devolucao_id = d.id
-         WHERE d.empresa_id = $1 AND d.venda_id = $2
+         WHERE (d.empresa_id = $1 OR (d.empresa_id IS NULL AND d.empresa = $3)) AND d.venda_id = $2
          GROUP BY d.id ORDER BY d.criado_em DESC`,
-        [emp.id, Number(req.params.vendaId)]
+        [emp.id, Number(req.params.vendaId), emp.nome]
       );
 
       return ok(res, { devolucoes: result.rows });
@@ -62,10 +62,10 @@ module.exports = ({
         `SELECT d.*, COUNT(di.id) AS total_itens
          FROM devolucoes d
          LEFT JOIN devolucao_itens di ON di.devolucao_id = d.id
-         WHERE d.empresa_id = $1
+         WHERE (d.empresa_id = $1 OR (d.empresa_id IS NULL AND d.empresa = $2))
          GROUP BY d.id ORDER BY d.criado_em DESC
          LIMIT 200`,
-        [emp.id]
+        [emp.id, emp.nome]
       );
 
       return ok(res, {
@@ -197,6 +197,15 @@ module.exports = ({
             [item.qtd, item.produtoId, emp.id, emp.nome]
           );
         }
+        if (typeof registrarMovimentacaoEstoque === 'function') {
+          await registrarMovimentacaoEstoque({
+            empresa: emp.nome, empresa_id: emp.id,
+            produto_id: item.produtoId, tipo: 'devolucao', quantidade: item.qtd,
+            observacao: `Devolução #${devolucao.id}`,
+            referencia_tipo: 'devolucao', referencia_id: devolucao.id,
+            usuario_id: req.user.id, client
+          });
+        }
       }
 
       // Cria lançamento financeiro de devolução (despesa = saída de caixa para devolver ao cliente)
@@ -308,8 +317,8 @@ module.exports = ({
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const [devRes, itensRes] = await Promise.all([
-        pool.query(`SELECT * FROM devolucoes WHERE id = $1 AND empresa_id = $2`, [Number(req.params.id), emp.id]),
-        pool.query(`SELECT * FROM devolucao_itens WHERE devolucao_id = $1 AND empresa_id = $2`, [Number(req.params.id), emp.id])
+        pool.query(`SELECT * FROM devolucoes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`, [Number(req.params.id), emp.id, emp.nome]),
+        pool.query(`SELECT * FROM devolucao_itens WHERE devolucao_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`, [Number(req.params.id), emp.id, emp.nome])
       ]);
 
       if (devRes.rowCount === 0) return erro(res, 404, 'Devolução não encontrada');

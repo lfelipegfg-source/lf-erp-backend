@@ -210,7 +210,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return ok(res, { mensagem: `${qtd} pontos acumulados` });
     } catch (err) {
       console.error('[fidelidade] POST acumular:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro ao acumular pontos');
     }
   });
 

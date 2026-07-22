@@ -536,6 +536,17 @@ module.exports = ({
         return erro(res, 400, 'Cliente já possui vendas vinculadas e não pode ser excluído');
       }
 
+      const crAbertoResult = await pool.query(
+        `SELECT COUNT(*) AS total FROM contas_receber
+         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago','cancelado')`,
+        [id, empresaResolvida.id, empresaResolvida.nome]
+      );
+
+      if (Number(crAbertoResult.rows[0].total || 0) > 0) {
+        return erro(res, 400, 'Cliente possui contas a receber em aberto e não pode ser excluído');
+      }
+
       await pool.query(
         `UPDATE clientes
         SET deletado_em = NOW(),

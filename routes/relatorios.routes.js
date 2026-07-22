@@ -739,7 +739,7 @@ module.exports = function ({
     }
   });
 
-  router.get('/financeiro/lucratividade/:empresa', auth, requirePermissao(pool, 'lucratividade', 'ver'), async (req, res) => {
+  router.get('/financeiro/lucratividade/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
@@ -1003,7 +1003,7 @@ MAX(v.data) AS ultima_venda
   });
 
   // ── DRE — DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO ────────────────────────
-  router.get('/dre/:empresa', auth, requirePermissao(pool, 'dre', 'ver'), async (req, res) => {
+  router.get('/dre/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;

@@ -143,7 +143,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   router.get('/resumo', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
-      const { id: clienteId, empresa_id: empresaId } = req.cliente;
+      const { id: clienteId, empresa_id: empresaId, empresa_nome: empresaNome } = req.cliente;
 
       const result = await pool.query(
         `SELECT
@@ -152,15 +152,15 @@ module.exports = ({ auth, pool }) => {
            COALESCE(SUM(CASE WHEN LOWER(status) = 'pago' THEN valor ELSE 0 END), 0)                      AS total_pago,
            COUNT(CASE WHEN LOWER(status) IN ('pendente','parcial','atrasado','parcial_atrasado') THEN 1 END) AS total_titulos_abertos
          FROM contas_receber
-         WHERE cliente_id = $1 AND empresa_id = $2`,
-        [clienteId, empresaId]
+         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [clienteId, empresaId, empresaNome || '']
       );
 
       const totalVendas = await pool.query(
         `SELECT COUNT(*) AS total, COALESCE(SUM(total), 0) AS valor
          FROM vendas
-         WHERE cliente_id = $1 AND empresa_id = $2`,
-        [clienteId, empresaId]
+         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        [clienteId, empresaId, empresaNome || '']
       );
 
       const r = result.rows[0];
@@ -185,17 +185,17 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   router.get('/titulos', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
-      const { id: clienteId, empresa_id: empresaId } = req.cliente;
+      const { id: clienteId, empresa_id: empresaId, empresa_nome: empresaNome } = req.cliente;
       const { status } = req.query;
 
-      const params = [clienteId, empresaId];
-      let where = 'WHERE cr.cliente_id = $1 AND cr.empresa_id = $2';
+      const params = [clienteId, empresaId, empresaNome || ''];
+      let where = 'WHERE cr.cliente_id = $1 AND (cr.empresa_id = $2 OR (cr.empresa_id IS NULL AND cr.empresa = $3))';
 
       const STATUS_VALIDOS_PORTAL = ['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado', 'cancelado'];
       if (status) {
         if (!STATUS_VALIDOS_PORTAL.includes(status.toLowerCase())) return erro(res, 400, 'Status inválido');
-        where += ` AND LOWER(cr.status) = $3`;
         params.push(status.toLowerCase());
+        where += ` AND LOWER(cr.status) = $${params.length}`;
       }
 
       const result = await pool.query(
@@ -222,18 +222,18 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   router.get('/vendas', authCliente, portalConsultaRateLimiter, async (req, res) => {
     try {
-      const { id: clienteId, empresa_id: empresaId } = req.cliente;
+      const { id: clienteId, empresa_id: empresaId, empresa_nome: empresaNome } = req.cliente;
 
       const result = await pool.query(
         `SELECT v.id, v.data, v.total, v.pagamento, v.status_pagamento, v.observacao,
                 COUNT(vi.id) AS total_itens
          FROM vendas v
          LEFT JOIN venda_itens vi ON vi.venda_id = v.id
-         WHERE v.cliente_id = $1 AND v.empresa_id = $2
+         WHERE v.cliente_id = $1 AND (v.empresa_id = $2 OR (v.empresa_id IS NULL AND v.empresa = $3))
          GROUP BY v.id
          ORDER BY v.data DESC, v.id DESC
          LIMIT 50`,
-        [clienteId, empresaId]
+        [clienteId, empresaId, empresaNome || '']
       );
 
       return ok(res, { vendas: result.rows.map((r) => ({

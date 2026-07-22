@@ -247,7 +247,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
       if (epResult.rowCount === 0) return erro(res, 404, 'Endpoint não encontrado');
 
       const ep = epResult.rows[0];
-      const evento = req.body.evento || ep.eventos[0] || 'venda.criada';
+      const eventoReq = req.body.evento;
+      const evento = (eventoReq && EVENTOS_DISPONIVEIS.includes(eventoReq))
+        ? eventoReq
+        : (ep.eventos[0] || 'venda.criada');
 
       // Envia diretamente para este endpoint específico (ignora filtro de eventos)
       enviarWebhook({

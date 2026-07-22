@@ -28,7 +28,8 @@ async function acumularPontosFidelidade(pool, { empresaId, clienteId, vendaId, t
   if (jaAcumulou.rowCount > 0) return;
 
   const expiraEm = cfg.validade_dias > 0
-    ? new Date(Date.now() + cfg.validade_dias * 86_400_000).toISOString().substring(0, 10)
+    ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' })
+        .format(new Date(Date.now() + cfg.validade_dias * 86_400_000))
     : null;
 
   // Atualiza saldo do cliente e calcula saldo_apos em uma transação

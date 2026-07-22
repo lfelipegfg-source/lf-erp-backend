@@ -229,7 +229,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('[nfse] POST emitir:', err.message);
-      return erro(res, 500, `Erro ao emitir NFS-e: ${err.message}`);
+      return erro(res, 500, 'Erro ao emitir NFS-e');
     } finally {
       client.release();
     }
@@ -257,7 +257,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       // Atualiza status no banco
       if (r.ok) {
-        const status = r.data?.status_sefaz === '100' ? 'autorizada' : 'pendente';
+        const _statusSefaz = r.data?.status_sefaz;
+        const STATUS_SEFAZ_MAP = { '100': 'autorizada', '101': 'cancelada', '135': 'cancelada', '150': 'cancelada' };
+        const status = STATUS_SEFAZ_MAP[_statusSefaz] || (_statusSefaz ? 'erro' : 'pendente');
         await pool.query(
           `UPDATE nfse_emissoes SET
              status = $1, numero_nfse = $2,

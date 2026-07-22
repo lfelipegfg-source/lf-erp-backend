@@ -139,9 +139,9 @@ module.exports = ({
           const cbRes = await prodClient.query(
             `SELECT COALESCE(MAX(CAST(codigo_barras AS BIGINT)), 0) AS max_cb
              FROM produtos
-             WHERE empresa_id = $1
+             WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
                AND codigo_barras ~ '^[0-9]+$'`,
-            [empresaResolvida.id]
+            [empresaResolvida.id, empresaResolvida.nome]
           );
           codigoBarrasFinal = String(Number(cbRes.rows[0].max_cb) + 1).padStart(6, '0');
         }

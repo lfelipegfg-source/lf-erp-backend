@@ -94,8 +94,9 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
     const { saldo_inicial = 0, observacao } = req.body;
     const saldoInicial = normalizarDecimal(saldo_inicial);
 
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN');
 
       // FOR UPDATE garante que duas requisições simultâneas não abram dois caixas
@@ -124,11 +125,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       await client.query('COMMIT');
       return ok(res, { sessao, mensagem: 'Caixa aberto com sucesso' });
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST abrir:', err.message);
       return erro(res, 500, 'Erro ao abrir caixa');
     } finally {
-      client.release();
+      if (client) client.release();
     }
   });
 
@@ -141,8 +142,9 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
     const v = normalizarDecimal(valor);
     if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para a sangria');
 
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN');
       const sessaoResult = await client.query(
         `SELECT * FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' ORDER BY aberto_em DESC LIMIT 1 FOR UPDATE`,
@@ -169,11 +171,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       await client.query('COMMIT');
       return ok(res, { saldo_atual: saldo, mensagem: 'Sangria registrada' });
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST sangria:', err.message);
       return erro(res, 500, 'Erro ao registrar sangria');
     } finally {
-      client.release();
+      if (client) client.release();
     }
   });
 
@@ -186,8 +188,9 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
     const v = normalizarDecimal(valor);
     if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para o suprimento');
 
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN');
       const sessaoResult = await client.query(
         `SELECT * FROM caixa_sessoes WHERE empresa_id = $1 AND status = 'aberto' ORDER BY aberto_em DESC LIMIT 1 FOR UPDATE`,
@@ -209,11 +212,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       await client.query('COMMIT');
       return ok(res, { saldo_atual: +Number(saldoResult.rows[0].saldo || 0).toFixed(2), mensagem: 'Suprimento registrado' });
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST suprimento:', err.message);
       return erro(res, 500, 'Erro ao registrar suprimento');
     } finally {
-      client.release();
+      if (client) client.release();
     }
   });
 
@@ -222,8 +225,9 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
     const emp = await getEmpresa(req);
     if (!emp) return erro(res, 403, 'Sem acesso');
 
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN');
 
       // FOR UPDATE trava a sessão para evitar que dois fechamentos concorrentes
@@ -291,11 +295,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
         mensagem: 'Caixa fechado com sucesso'
       });
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[caixa] POST fechar:', err.message);
       return erro(res, 500, 'Erro ao fechar caixa');
     } finally {
-      client.release();
+      if (client) client.release();
     }
   });
 

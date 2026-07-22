@@ -184,7 +184,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         pool.query(
           `SELECT o.*, c.telefone AS cliente_telefone, c.email AS cliente_email
            FROM crm_oportunidades o
-           LEFT JOIN clientes c ON c.id = o.cliente_id
+           LEFT JOIN clientes c ON c.id = o.cliente_id AND c.empresa_id = o.empresa_id
            WHERE o.id = $1 AND o.empresa_id = $2`,
           [id, emp.id]
         ),
@@ -305,21 +305,25 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   // ── Converter em orçamento ────────────────────────────────────────────────
 
   router.post('/oportunidades/:id/converter', auth, requirePermissao(pool, 'vendas', 'criar'), writeRateLimiter, async (req, res) => {
+    let client;
     try {
       const id  = Number(req.params.id);
       const emp = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!emp) return erro(res, 403, 'Sem acesso');
 
-      const opResult = await pool.query(
-        `SELECT * FROM crm_oportunidades WHERE id = $1 AND empresa_id = $2`,
+      client = await pool.connect();
+      await client.query('BEGIN');
+
+      const opResult = await client.query(
+        `SELECT * FROM crm_oportunidades WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
         [id, emp.id]
       );
-      if (opResult.rowCount === 0) return erro(res, 404, 'Oportunidade não encontrada');
+      if (opResult.rowCount === 0) { await client.query('ROLLBACK'); return erro(res, 404, 'Oportunidade não encontrada'); }
 
       const op = opResult.rows[0];
 
       // Cria rascunho de orçamento
-      const orcResult = await pool.query(
+      const orcResult = await client.query(
         `INSERT INTO orcamentos
            (empresa_id, cliente_id, cliente_nome, total, status, observacao, validade_dias, criado_por, criado_em, atualizado_em)
          VALUES ($1,$2,$3,$4,'rascunho',$5,30,$6,NOW(),NOW())
@@ -338,16 +342,20 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       // Marca oportunidade como "em proposta" se ainda não avançou
       if (!['proposta', 'negociacao', 'ganho'].includes(op.estagio)) {
-        await pool.query(
+        await client.query(
           `UPDATE crm_oportunidades SET estagio = 'proposta', atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
           [id, emp.id]
         );
       }
 
+      await client.query('COMMIT');
       return ok(res, { orcamento_id: orcamentoId, mensagem: 'Orçamento criado com sucesso' });
     } catch (err) {
+      if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[crm] POST converter:', err.message);
       return erro(res, 500, 'Erro ao converter oportunidade');
+    } finally {
+      if (client) client.release();
     }
   });
 

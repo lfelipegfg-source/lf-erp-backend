@@ -140,14 +140,14 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
            COALESCE(SUM(cr.valor), 0) AS valor_total,
            MAX(CURRENT_DATE - cr.data_vencimento::date) AS max_dias
          FROM contas_receber cr
-         LEFT JOIN clientes c ON c.id = cr.cliente_id AND c.empresa_id = cr.empresa_id
-         WHERE cr.empresa_id = $1
+         LEFT JOIN clientes c ON c.id = cr.cliente_id AND (c.empresa_id = cr.empresa_id OR (c.empresa_id IS NULL AND c.empresa = cr.empresa))
+         WHERE (cr.empresa_id = $1 OR (cr.empresa_id IS NULL AND cr.empresa = $3))
            AND LOWER(COALESCE(cr.status,'pendente')) NOT IN ('pago')
            AND cr.data_vencimento::date < CURRENT_DATE
            AND CURRENT_DATE - cr.data_vencimento::date >= $2
          GROUP BY cr.cliente_id, cr.cliente_nome, c.email, c.telefone
          ORDER BY valor_total DESC`,
-        [emp.id, diasMin]
+        [emp.id, diasMin, emp.nome]
       );
 
       const clientes = clientesResult.rows;
