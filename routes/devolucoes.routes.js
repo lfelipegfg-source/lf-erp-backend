@@ -134,9 +134,10 @@ module.exports = ({
           `SELECT COALESCE(SUM(di.quantidade), 0) AS ja_devolvido
            FROM devolucao_itens di
            JOIN devolucoes d ON d.id = di.devolucao_id
-           WHERE d.venda_id = $1 AND di.produto_id = $2 AND di.empresa_id = $3
-             ${gradeId ? 'AND di.grade_id = $4' : 'AND di.grade_id IS NULL'}`,
-          gradeId ? [Number(venda_id), produtoId, emp.id, gradeId] : [Number(venda_id), produtoId, emp.id]
+           WHERE d.venda_id = $1 AND di.produto_id = $2
+             AND (di.empresa_id = $3 OR (di.empresa_id IS NULL AND di.empresa = $4))
+             ${gradeId ? 'AND di.grade_id = $5' : 'AND di.grade_id IS NULL'}`,
+          gradeId ? [Number(venda_id), produtoId, emp.id, emp.nome, gradeId] : [Number(venda_id), produtoId, emp.id, emp.nome]
         );
         const jaDevolvido = Number(jaDevRes.rows[0].ja_devolvido || 0);
         const disponivelParaDevolucao = Number(original.quantidade) - jaDevolvido;
@@ -182,18 +183,18 @@ module.exports = ({
         // Restaura estoque do produto
         if (item.tem_grade && item.gradeId) {
           await client.query(
-            `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-            [item.qtd, item.gradeId, emp.id]
+            `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+            [item.qtd, item.gradeId, emp.id, emp.nome]
           );
           await client.query(
-            `UPDATE produtos SET estoque = (SELECT COALESCE(SUM(estoque),0) FROM produto_grades WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true), atualizado_em = NOW()
-             WHERE id = $1 AND empresa_id = $2`,
-            [item.produtoId, emp.id]
+            `UPDATE produtos SET estoque = (SELECT COALESCE(SUM(estoque),0) FROM produto_grades WHERE produto_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND ativo = true), atualizado_em = NOW()
+             WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+            [item.produtoId, emp.id, emp.nome]
           );
         } else {
           await client.query(
-            `UPDATE produtos SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-            [item.qtd, item.produtoId, emp.id]
+            `UPDATE produtos SET estoque = estoque + $1, atualizado_em = NOW() WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+            [item.qtd, item.produtoId, emp.id, emp.nome]
           );
         }
       }

@@ -5670,7 +5670,7 @@ app.get('/investimentos/:empresa', auth, requirePermissao(pool, 'financeiro', 'v
 
 // ================= FLUXO DE CAIXA =================
 // GET /financeiro/auditoria — histórico de operações financeiras da empresa
-app.get('/financeiro/auditoria', auth, async (req, res) => {
+app.get('/financeiro/auditoria', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -5717,7 +5717,7 @@ app.get('/financeiro/auditoria', auth, async (req, res) => {
   }
 });
 
-app.get('/financeiro/fluxo-caixa/:empresa', auth, async (req, res) => {
+app.get('/financeiro/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresa = req.params.empresa;
@@ -6862,7 +6862,7 @@ app.get('/pagamentos/pix/status/:txid', auth, requirePermissao(pool, 'financeiro
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     const local = await pool.query(
-      `SELECT * FROM cobrancas_pix WHERE txid = $1 AND (empresa_id = $2 OR empresa = $3)`,
+      `SELECT * FROM cobrancas_pix WHERE txid = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
       [txid, empresaResolvida.id, empresaResolvida.nome]
     );
 
@@ -7283,18 +7283,22 @@ app.post('/conciliacao/importar', auth, writeRateLimiter, jsonUpload, async (req
     const conciliacaoId = sessao.rows[0].id;
 
     if (itens.length > 0) {
-      const placeholders = itens.map((_, idx) => {
-        const b = idx * 8;
-        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
-      }).join(',');
-      const params = itens.flatMap(it => [
-        conciliacaoId, empresaResolvida.nome, empresaResolvida.id,
-        it.fitid, it.data, it.descricao, it.valor, it.tipo
-      ]);
-      await pool.query(
-        `INSERT INTO conciliacao_itens (conciliacao_id, empresa, empresa_id, fitid, data, descricao, valor, tipo) VALUES ${placeholders}`,
-        params
-      );
+      const CHUNK = 8191; // 65535 params / 8 por item
+      for (let offset = 0; offset < itens.length; offset += CHUNK) {
+        const lote = itens.slice(offset, offset + CHUNK);
+        const placeholders = lote.map((_, idx) => {
+          const b = idx * 8;
+          return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+        }).join(',');
+        const params = lote.flatMap(it => [
+          conciliacaoId, empresaResolvida.nome, empresaResolvida.id,
+          it.fitid, it.data, it.descricao, it.valor, it.tipo
+        ]);
+        await pool.query(
+          `INSERT INTO conciliacao_itens (conciliacao_id, empresa, empresa_id, fitid, data, descricao, valor, tipo) VALUES ${placeholders}`,
+          params
+        );
+      }
     }
 
     res.json({ sucesso: true, conciliacao_id: conciliacaoId, total: itens.length });

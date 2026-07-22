@@ -295,15 +295,17 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const r = await cancelarNfse(cfg.token_focus, cfg.ambiente, ref);
 
-      if (r.ok) {
-        await pool.query(
-          `UPDATE nfse_emissoes SET status = 'cancelada', atualizado_em = NOW()
-           WHERE ref = $1 AND empresa_id = $2`,
-          [ref, empresaResolvida.id]
-        );
+      if (!r.ok) {
+        return erro(res, 422, r.data?.mensagem || 'FocusNFe recusou o cancelamento');
       }
 
-      return ok(res, { ref, mensagem: 'Cancelamento solicitado', detalhe: r.data });
+      await pool.query(
+        `UPDATE nfse_emissoes SET status = 'cancelada', atualizado_em = NOW()
+         WHERE ref = $1 AND empresa_id = $2`,
+        [ref, empresaResolvida.id]
+      );
+
+      return ok(res, { ref, mensagem: 'NFS-e cancelada', detalhe: r.data });
     } catch (err) {
       console.error('[nfse] POST cancelar:', err.message);
       return erro(res, 500, 'Erro ao cancelar NFS-e');

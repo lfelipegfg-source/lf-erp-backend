@@ -323,7 +323,7 @@ module.exports = function ({
       await client.query('BEGIN');
 
       const compraAtual = await client.query(
-        `SELECT * FROM compras WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+        `SELECT * FROM compras WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
       if (compraAtual.rowCount === 0) {
@@ -491,8 +491,8 @@ module.exports = function ({
           acumulado = Number((acumulado + valorParcela).toFixed(2));
           const vencimento = i === 1 ? dataPrimeiroVencimento : addDias(dataPrimeiroVencimento, (i - 1) * 30);
           await client.query(
-            `INSERT INTO contas_pagar (empresa, empresa_id, fornecedor_id, fornecedor_nome, compra_id, descricao, parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,'pendente',$11,$12,$13,NOW(),NOW())`,
+            `INSERT INTO contas_pagar (empresa, empresa_id, fornecedor_id, fornecedor_nome, compra_id, descricao, parcela, total_parcelas, valor, valor_original, data_vencimento, data_pagamento, status, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,NULL,'pendente',$11,$12,$13,NOW(),NOW())`,
             [empresaResolvida.nome, empresaResolvida.id, fornecedor.id, fornecedor.nome, id,
              `Parcela ${i}/${parcelasFinal} - Compra #${id}`, i, parcelasFinal, valorParcela, vencimento,
              pagamentoNormalizado, observacao || '', req.user.id]

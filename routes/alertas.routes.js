@@ -160,16 +160,21 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
 
       // ── Email ──────────────────────────────────────────────────────────────
       let transporter = null;
+      const SSRF_BLOCK = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|::1|fc00:|fd[0-9a-f]{2}:|localhost$)/i;
       if (cfg.email_ativo && cfg.smtp_host && cfg.smtp_user && cfg.smtp_pass) {
-        try {
-          transporter = nodemailer.createTransport({
-            host: cfg.smtp_host,
-            port: Number(cfg.smtp_port || 587),
-            secure: Number(cfg.smtp_port) === 465,
-            auth: { user: cfg.smtp_user, pass: cfg.smtp_pass }
-          });
-        } catch (te) {
-          console.error('[alertas] transporter error:', te.message);
+        if (SSRF_BLOCK.test(String(cfg.smtp_host).trim())) {
+          console.warn('[alertas] smtp_host bloqueado (IP privado/localhost):', cfg.smtp_host);
+        } else {
+          try {
+            transporter = nodemailer.createTransport({
+              host: cfg.smtp_host,
+              port: Number(cfg.smtp_port || 587),
+              secure: Number(cfg.smtp_port) === 465,
+              auth: { user: cfg.smtp_user, pass: cfg.smtp_pass }
+            });
+          } catch (te) {
+            console.error('[alertas] transporter error:', te.message);
+          }
         }
       }
 
@@ -239,7 +244,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
       return ok(res, results);
     } catch (err) {
       console.error('[alertas] POST disparar:', err.message);
-      return erro(res, 500, 'Erro ao disparar alertas: ' + err.message);
+      return erro(res, 500, 'Erro ao disparar alertas');
     }
   });
 
