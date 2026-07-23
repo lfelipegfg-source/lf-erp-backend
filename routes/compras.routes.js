@@ -582,7 +582,7 @@ module.exports = function ({
     '14': 'duplicata mercantil', '15': 'boleto', '17': 'pix', '90': 'sem pagamento', '99': 'outros'
   };
 
-  router.post('/importar-xml', auth, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
+  router.post('/importar-xml', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'criar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');

@@ -347,7 +347,7 @@ ${adicionarFiltroEmpresaSaaS({
 
       sql += ` ORDER BY nome ASC`;
 
-      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const limite = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 100), 500);
       const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
       const limIdx = idx;
       const offIdx = idx + 1;

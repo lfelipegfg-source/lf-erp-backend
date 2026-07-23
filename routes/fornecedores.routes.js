@@ -35,6 +35,11 @@ module.exports = function ({
         return erro(res, 400, 'Preencha os campos obrigatórios do fornecedor');
       }
 
+      if (cnpj) {
+        const cnpjLimpo = String(cnpj).replace(/\D/g, '');
+        if (cnpjLimpo.length !== 14) return erro(res, 400, 'CNPJ inválido');
+      }
+
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
       if (!empresaResolvida) {
@@ -59,7 +64,7 @@ module.exports = function ({
           empresaResolvida.nome,
           empresaResolvida.id,
           nome,
-          cnpj || '',
+          cnpj || null,
           telefone || '',
           email || '',
           endereco || '',
@@ -253,6 +258,11 @@ module.exports = function ({
         return erro(res, 400, 'Preencha os campos obrigatórios do fornecedor');
       }
 
+      if (cnpj) {
+        const cnpjLimpo = String(cnpj).replace(/\D/g, '');
+        if (cnpjLimpo.length !== 14) return erro(res, 400, 'CNPJ inválido');
+      }
+
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
 
       if (!empresaResolvida) {
@@ -280,7 +290,7 @@ module.exports = function ({
         WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9)) AND deletado_em IS NULL`,
         [
           nome,
-          cnpj || '',
+          cnpj || null,
           telefone || '',
           email || '',
           endereco || '',

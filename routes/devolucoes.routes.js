@@ -82,7 +82,7 @@ module.exports = ({
   });
 
   // ── POST /devolucoes ──────────────────────────────────────────────────────
-  router.post('/', auth, requirePermissao(pool, 'vendas', 'criar'), writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'vendas', 'criar'), async (req, res) => {
     const { venda_id, motivo, itens = [] } = req.body;
 
     if (!venda_id) return erro(res, 400, 'venda_id é obrigatório');

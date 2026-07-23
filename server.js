@@ -521,7 +521,7 @@ async function registrarLogFinanceiro({
     `
     INSERT INTO financeiro_logs
     (empresa, empresa_id, tipo, entidade, entidade_id, descricao, valor, usuario_id, criado_em)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW() AT TIME ZONE 'America/Fortaleza')
     `,
     [
       empresa || null,
@@ -862,13 +862,15 @@ async function validarSenhaUsuario(senhaInformada, user) {
   if (iguais) {
     const novaHash = await bcrypt.hash(senhaInformada, 10);
 
-    await pool.query(
-      `UPDATE usuarios
-        SET senha = $1,
-            atualizado_em = NOW()
-        WHERE id = $2`,
-      [novaHash, user.id]
-    );
+    try {
+      await pool.query(
+        `UPDATE usuarios
+          SET senha = $1,
+              atualizado_em = NOW()
+          WHERE id = $2`,
+        [novaHash, user.id]
+      );
+    } catch (e) { console.error('[validarSenhaUsuario] erro ao migrar hash:', e.message); }
 
     return true;
   }
@@ -969,14 +971,14 @@ function auth(req, res, next) {
 
     req.user = decoded;
 
-    req.empresa_id = decoded.empresa_id ? Number(decoded.empresa_id) : null;
+    req.empresa_id = decoded.empresa_id != null ? Number(decoded.empresa_id) : null;
     req.empresa_nome = decoded.empresa_nome || decoded.empresa || null;
 
     if (!req.user?.id || !req.user?.tipo) {
       return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
     }
 
-    if (!req.user.is_saas_owner && !req.empresa_id) {
+    if (!req.user.is_saas_owner && req.empresa_id == null) {
       return res.status(403).json({ sucesso: false, erro: 'Empresa não identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
     }
 
@@ -2333,7 +2335,7 @@ app.post('/auth/refresh', auth, async (req, res) => {
 });
 
 // GET /auth/sse-token — gera nonce de uso único (30s) para conectar SSE sem JWT na URL
-app.get('/auth/sse-token', auth, (req, res) => {
+app.get('/auth/sse-token', auth, writeRateLimiter, (req, res) => {
   const nonce = crypto.randomUUID();
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
@@ -2371,6 +2373,14 @@ app.post('/logout', auth, (req, res) => {
 app.put('/me/perfil', auth, async (req, res) => {
   try {
     const { nome_completo, cpf, nascimento } = req.body;
+
+    if (nome_completo && String(nome_completo).length > 200) {
+      return jsonErro(res, 400, 'Nome muito longo (máx 200 caracteres)');
+    }
+    if (cpf) {
+      const cpfLimpo = String(cpf).replace(/\D/g, '');
+      if (cpfLimpo.length !== 11) return jsonErro(res, 400, 'CPF inválido');
+    }
 
     await pool.query(
       `UPDATE usuarios SET
@@ -2889,7 +2899,7 @@ app.get('/usuarios/:id/permissoes', auth, requirePermissao(pool, 'usuarios', 've
     const [individuaisResult, padraoResult] = await Promise.all([
       pool.query(
         `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
-         FROM permissoes_usuario WHERE usuario_id = $1 AND (empresa_id = $2 OR empresa_id IS NULL)`,
+         FROM permissoes_usuario WHERE usuario_id = $1 AND empresa_id = $2`,
         [id, empresaResolvida.id]
       ),
       pool.query(
@@ -4919,7 +4929,7 @@ app.get('/contas-pagar/origem-compra/:id', auth, requirePermissao(pool, 'finance
         FROM compras c
         LEFT JOIN fornecedores f
           ON f.id = c.fornecedor_id
-        AND f.empresa = c.empresa
+        AND (f.empresa_id = c.empresa_id OR (f.empresa_id IS NULL AND f.empresa = c.empresa))
         WHERE c.id = $1 AND (c.empresa_id = $2 OR (c.empresa_id IS NULL AND c.empresa = $3))
         LIMIT 1
         `,
@@ -7285,7 +7295,7 @@ function parseCSV(texto) {
 }
 
 // POST /conciliacao/importar
-app.post('/conciliacao/importar', auth, writeRateLimiter, jsonUpload, async (req, res) => {
+app.post('/conciliacao/importar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, jsonUpload, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const { conteudo, tipo, nome, conta } = req.body;
@@ -8073,9 +8083,9 @@ app.get('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'ver'), asyn
     const realizadoResult = await pool.query(
       `SELECT criado_por AS usuario_id, COALESCE(SUM(total), 0) AS realizado
        FROM vendas
-       WHERE empresa_id = $1 AND data >= $2 AND data <= $3
+       WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $4)) AND data >= $2 AND data <= $3
        GROUP BY criado_por`,
-      [empresaResolvida.id, dataInicio, dataFim]
+      [empresaResolvida.id, dataInicio, dataFim, empresaResolvida.nome || '']
     );
     const realizadoMap = {};
     let realizadoTotal = 0;
@@ -8112,8 +8122,8 @@ app.post('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'criar'), w
 
     if (usuario_id) {
       const uCheck = await pool.query(
-        `SELECT 1 FROM usuarios WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-        [Number(usuario_id), empresaResolvida.id]
+        `SELECT 1 FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+        [Number(usuario_id), empresaResolvida.id, empresaResolvida.nome || '']
       );
       if (uCheck.rowCount === 0) return jsonErro(res, 400, 'Usuário não pertence à empresa');
     }
@@ -8770,9 +8780,13 @@ app.post('/admin/smtp/testar', auth, apenasAdmin, async (req, res) => {
     const transporter = criarTransporter(cfg);
     if (!transporter) return jsonErro(res, 400, 'SMTP não configurado');
 
+    const toEmail = req.body.email || req.user.email;
+    if (!toEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(toEmail))) {
+      return jsonErro(res, 400, 'Email de destino inválido');
+    }
     await transporter.sendMail({
       from:    cfg.smtp_from || cfg.smtp_user,
-      to:      req.body.email || req.user.email || req.user.usuario,
+      to:      toEmail,
       subject: 'Teste de SMTP — LF ERP',
       text:    'Este é um email de teste do sistema LF ERP. Configuração funcionando!'
     });

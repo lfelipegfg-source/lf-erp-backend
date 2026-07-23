@@ -82,7 +82,7 @@ module.exports = ({
           endereco || '',
           telefone || '',
           nascimento || '',
-          cpf || ''
+          cpf || null
         ]
       );
 
@@ -471,7 +471,7 @@ module.exports = ({
             cpf = $5,
             atualizado_em = NOW()
         WHERE id = $6 AND (empresa_id = $7 OR (empresa_id IS NULL AND empresa = $8)) AND deletado_em IS NULL`,
-        [nome, endereco || '', telefone || '', nascimento || '', cpf || '', id, empresaResolvida.id, empresaResolvida.nome]
+        [nome, endereco || '', telefone || '', nascimento || '', cpf || null, id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await registrarAuditoria({

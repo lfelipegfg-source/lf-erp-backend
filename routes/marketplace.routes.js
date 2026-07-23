@@ -499,7 +499,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return ok(res, { mensagem: `Estoque sincronizado: ${estoqueAtual} unidades`, listing_id: link.listing_id });
     } catch (err) {
       console.error('[marketplace] sync-estoque:', err.message);
-      return erro(res, 500, `Erro ao sincronizar: ${err.message}`);
+      return erro(res, 500, 'Erro ao sincronizar estoque');
     }
   });
 

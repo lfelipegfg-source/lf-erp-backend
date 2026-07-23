@@ -154,7 +154,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       });
     } catch (err) {
       console.error('[checkout] POST:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro ao criar link de pagamento');
     }
   });
 

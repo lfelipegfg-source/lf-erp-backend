@@ -31,6 +31,7 @@ module.exports = ({ auth, pool }) => {
 
   // ── Rate limiter por IP para login do portal (10 req/min) ─────────────────
   const _portalLoginBuckets = new Map();
+  const PORTAL_LOGIN_MAP_MAX = 10000;
   function portalLoginRateLimiter(req, res, next) {
     const key = req.ip || 'unknown';
     const now = Date.now();
@@ -38,6 +39,9 @@ module.exports = ({ auth, pool }) => {
     if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
     bucket.count++;
     _portalLoginBuckets.set(key, bucket);
+    if (_portalLoginBuckets.size > PORTAL_LOGIN_MAP_MAX) {
+      for (const [k, b] of _portalLoginBuckets) { if (Date.now() > b.resetAt) _portalLoginBuckets.delete(k); }
+    }
     if (bucket.count > 10) return erro(res, 429, 'Muitas tentativas. Aguarde 1 minuto.');
     next();
   }
@@ -45,6 +49,7 @@ module.exports = ({ auth, pool }) => {
   // ── Rate limiter por cliente para consultas do portal (60 req/min) ────────
   // Protege contra scraping de dados financeiros caso um token JWT seja comprometido
   const _portalConsultaBuckets = new Map();
+  const PORTAL_CONSULTA_MAP_MAX = 10000;
   function portalConsultaRateLimiter(req, res, next) {
     const key = req.cliente?.id || req.ip || 'unknown';
     const now = Date.now();
@@ -52,6 +57,9 @@ module.exports = ({ auth, pool }) => {
     if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
     bucket.count++;
     _portalConsultaBuckets.set(key, bucket);
+    if (_portalConsultaBuckets.size > PORTAL_CONSULTA_MAP_MAX) {
+      for (const [k, b] of _portalConsultaBuckets) { if (Date.now() > b.resetAt) _portalConsultaBuckets.delete(k); }
+    }
     if (bucket.count > 60) return erro(res, 429, 'Muitas requisições. Aguarde 1 minuto.');
     next();
   }

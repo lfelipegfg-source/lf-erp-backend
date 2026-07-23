@@ -521,7 +521,7 @@ module.exports = ({
 
       // Confere se o total informado bate com a soma real dos itens (com tolerância de arredondamento)
       const totalEsperado = Number((somaItens - descontoFinal + acrescimoFinal).toFixed(2));
-      const toleranciaTotal = Math.max(0.05, itens.length * 0.01);
+      const toleranciaTotal = 0.05;
       if (Math.abs(totalEsperado - totalFinal) > toleranciaTotal) {
         await client.query('ROLLBACK');
         return erro(res, 400, `Total da venda (R$ ${totalFinal.toFixed(2)}) não corresponde à soma dos itens com desconto/acréscimo (R$ ${totalEsperado.toFixed(2)}).`);
@@ -822,7 +822,7 @@ module.exports = ({
 
       // Confere se o total informado bate com a soma real dos itens (com tolerância de arredondamento)
       const totalEsperadoEdicao = Number((somaItens - descontoFinal + acrescimoFinal).toFixed(2));
-      const toleranciaTotalEdicao = Math.max(0.05, itens.length * 0.01);
+      const toleranciaTotalEdicao = 0.05;
       if (Math.abs(totalEsperadoEdicao - totalFinal) > toleranciaTotalEdicao) {
         await client.query('ROLLBACK');
         return erro(res, 400, `Total da venda (R$ ${totalFinal.toFixed(2)}) não corresponde à soma dos itens com desconto/acréscimo (R$ ${totalEsperadoEdicao.toFixed(2)}).`);

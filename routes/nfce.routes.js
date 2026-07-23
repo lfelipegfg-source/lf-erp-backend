@@ -246,10 +246,12 @@ module.exports = ({
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
-      const { status, limite = 50, pagina = 1 } = req.query;
-      const offset = (Number(pagina) - 1) * Number(limite);
+      const { status } = req.query;
+      const limite = Math.min(Math.max(Number(req.query.limite) || 50, 1), 200);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
 
-      const params = [empresaResolvida.id, Number(limite), offset];
+      const params = [empresaResolvida.id, limite, offset];
       let filtroStatus = '';
       if (status) { filtroStatus = ' AND n.status = $4'; params.push(status); }
 

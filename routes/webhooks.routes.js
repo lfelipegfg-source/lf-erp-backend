@@ -187,7 +187,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
         }
       }
 
-      const eventosValidos = Array.isArray(eventos)
+      const eventosValidos = Array.isArray(eventos) && eventos.length > 0
         ? eventos.filter((e) => EVENTOS_DISPONIVEIS.includes(e))
         : null;
 
