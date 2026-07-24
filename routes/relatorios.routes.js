@@ -817,10 +817,7 @@ module.exports = function ({
 
 COALESCE(MAX(p.estoque), 0) AS estoque_parado,
 
-// TODO B20: capital_parado exclui produtos sem vendas no período porque a query
-// parte de venda_itens (INNER JOIN vendas). Para incluir todos os produtos com
-// estoque > 0, seria necessária uma query separada (SELECT de produtos LEFT JOIN
-// venda_itens filtrado por período). Mudança invasiva — não aplicada aqui.
+-- capital_parado: inclui apenas produtos com vendas no período (limitação conhecida)
 COALESCE(MAX(
   p.estoque * p.custo_medio
 ), 0) AS capital_parado,
