@@ -319,17 +319,19 @@ module.exports = ({
 
         // Baixa estoque da grade
         await client.query(
-          `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-          [estoqueGrade - quantidade, gradeId, empresaResolvida.id]
+          `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW()
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND produto_id = $4))`,
+          [estoqueGrade - quantidade, gradeId, empresaResolvida.id, produtoId]
         );
 
         // Sincroniza estoque do produto-pai como soma das grades
         await client.query(
           `UPDATE produtos SET estoque = (
              SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
-             WHERE produto_id = $1 AND empresa_id = $2 AND ativo = true
-           ), atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
-          [produtoId, empresaResolvida.id]
+             WHERE produto_id = $1 AND ativo = true
+           ), atualizado_em = NOW()
+           WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
 
       // ── Kit (composição) ──────────────────────────────────────────
@@ -569,32 +571,34 @@ module.exports = ({
 
       await client.query('COMMIT');
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'vendas',
-        acao: 'cadastro',
-        referencia_id: venda.id,
-        dados_novos: {
-          cliente_id: clienteIdFinal,
-          cliente_nome: clienteNomeFinal,
-          subtotal: subtotalFinal,
-          desconto: descontoFinal,
-          acrescimo: acrescimoFinal,
-          total: totalFinal,
-          pagamento: pagamento || 'Dinheiro',
-          parcelas: Math.max(1, normalizarInt(parcelas || 1)),
-          status_pagamento: status_pagamento || 'pago',
-          itens: itens.map((i) => ({
-            produto_id: i.produto_id,
-            quantidade: i.quantidade,
-            preco_unitario: i.preco_unitario
-          }))
-        },
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'vendas',
+          acao: 'cadastro',
+          referencia_id: venda.id,
+          dados_novos: {
+            cliente_id: clienteIdFinal,
+            cliente_nome: clienteNomeFinal,
+            subtotal: subtotalFinal,
+            desconto: descontoFinal,
+            acrescimo: acrescimoFinal,
+            total: totalFinal,
+            pagamento: pagamento || 'Dinheiro',
+            parcelas: Math.max(1, normalizarInt(parcelas || 1)),
+            status_pagamento: status_pagamento || 'pago',
+            itens: itens.map((i) => ({
+              produto_id: i.produto_id,
+              quantidade: i.quantidade,
+              preco_unitario: i.preco_unitario
+            }))
+          },
+          req
+        });
+      } catch (e) { console.error('[vendas] audit:', e.message); }
 
       try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-criar] status-cr:', e.message); }
 
@@ -631,7 +635,7 @@ module.exports = ({
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('ERRO REAL AO REGISTRAR VENDA:', error);
-      return erro(res, 500, error.message || 'Erro ao registrar venda');
+      return erro(res, 500, 'Erro ao registrar venda');
     } finally {
       client.release();
     }
@@ -864,33 +868,35 @@ module.exports = ({
 
       await client.query('COMMIT');
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'vendas',
-        acao: 'edicao',
-        referencia_id: id,
-        dados_anteriores: vendaAtual,
-        dados_novos: {
-          cliente_id: clienteIdFinal,
-          cliente_nome: clienteNomeFinal,
-          subtotal: subtotalFinal,
-          desconto: descontoFinal,
-          acrescimo: acrescimoFinal,
-          total: totalFinal,
-          pagamento: pagamento || 'Dinheiro',
-          parcelas: parcelasFinal,
-          status_pagamento: status_pagamento || 'pago',
-          itens: itens.map((i) => ({
-            produto_id: i.produto_id,
-            quantidade: i.quantidade,
-            preco_unitario: i.preco_unitario
-          }))
-        },
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'vendas',
+          acao: 'edicao',
+          referencia_id: id,
+          dados_anteriores: vendaAtual,
+          dados_novos: {
+            cliente_id: clienteIdFinal,
+            cliente_nome: clienteNomeFinal,
+            subtotal: subtotalFinal,
+            desconto: descontoFinal,
+            acrescimo: acrescimoFinal,
+            total: totalFinal,
+            pagamento: pagamento || 'Dinheiro',
+            parcelas: parcelasFinal,
+            status_pagamento: status_pagamento || 'pago',
+            itens: itens.map((i) => ({
+              produto_id: i.produto_id,
+              quantidade: i.quantidade,
+              preco_unitario: i.preco_unitario
+            }))
+          },
+          req
+        });
+      } catch (e) { console.error('[vendas] audit:', e.message); }
 
       try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-editar] status-cr:', e.message); }
 
@@ -904,7 +910,7 @@ module.exports = ({
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('Erro real ao editar venda:', error);
-      return erro(res, 500, error.message || 'Erro ao editar venda');
+      return erro(res, 500, 'Erro ao editar venda');
     } finally {
       client.release();
     }
@@ -1274,18 +1280,20 @@ ORDER BY parcela ASC
 
       await client.query('COMMIT');
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'vendas',
-        acao: 'exclusao',
-        referencia_id: id,
-        dados_anteriores: venda,
-        dados_novos: null,
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'vendas',
+          acao: 'exclusao',
+          referencia_id: id,
+          dados_anteriores: venda,
+          dados_novos: null,
+          req
+        });
+      } catch (e) { console.error('[vendas] audit:', e.message); }
 
       try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[venda-excluir] status-cr:', e.message); }
 

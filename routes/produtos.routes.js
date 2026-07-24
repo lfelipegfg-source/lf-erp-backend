@@ -136,6 +136,11 @@ module.exports = ({
         // Gerar código de barras automático se não informado
         let codigoBarrasFinal = (codigo_barras || '').trim();
         if (!codigoBarrasFinal) {
+          // PRD-M2: lock transacional para evitar race condition na geração do código
+          await prodClient.query(
+            `SELECT pg_advisory_xact_lock(hashtext($1::text || '_codigos_barras'))`,
+            [String(empresaResolvida.id)]
+          );
           const cbRes = await prodClient.query(
             `SELECT COALESCE(MAX(CAST(codigo_barras AS BIGINT)), 0) AS max_cb
              FROM produtos
@@ -415,7 +420,7 @@ ${adicionarFiltroEmpresaSaaS({
       });
 
       const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
-      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const limite = Math.min(Math.max(parseInt(req.query.limit || '100', 10), 1), 500);
       const offset = (pagina - 1) * limite;
 
       const [countResult, result] = await Promise.all([
@@ -494,6 +499,14 @@ ${adicionarFiltroEmpresaSaaS({
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
       }
+
+      // PRD-M1: validar negativos antes de abrir transação
+      const precoN   = normalizarDecimal(preco);
+      const custoN   = normalizarDecimal(custo_unitario ?? custo);
+      const estoqueN = normalizarInt(estoque);
+      if (precoN < 0)   return erro(res, 400, 'Preço não pode ser negativo');
+      if (custoN < 0)   return erro(res, 400, 'Custo não pode ser negativo');
+      if (estoqueN < 0) return erro(res, 400, 'Estoque não pode ser negativo');
 
       const client = await pool.connect();
       try {

@@ -152,7 +152,7 @@ module.exports = function ({
         idx++;
       }
 
-      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const limite = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 100), 500);
       const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
       const limIdx = idx;
       const offIdx = idx + 1;
@@ -220,7 +220,7 @@ module.exports = function ({
       });
 
       const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
-      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const limite = Math.min(Math.max(parseInt(req.query.limit || '100', 10), 1), 500);
       const offset = (pagina - 1) * limite;
 
       const [countResult, result] = await Promise.all([

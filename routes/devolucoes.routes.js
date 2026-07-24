@@ -213,7 +213,7 @@ module.exports = ({
         await client.query(
           `INSERT INTO lancamentos_financeiros
              (empresa, empresa_id, tipo, descricao, valor, vencimento, status, categoria, observacao)
-           VALUES ($1,$2,'despesa',$3,$4,NOW() + INTERVAL '3 days','pendente','Devoluções',$5)`,
+           VALUES ($1,$2,'despesa',$3,$4,(NOW() AT TIME ZONE 'America/Fortaleza') + INTERVAL '3 days','pendente','Devoluções',$5)`,
           [
             emp.nome,
             emp.id,
@@ -304,7 +304,7 @@ module.exports = ({
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('[devolucoes] POST:', err.message);
-      return erro(res, 500, 'Erro ao registrar devolução: ' + err.message);
+      return erro(res, 500, 'Erro ao registrar devolução');
     } finally {
       client.release();
     }

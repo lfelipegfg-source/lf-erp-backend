@@ -103,7 +103,7 @@ module.exports = ({ auth, pool }) => {
 
       if (result.rowCount === 0) {
         // Dummy compare para equalizar tempo de resposta e evitar timing oracle
-        await bcrypt.compare(senha, '$2b$12$invalidhashplaceholderXXXXXXXXXXXXXXXXXXXXXXXXXXX');
+        await bcrypt.compare(senha, '$2b$12$GhvMmNVjRW29ulnudl.LbuAnUtN/LRfe1JsBm1Wf3K.7PZVFSNa3u');
         return erro(res, 401, 'Credenciais inválidas');
       }
 
@@ -116,7 +116,7 @@ module.exports = ({ auth, pool }) => {
       if (!senhaOk) return erro(res, 401, 'Credenciais inválidas');
 
       await pool.query(
-        `UPDATE clientes SET portal_ultimo_acesso = NOW() WHERE id = $1`,
+        `UPDATE clientes SET portal_ultimo_acesso = NOW() AT TIME ZONE 'America/Fortaleza' WHERE id = $1`,
         [cliente.id]
       );
 

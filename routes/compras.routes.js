@@ -259,30 +259,32 @@ module.exports = function ({
 
       await client.query('COMMIT');
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'compras',
-        acao: 'cadastro',
-        referencia_id: compra.id,
-        dados_novos: {
-          fornecedor_id,
-          fornecedor_nome: fornecedor.nome,
-          data,
-          total: totalCalculado,
-          pagamento: pagamentoNormalizado,
-          parcelas: parcelasFinal,
-          gerar_conta_pagar: geraContaPagar,
-          itens: itens.map((i) => ({
-            produto_id: i.produto_id,
-            quantidade: i.quantidade,
-            custo_unitario: i.custo_unitario || i.preco_unitario || i.custo
-          }))
-        },
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'compras',
+          acao: 'cadastro',
+          referencia_id: compra.id,
+          dados_novos: {
+            fornecedor_id,
+            fornecedor_nome: fornecedor.nome,
+            data,
+            total: totalCalculado,
+            pagamento: pagamentoNormalizado,
+            parcelas: parcelasFinal,
+            gerar_conta_pagar: geraContaPagar,
+            itens: itens.map((i) => ({
+              produto_id: i.produto_id,
+              quantidade: i.quantidade,
+              custo_unitario: i.custo_unitario || i.preco_unitario || i.custo
+            }))
+          },
+          req
+        });
+      } catch (e) { console.error('[compras] audit:', e.message); }
 
       // Fire-and-forget — não bloqueia a resposta ao usuário
       if (typeof atualizarStatusContasPagarPorEmpresa === 'function') {
@@ -502,13 +504,15 @@ module.exports = function ({
 
       await client.query('COMMIT');
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome, empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id, usuario_nome: req.user.nome || '',
-        modulo: 'compras', acao: 'edicao', referencia_id: id,
-        dados_novos: { fornecedor_id, data, total: totalCalculado, pagamento: pagamentoNormalizado, parcelas: parcelasFinal },
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome, empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id, usuario_nome: req.user.nome || '',
+          modulo: 'compras', acao: 'edicao', referencia_id: id,
+          dados_novos: { fornecedor_id, data, total: totalCalculado, pagamento: pagamentoNormalizado, parcelas: parcelasFinal },
+          req
+        });
+      } catch (e) { console.error('[compras] audit:', e.message); }
 
       if (typeof atualizarStatusContasPagarPorEmpresa === 'function') {
         try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[compras-editar] status-cp:', e.message); }

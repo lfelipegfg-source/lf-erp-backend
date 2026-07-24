@@ -73,7 +73,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/config — criar ou atualizar config de um vendedor
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/config', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.post('/config', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -114,7 +114,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /comissoes/config/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/config/:id', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.delete('/config/:id', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -134,7 +134,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/config/:id/produtos — override de % por produto
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/config/:id/produtos', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.post('/config/:id/produtos', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -162,7 +162,7 @@ module.exports = ({
   });
 
   // DELETE /comissoes/config/:id/produtos/:pid
-  router.delete('/config/:id/produtos/:pid', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.delete('/config/:id/produtos/:pid', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -195,8 +195,12 @@ module.exports = ({
       const STATUS_COMISSAO_VALIDOS = ['pendente', 'pago', 'cancelado'];
       if (usuario_id)  { where += ` AND c.usuario_id = $${idx++}`;         params.push(Number(usuario_id)); }
       if (status && STATUS_COMISSAO_VALIDOS.includes(status)) { where += ` AND c.status = $${idx++}`; params.push(status); }
-      if (dataInicial) { where += ` AND DATE(c.criado_em) >= $${idx++}`;    params.push(dataInicial); }
-      if (dataFinal)   { where += ` AND DATE(c.criado_em) <= $${idx++}`;    params.push(dataFinal); }
+      if (dataInicial) { where += ` AND DATE(c.criado_em AT TIME ZONE 'America/Fortaleza') >= $${idx++}`;    params.push(dataInicial); }
+      if (dataFinal)   { where += ` AND DATE(c.criado_em AT TIME ZONE 'America/Fortaleza') <= $${idx++}`;    params.push(dataFinal); }
+
+      const limite = Math.min(Math.max(Number(req.query.limite) || 50, 1), 500);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
 
       const result = await pool.query(
         `SELECT c.*,
@@ -209,8 +213,8 @@ module.exports = ({
          LEFT JOIN vendas v ON v.id = c.venda_id
          ${where}
          ORDER BY c.criado_em DESC
-         LIMIT 500`,
-        params
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, limite, offset]
       );
 
       return ok(res, { comissoes: result.rows });
@@ -233,8 +237,8 @@ module.exports = ({
       let filtro = '';
       let idx = 2;
 
-      if (dataInicial) { filtro += ` AND DATE(c.criado_em) >= $${idx++}`; params.push(dataInicial); }
-      if (dataFinal)   { filtro += ` AND DATE(c.criado_em) <= $${idx++}`; params.push(dataFinal); }
+      if (dataInicial) { filtro += ` AND DATE(c.criado_em AT TIME ZONE 'America/Fortaleza') >= $${idx++}`; params.push(dataInicial); }
+      if (dataFinal)   { filtro += ` AND DATE(c.criado_em AT TIME ZONE 'America/Fortaleza') <= $${idx++}`; params.push(dataFinal); }
 
       const result = await pool.query(
         `SELECT
@@ -265,7 +269,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/:id/pagar — marca comissão como paga
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/pagar', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.post('/:id/pagar', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -307,7 +311,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/:id/cancelar
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/cancelar', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.post('/:id/cancelar', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
@@ -329,7 +333,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /comissoes/recalcular/:vendaId — recalcula manualmente
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/recalcular/:vendaId', auth, requirePermissao(pool, 'comissoes', 'editar'), writeRateLimiter, async (req, res) => {
+  router.post('/recalcular/:vendaId', auth, writeRateLimiter, requirePermissao(pool, 'comissoes', 'editar'), async (req, res) => {
     try {
       const emp = await empresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');

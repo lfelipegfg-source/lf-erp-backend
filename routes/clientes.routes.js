@@ -219,7 +219,7 @@ module.exports = ({
       if (dataInicial) { periodoParams.push(dataInicial); periodoWhere += ` AND v.data >= $${periodoParams.length}`; }
       if (dataFinal)   { periodoParams.push(dataFinal);   periodoWhere += ` AND v.data <= $${periodoParams.length}`; }
       if (!dataInicial && !dataFinal) {
-        periodoWhere = ` AND v.data >= (NOW() - INTERVAL '12 months')::date`;
+        periodoWhere = ` AND v.data >= (NOW() AT TIME ZONE 'America/Fortaleza' - INTERVAL '12 months')::date`;
       }
 
       const result = await pool.query(
@@ -230,7 +230,7 @@ module.exports = ({
              COUNT(*)            AS num_vendas,
              SUM(v.total)        AS receita_total
            FROM vendas v
-           LEFT JOIN clientes c ON c.id = v.cliente_id AND c.empresa_id = v.empresa_id AND c.deletado_em IS NULL
+           LEFT JOIN clientes c ON c.id = v.cliente_id AND (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2)) AND c.deletado_em IS NULL
            WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
              AND v.cliente_id IS NOT NULL
              ${periodoWhere}
@@ -337,7 +337,7 @@ module.exports = ({
         idx++;
       }
 
-      const limite = Math.min(Math.max(0, parseInt(req.query.limit, 10) || 100), 500);
+      const limite = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 100), 500);
       const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
       const filterParams = [...params];
       const limIdx = filterParams.length + 1;
@@ -407,7 +407,7 @@ module.exports = ({
       });
 
       const pagina = Math.max(1, parseInt(req.query.page || '1', 10));
-      const limite = Math.min(parseInt(req.query.limit || '100', 10), 500);
+      const limite = Math.min(Math.max(parseInt(req.query.limit || '100', 10), 1), 500);
       const offset = (pagina - 1) * limite;
 
       const [countResult, result] = await Promise.all([

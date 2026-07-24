@@ -229,7 +229,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
            data_prev_fechamento = COALESCE($9, data_prev_fechamento),
            origem               = COALESCE(NULLIF($10,''), origem),
            observacoes          = COALESCE(NULLIF($11,''), observacoes),
-           atualizado_em        = NOW()
+           atualizado_em        = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $12 AND empresa_id = $13
          RETURNING *`,
         [
@@ -268,7 +268,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!ESTAGIOS.includes(estagio)) return erro(res, 400, `Estágio inválido. Use: ${ESTAGIOS.join(', ')}`);
 
       const result = await pool.query(
-        `UPDATE crm_oportunidades SET estagio = $1, atualizado_em = NOW()
+        `UPDATE crm_oportunidades SET estagio = $1, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $2 AND empresa_id = $3 RETURNING *`,
         [estagio, id, emp.id]
       );
@@ -326,7 +326,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const orcResult = await client.query(
         `INSERT INTO orcamentos
            (empresa_id, cliente_id, cliente_nome, total, status, observacao, validade_dias, criado_por, criado_em, atualizado_em)
-         VALUES ($1,$2,$3,$4,'rascunho',$5,30,$6,NOW(),NOW())
+         VALUES ($1,$2,$3,$4,'rascunho',$5,30,$6,NOW() AT TIME ZONE 'America/Fortaleza',NOW() AT TIME ZONE 'America/Fortaleza')
          RETURNING id`,
         [
           emp.id,
@@ -343,7 +343,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       // Marca oportunidade como "em proposta" se ainda não avançou
       if (!['proposta', 'negociacao', 'ganho'].includes(op.estagio)) {
         await client.query(
-          `UPDATE crm_oportunidades SET estagio = 'proposta', atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+          `UPDATE crm_oportunidades SET estagio = 'proposta', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza' WHERE id = $1 AND empresa_id = $2`,
           [id, emp.id]
         );
       }
@@ -403,8 +403,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const r = await pool.query(
-        `DELETE FROM crm_atividades WHERE id = $1 AND empresa_id = $2`,
-        [Number(req.params.atId), emp.id]
+        `DELETE FROM crm_atividades WHERE id = $1 AND empresa_id = $2 AND oportunidade_id = $3`,
+        [Number(req.params.atId), emp.id, Number(req.params.id)]
       );
 
       if (r.rowCount === 0) return erro(res, 404, 'Atividade não encontrada');

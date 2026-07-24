@@ -730,6 +730,11 @@ async function obterPlanoEmpresa(empresaId, empresaNome) {
   }
 
   const data = result.rows[0];
+  if (_planoCache.size > 500) {
+    for (const [k, v] of _planoCache) {
+      if (agora - v.ts > PLANO_CACHE_TTL_MS) _planoCache.delete(k);
+    }
+  }
   _planoCache.set(cacheKey, { ts: agora, data });
   return data;
 }
@@ -1030,7 +1035,7 @@ async function registrarMovimentacaoEstoque({
         usuario_id,
         data_movimentacao
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() AT TIME ZONE 'America/Fortaleza')`,
     [
       empresa,
       empresa_id || null,
@@ -1116,6 +1121,11 @@ async function obterConfigEmpresa(empresa, empresaId = null) {
     [empresaId || 0, empresa]
   );
   const data = result.rows[0] || {};
+  if (_configCache.size > 500) {
+    for (const [k, v] of _configCache) {
+      if (agora - v.ts > CONFIG_CACHE_TTL_MS) _configCache.delete(k);
+    }
+  }
   _configCache.set(empresa, { ts: agora, data });
   return data;
 }
@@ -3037,7 +3047,7 @@ app.get('/lixeira', auth, requirePermissao(pool, 'configuracoes', 'ver'), async 
 });
 
 // PUT /lixeira/recuperar/:tabela/:id — restaura registro (deletado_em = NULL)
-app.put('/lixeira/recuperar/:tabela/:id', auth, requirePermissao(pool, 'configuracoes', 'editar'), writeRateLimiter, async (req, res) => {
+app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarUsuarios(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
 
@@ -3077,7 +3087,7 @@ app.put('/lixeira/recuperar/:tabela/:id', auth, requirePermissao(pool, 'configur
 });
 
 // DELETE /lixeira/excluir/:tabela/:id — exclusão permanente (somente admin)
-app.delete('/lixeira/excluir/:tabela/:id', auth, requirePermissao(pool, 'configuracoes', 'deletar'), writeRateLimiter, async (req, res) => {
+app.delete('/lixeira/excluir/:tabela/:id', auth, writeRateLimiter, requirePermissao(pool, 'configuracoes', 'deletar'), async (req, res) => {
   try {
     if (req.user.tipo !== 'admin' && !req.user.is_saas_owner) {
       return jsonErro(res, 403, 'Exclusão permanente restrita a administradores');
@@ -3190,13 +3200,6 @@ app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), asy
 });
 
 app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'deletar'), async (req, res) => {
-  const empresa = req.query.empresa || req.body.empresa || null;
-  const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-  if (!empresaResolvida) {
-    return jsonErro(res, 403, 'Sem acesso');
-  }
-
   if (!podeGerenciarCompras(req)) {
     return jsonErro(res, 403, 'Sem permissão para excluir compras');
   }
@@ -3208,6 +3211,13 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
 
   try {
     await client.query('BEGIN');
+
+    const empresa = req.query.empresa || req.body.empresa || null;
+    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+    if (!empresaResolvida) {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 403, 'Sem acesso');
+    }
 
     const compraResult = await client.query(
       `SELECT * FROM compras
@@ -4387,12 +4397,13 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
     const valorEstorno = normalizarDecimal(lancamento.valor || 0);
     const valorAtualConta = normalizarDecimal(conta.valor || 0);
     const novoValorConta = Number((valorAtualConta + valorEstorno).toFixed(2));
+    const valorOriginalConta = normalizarDecimal(conta.valor_original || 0);
+    const estaVencido = conta.data_vencimento && String(conta.data_vencimento).slice(0, 10) < hoje();
 
     const novoStatus =
-      conta.data_vencimento &&
-      String(conta.data_vencimento).slice(0, 10) < hoje()
-        ? 'atrasado'
-        : 'pendente';
+      valorOriginalConta > 0 && novoValorConta < valorOriginalConta
+        ? (estaVencido ? 'parcial_atrasado' : 'parcial')
+        : (estaVencido ? 'atrasado' : 'pendente');
 
     await client.query(
       `
@@ -5430,8 +5441,11 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
       return jsonErro(res, 400, 'Valor inválido');
     }
 
-    await pool.query(
-      `
+    const client7 = await pool.connect();
+    try {
+      await client7.query('BEGIN');
+      await client7.query(
+        `
       UPDATE lancamentos_financeiros
       SET tipo = $1,
           categoria = $2,
@@ -5447,23 +5461,30 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
           atualizado_em = NOW()
       WHERE id = $12 AND (empresa_id = $13 OR (empresa_id IS NULL AND empresa = $14))
 `,
-      [
-        String(tipo).toLowerCase(),
-        categoria,
-        descricao,
-        valorFinal,
-        normalizarDataISO(vencimento) || null,
-        normalizarDataISO(pagamento_data) || null,
-        ['pendente', 'pago', 'atrasado'].includes(String(status || '').toLowerCase()) ? String(status).toLowerCase() : 'pendente',
-        forma_pagamento || '',
-        Boolean(recorrente),
-        frequencia || '',
-        observacao || '',
-        id,
-        empresaResolvida.id,
-        empresaResolvida.nome
-      ]
-    );
+        [
+          String(tipo).toLowerCase(),
+          categoria,
+          descricao,
+          valorFinal,
+          normalizarDataISO(vencimento) || null,
+          normalizarDataISO(pagamento_data) || null,
+          ['pendente', 'pago', 'atrasado'].includes(String(status || '').toLowerCase()) ? String(status).toLowerCase() : 'pendente',
+          forma_pagamento || '',
+          Boolean(recorrente),
+          frequencia || '',
+          observacao || '',
+          id,
+          empresaResolvida.id,
+          empresaResolvida.nome
+        ]
+      );
+      await client7.query('COMMIT');
+    } catch (txErr) {
+      await client7.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client7.release();
+    }
 
     try {
       await registrarLogFinanceiro({
@@ -5495,34 +5516,49 @@ app.post('/financeiro/lancamentos/pagar/:id', auth, writeRateLimiter, requirePer
 
     const id = Number(req.params.id);
 
-    const atualResult = req.user.is_saas_owner
-      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
-      : await pool.query(
-          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-          [id, req.user.empresa_id || 0, req.user.empresa || '']
-        );
+    const client8 = await pool.connect();
+    let atual, empresaResolvida;
+    try {
+      await client8.query('BEGIN');
 
-    if (atualResult.rowCount === 0) {
-      return jsonErro(res, 404, 'Lançamento não encontrado');
-    }
+      const atualResult = req.user.is_saas_owner
+        ? await client8.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1 FOR UPDATE`, [id])
+        : await client8.query(
+            `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
 
-    const atual = atualResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
+      if (atualResult.rowCount === 0) {
+        await client8.query('ROLLBACK');
+        return jsonErro(res, 404, 'Lançamento não encontrado');
+      }
 
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
+      atual = atualResult.rows[0];
+      empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
 
-    await pool.query(
-      `
+      if (!empresaResolvida) {
+        await client8.query('ROLLBACK');
+        return jsonErro(res, 403, 'Sem acesso');
+      }
+
+      await client8.query(
+        `
       UPDATE lancamentos_financeiros
       SET status = 'pago',
           pagamento_data = $1,
           atualizado_em = NOW()
       WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
       `,
-      [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
-    );
+        [normalizarDataISO(req.body?.pagamento_data) || hoje(), id, empresaResolvida.id, empresaResolvida.nome]
+      );
+
+      await client8.query('COMMIT');
+    } catch (txErr) {
+      await client8.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client8.release();
+    }
 
     try {
       await registrarLogFinanceiro({
@@ -5601,7 +5637,7 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
 });
 
 // ================= INVESTIMENTOS =================
-app.post('/investimentos', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) {
       return jsonErro(res, 403, 'Sem permissão');
@@ -6120,7 +6156,7 @@ app.get('/financeiro/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financ
 // Endpoint de debug removido da produção (expunha schema do banco)
 
 // ================= DASHBOARD =================
-app.get('/dashboard', auth, async (req, res) => {
+app.get('/dashboard', auth, requirePermissao(pool, 'dashboard', 'ver'), async (req, res) => {
   try {
     const empresaInformada = req.query.empresa || null;
     const empresaResolvida = await validarAcessoEmpresa(req, empresaInformada);
@@ -6596,7 +6632,7 @@ app.get('/dashboard', auth, async (req, res) => {
 
 // ================= DASHBOARD — GRÁFICOS =================
 
-app.get('/dashboard/grafico', auth, async (req, res) => {
+app.get('/dashboard/grafico', auth, requirePermissao(pool, 'dashboard', 'ver'), async (req, res) => {
   try {
     const empresaInformada = req.query.empresa || null;
     const empresaResolvida = await validarAcessoEmpresa(req, empresaInformada);
@@ -6931,7 +6967,7 @@ app.get('/pagamentos/pix/status/:txid', auth, requirePermissao(pool, 'financeiro
 
     if (checkRes.status === 200 && checkRes.body.status === 'CONCLUIDA') {
       await pool.query(
-        `UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW()
+        `UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE txid=$1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
         [txid, empresaResolvida.id, empresaResolvida.nome]
       );
@@ -7577,7 +7613,7 @@ app.get('/configuracoes/:empresa', auth, requirePermissao(pool, 'configuracoes',
 });
 
 // SALVAR CONFIGURAÇÕES
-app.put('/configuracoes', auth, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
+app.put('/configuracoes', auth, writeRateLimiter, requirePermissao(pool, 'configuracoes', 'editar'), async (req, res) => {
   try {
     const { empresa, nome_empresa, taxa_multa, taxa_juros_dia, logo_url, cor_primaria } = req.body;
 
@@ -7642,7 +7678,7 @@ process.on('uncaughtException', (err) => {
 
 // ================= ALERTAS =================
 
-app.get('/alertas/:empresa', auth, async (req, res) => {
+app.get('/alertas/:empresa', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.params.empresa);
@@ -8417,7 +8453,7 @@ async function garantirDepositoPrincipal(empresaId, empresaNome, client) {
 }
 
 // ── LGPD — exportação de dados da própria empresa ─────────────────────────────
-app.get('/empresa/exportar-dados', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
+app.get('/empresa/exportar-dados', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8474,7 +8510,7 @@ app.get('/empresa/exportar-dados', auth, requirePermissao(pool, 'relatorios', 'v
 
 // ── Notificações in-app ───────────────────────────────────────────────────────
 // GET /notificacoes — retorna notificações relevantes para a empresa logada
-app.get('/notificacoes', auth, async (req, res) => {
+app.get('/notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return res.json({ sucesso: true, notificacoes: [] });
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8696,7 +8732,7 @@ function sseNotificarEmpresa(empresaId) {
 }
 
 // GET /sse-notificacoes — stream de eventos para o frontend
-app.get('/sse-notificacoes', auth, async (req, res) => {
+app.get('/sse-notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, null);
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');

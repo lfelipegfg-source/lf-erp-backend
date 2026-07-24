@@ -89,7 +89,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /nfe/config
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/config', auth, requirePermissao(pool, 'nfe', 'configurar'), writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, writeRateLimiter, requirePermissao(pool, 'nfe', 'configurar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -161,7 +161,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /nfe/emitir/:vendaId
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/emitir/:vendaId', auth, requirePermissao(pool, 'nfe', 'emitir'), writeRateLimiter, async (req, res) => {
+  router.post('/emitir/:vendaId', auth, writeRateLimiter, requirePermissao(pool, 'nfe', 'emitir'), async (req, res) => {
     try {
       const vendaId = Number(req.params.vendaId);
       if (!vendaId) return erro(res, 400, 'ID de venda inválido');
@@ -208,9 +208,9 @@ module.exports = ({
                   p.pis_cst, p.pis_aliquota, p.cofins_cst, p.cofins_aliquota,
                   p.ipi_cst, p.ipi_aliquota, p.gtin
            FROM venda_itens vi
-           LEFT JOIN produtos p ON p.id = vi.produto_id
+           LEFT JOIN produtos p ON p.id = vi.produto_id AND (p.empresa_id = $2 OR (p.empresa_id IS NULL AND p.empresa = $3))
            WHERE vi.venda_id = $1`,
-          [vendaId]
+          [vendaId, empresaResolvida.id, empresaResolvida.nome]
         )
       ]);
 
@@ -355,7 +355,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /nfe/cancelar/:nfeId
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/cancelar/:nfeId', auth, requirePermissao(pool, 'nfe', 'cancelar'), writeRateLimiter, async (req, res) => {
+  router.post('/cancelar/:nfeId', auth, writeRateLimiter, requirePermissao(pool, 'nfe', 'cancelar'), async (req, res) => {
     try {
       const nfeId = Number(req.params.nfeId);
       const { justificativa } = req.body;

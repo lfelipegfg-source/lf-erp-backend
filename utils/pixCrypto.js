@@ -3,6 +3,10 @@ const crypto = require('crypto');
 const ALGORITHM = 'aes-256-gcm';
 const PREFIX = 'enc:v1:';
 
+if (!process.env.PIX_ENCRYPTION_KEY) {
+  console.warn('[pixCrypto] PIX_ENCRYPTION_KEY ausente — dados PIX em texto puro. Configure a variável em produção.');
+}
+
 function getKey() {
   const hex = process.env.PIX_ENCRYPTION_KEY;
   if (!hex) return null;

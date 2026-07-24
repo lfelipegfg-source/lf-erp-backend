@@ -63,7 +63,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.put('/config', auth, requirePermissao(pool, 'nfse', 'configurar'), writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, writeRateLimiter, requirePermissao(pool, 'nfse', 'configurar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -113,9 +113,13 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
+      const limite = Math.min(Math.max(Number(req.query.limite) || 50, 1), 200);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
+
       const result = await pool.query(
-        `SELECT * FROM nfse_emissoes WHERE empresa_id = $1 ORDER BY criado_em DESC LIMIT 200`,
-        [empresaResolvida.id]
+        `SELECT * FROM nfse_emissoes WHERE empresa_id = $1 ORDER BY criado_em DESC LIMIT $2 OFFSET $3`,
+        [empresaResolvida.id, limite, offset]
       );
 
       return ok(res, { emissoes: result.rows });
@@ -127,7 +131,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Emitir ─────────────────────────────────────────────────────────────────
 
-  router.post('/emitir', auth, requirePermissao(pool, 'nfse', 'emitir'), writeRateLimiter, async (req, res) => {
+  router.post('/emitir', auth, writeRateLimiter, requirePermissao(pool, 'nfse', 'emitir'), async (req, res) => {
     const client = await pool.connect();
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -198,7 +202,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       emitirNfse(cfg.token_focus, cfg.ambiente, ref, payload)
         .then(async (r) => {
-          const status = r.ok ? 'autorizada' : 'erro';
+          const statusBody = r.data?.situacao || r.data?.status;
+          const status = (r.ok && (statusBody === 'autorizado' || statusBody === 'autorizada'))
+            ? 'autorizada' : 'erro';
           await pool.query(
             `UPDATE nfse_emissoes SET
                status = $1,
@@ -279,7 +285,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Cancelar ───────────────────────────────────────────────────────────────
 
-  router.post('/cancelar/:ref', auth, requirePermissao(pool, 'nfse', 'cancelar'), writeRateLimiter, async (req, res) => {
+  router.post('/cancelar/:ref', auth, writeRateLimiter, requirePermissao(pool, 'nfse', 'cancelar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -287,10 +293,13 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const { ref } = req.params;
 
       const emissaoCheck = await pool.query(
-        `SELECT id FROM nfse_emissoes WHERE ref = $1 AND empresa_id = $2 LIMIT 1`,
+        `SELECT id, status FROM nfse_emissoes WHERE ref = $1 AND empresa_id = $2 LIMIT 1`,
         [ref, empresaResolvida.id]
       );
       if (emissaoCheck.rowCount === 0) return erro(res, 404, 'NFS-e não encontrada');
+      const statusAtual = emissaoCheck.rows[0].status;
+      if (statusAtual === 'cancelada') return erro(res, 400, 'NFS-e já está cancelada');
+      if (statusAtual !== 'autorizada') return erro(res, 400, `NFS-e não pode ser cancelada no status "${statusAtual}"`);
 
       const cfg = await getConfig(empresaResolvida.id);
       if (!cfg?.token_focus) return erro(res, 400, 'FocusNFe não configurado');

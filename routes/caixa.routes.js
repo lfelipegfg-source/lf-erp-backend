@@ -87,15 +87,15 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/abrir ────────────────────────────────────────────────────
-  router.post('/abrir', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
-    const emp = await getEmpresa(req);
-    if (!emp) return erro(res, 403, 'Sem acesso');
-
-    const { saldo_inicial = 0, observacao } = req.body;
-    const saldoInicial = normalizarDecimal(saldo_inicial);
-
+  router.post('/abrir', auth, writeRateLimiter, requirePermissao(pool, 'caixa', 'criar'), async (req, res) => {
     let client;
     try {
+      const emp = await getEmpresa(req);
+      if (!emp) return erro(res, 403, 'Sem acesso');
+
+      const { saldo_inicial = 0, observacao } = req.body;
+      const saldoInicial = normalizarDecimal(saldo_inicial);
+
       client = await pool.connect();
       await client.query('BEGIN');
 
@@ -134,16 +134,16 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/sangria ──────────────────────────────────────────────────
-  router.post('/sangria', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
-    const emp = await getEmpresa(req);
-    if (!emp) return erro(res, 403, 'Sem acesso');
-
-    const { valor, descricao } = req.body;
-    const v = normalizarDecimal(valor);
-    if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para a sangria');
-
+  router.post('/sangria', auth, writeRateLimiter, requirePermissao(pool, 'caixa', 'criar'), async (req, res) => {
     let client;
     try {
+      const emp = await getEmpresa(req);
+      if (!emp) return erro(res, 403, 'Sem acesso');
+
+      const { valor, descricao } = req.body;
+      const v = normalizarDecimal(valor);
+      if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para a sangria');
+
       client = await pool.connect();
       await client.query('BEGIN');
       const sessaoResult = await client.query(
@@ -180,16 +180,16 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/suprimento ───────────────────────────────────────────────
-  router.post('/suprimento', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
-    const emp = await getEmpresa(req);
-    if (!emp) return erro(res, 403, 'Sem acesso');
-
-    const { valor, descricao } = req.body;
-    const v = normalizarDecimal(valor);
-    if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para o suprimento');
-
+  router.post('/suprimento', auth, writeRateLimiter, requirePermissao(pool, 'caixa', 'criar'), async (req, res) => {
     let client;
     try {
+      const emp = await getEmpresa(req);
+      if (!emp) return erro(res, 403, 'Sem acesso');
+
+      const { valor, descricao } = req.body;
+      const v = normalizarDecimal(valor);
+      if (!v || v <= 0) return erro(res, 400, 'Informe um valor positivo para o suprimento');
+
       client = await pool.connect();
       await client.query('BEGIN');
       const sessaoResult = await client.query(
@@ -221,12 +221,12 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
   });
 
   // ── POST /caixa/fechar ───────────────────────────────────────────────────
-  router.post('/fechar', auth, requirePermissao(pool, 'caixa', 'criar'), writeRateLimiter, async (req, res) => {
-    const emp = await getEmpresa(req);
-    if (!emp) return erro(res, 403, 'Sem acesso');
-
+  router.post('/fechar', auth, writeRateLimiter, requirePermissao(pool, 'caixa', 'criar'), async (req, res) => {
     let client;
     try {
+      const emp = await getEmpresa(req);
+      if (!emp) return erro(res, 403, 'Sem acesso');
+
       client = await pool.connect();
       await client.query('BEGIN');
 

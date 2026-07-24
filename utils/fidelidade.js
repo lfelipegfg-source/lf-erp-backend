@@ -44,7 +44,8 @@ async function acumularPontosFidelidade(pool, { empresaId, clienteId, vendaId, t
     );
 
     const saldoResult = await client.query(
-      `SELECT COALESCE(pontos_fidelidade, 0) AS saldo FROM clientes WHERE id = $1 AND empresa_id = $2`,
+      `SELECT COALESCE(pontos_fidelidade, 0) AS saldo FROM clientes
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $2)))`,
       [clienteId, empresaId]
     );
     const saldoApos = saldoResult.rows[0]?.saldo || 0;

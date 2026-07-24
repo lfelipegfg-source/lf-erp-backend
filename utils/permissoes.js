@@ -45,7 +45,7 @@ function requirePermissao(pool, modulo, acao) {
         `SELECT ${coluna}
          FROM permissoes_usuario
          WHERE usuario_id = $1
-           AND empresa_id = $2
+           AND empresa_id IS NOT DISTINCT FROM $2
            AND modulo = $3
          ORDER BY empresa_id DESC NULLS LAST
          LIMIT 1`,

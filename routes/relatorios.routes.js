@@ -34,7 +34,7 @@ module.exports = function ({
       if (!checkFinanceiro(req, res)) return;
 
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -338,7 +338,7 @@ module.exports = function ({
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -594,7 +594,7 @@ module.exports = function ({
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -647,10 +647,15 @@ module.exports = function ({
         castDate: false
       });
 
-      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT 1000`;
+      const limite = Math.min(Math.max(Number(req.query.limite) || 100, 1), 1000);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
+      const limIdx = params.length + 1;
+      const offIdx = params.length + 2;
+      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT $${limIdx} OFFSET $${offIdx}`;
 
-      const result = await pool.query(sql, params);
-      const truncado = result.rows.length === 1000;
+      const result = await pool.query(sql, [...params, limite, offset]);
+      const truncado = result.rows.length === limite;
 
       return res.json({ sucesso: true, truncado, dados: result.rows.map((row) => ({
         ...row,
@@ -668,7 +673,7 @@ module.exports = function ({
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -722,10 +727,15 @@ module.exports = function ({
         castDate: false
       });
 
-      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT 1000`;
+      const limite = Math.min(Math.max(Number(req.query.limite) || 100, 1), 1000);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
+      const limIdx = params.length + 1;
+      const offIdx = params.length + 2;
+      sql += ` ORDER BY data_vencimento ASC NULLS LAST, id DESC LIMIT $${limIdx} OFFSET $${offIdx}`;
 
-      const result = await pool.query(sql, params);
-      const truncado = result.rows.length === 1000;
+      const result = await pool.query(sql, [...params, limite, offset]);
+      const truncado = result.rows.length === limite;
 
       return res.json({ sucesso: true, truncado, dados: result.rows.map((row) => ({
         ...row,
@@ -744,7 +754,7 @@ module.exports = function ({
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
 
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -918,7 +928,7 @@ MAX(v.data) AS ultima_venda
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       // Atualiza status antes de consultar
@@ -1007,7 +1017,7 @@ MAX(v.data) AS ultima_venda
     try {
       if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const { dataInicial, dataFinal } = obterPeriodo(req);
@@ -1127,7 +1137,7 @@ MAX(v.data) AS ultima_venda
   router.get('/vendas/por-grade/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');

@@ -198,7 +198,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
            eventos       = COALESCE($3, eventos),
            secret        = COALESCE(NULLIF($4,''), secret),
            ativo         = COALESCE($5, ativo),
-           atualizado_em = NOW()
+           atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $6 AND empresa_id = $7 RETURNING *`,
         [
           nome?.trim() || null,

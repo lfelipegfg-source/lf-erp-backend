@@ -78,7 +78,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
         `INSERT INTO alertas_config
            (empresa_id, email_ativo, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from,
             email_assunto, email_corpo, whatsapp_ativo, whatsapp_msg, dias_atraso_minimo, atualizado_em)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW() AT TIME ZONE 'America/Fortaleza')
          ON CONFLICT (empresa_id) DO UPDATE SET
            email_ativo           = $2,
            smtp_host             = COALESCE($3, alertas_config.smtp_host),
@@ -91,7 +91,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
            whatsapp_ativo        = $10,
            whatsapp_msg          = COALESCE($11, alertas_config.whatsapp_msg),
            dias_atraso_minimo    = COALESCE($12, alertas_config.dias_atraso_minimo),
-           atualizado_em         = NOW()`,
+           atualizado_em         = NOW() AT TIME ZONE 'America/Fortaleza'`,
         [
           emp.id,
           Boolean(email_ativo),
@@ -212,7 +212,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
             await pool.query(
               `INSERT INTO alertas_historico (empresa_id, tipo, cliente_id, cliente_nome, contato, valor_total, status, erro_msg)
                VALUES ($1,'email',$2,$3,$4,$5,'erro',$6)`,
-              [emp.id, cli.cliente_id, cli.cliente_nome, cli.email, cli.valor_total, mailErr.message]
+              [emp.id, cli.cliente_id, cli.cliente_nome, cli.email, cli.valor_total, 'Erro ao enviar e-mail']
             );
           }
         }

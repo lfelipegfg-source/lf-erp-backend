@@ -166,7 +166,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const r = await pool.query(
-        `UPDATE checkout_links SET status = 'pago', pago_em = NOW(), metodo_pago = COALESCE($1, metodo_pago), atualizado_em = NOW()
+        `UPDATE checkout_links SET status = 'pago', pago_em = NOW() AT TIME ZONE 'America/Fortaleza', metodo_pago = COALESCE($1, metodo_pago), atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $2 AND empresa_id = $3 RETURNING *`,
         [req.body.metodo || null, Number(req.params.id), e.id]
       );
@@ -198,6 +198,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   // ── Rate limiter por IP para a página pública de checkout (30 req/min) ────
   // Protege contra varredura/enumeração de tokens de pagamento
   const _checkoutPublicoBuckets = new Map();
+  const CHECKOUT_MAP_MAX = 10000;
   function checkoutPublicoRateLimiter(req, res, next) {
     const key = req.ip || 'unknown';
     const now = Date.now();
@@ -205,6 +206,12 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60_000; }
     bucket.count++;
     _checkoutPublicoBuckets.set(key, bucket);
+    if (_checkoutPublicoBuckets.size > CHECKOUT_MAP_MAX) {
+      const agora = Date.now();
+      for (const [k, b] of _checkoutPublicoBuckets) {
+        if (agora > b.resetAt) _checkoutPublicoBuckets.delete(k);
+      }
+    }
     if (bucket.count > 30) return erro(res, 429, 'Muitas requisições. Aguarde 1 minuto.');
     next();
   }
@@ -340,7 +347,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
         await pool.query(
-          `UPDATE checkout_links SET status = 'pago', pago_em = NOW(), metodo_pago = 'boleto', atualizado_em = NOW()
+          `UPDATE checkout_links SET status = 'pago', pago_em = NOW() AT TIME ZONE 'America/Fortaleza', metodo_pago = 'boleto', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
            WHERE token = $1 AND status = 'pendente'`,
           [req.params.token]
         );

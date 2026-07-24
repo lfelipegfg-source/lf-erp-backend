@@ -82,7 +82,8 @@ async function calcularComissaoVenda(pool, { vendaId, usuarioId, empresaId }) {
 
   await pool.query(
     `INSERT INTO comissoes (empresa_id, usuario_id, venda_id, valor_venda, percentual, valor_comissao)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (venda_id, usuario_id, empresa_id) DO NOTHING`,
     [empresaId, usuarioId, vendaId, valorVenda, percentualMedio, valorComissao]
   );
 }
