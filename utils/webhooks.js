@@ -34,7 +34,33 @@ async function dispatchWebhook({ pool, empresaId, evento, payload }) {
   }
 }
 
+// Bloqueia IPs privados/loopback para prevenir SSRF
+function isUrlSegura(urlStr) {
+  try {
+    const { hostname } = new URL(urlStr);
+    const privado = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|::1$|fc00:|fd[0-9a-f]{2}:)/i;
+    return !privado.test(hostname);
+  } catch { return false; }
+}
+
 async function enviarWebhook({ pool, endpoint, evento, payload, tentativa }) {
+  if (!endpoint.secret) {
+    console.warn(`[webhooks] endpoint ${endpoint.id} sem secret — descartado`);
+    return;
+  }
+
+  if (!isUrlSegura(endpoint.url)) {
+    console.warn(`[webhooks] endpoint ${endpoint.id}: URL bloqueada por SSRF (${endpoint.url})`);
+    try {
+      await pool.query(
+        `INSERT INTO webhook_logs (endpoint_id, empresa_id, evento, payload, status_http, sucesso, tentativa, erro)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [endpoint.id, endpoint.empresa_id, evento, JSON.stringify(payload), null, false, tentativa, 'URL bloqueada: endereço privado']
+      );
+    } catch { /* log não deve quebrar o fluxo */ }
+    return;
+  }
+
   const body = JSON.stringify({
     evento,
     dados: payload,
@@ -43,7 +69,7 @@ async function enviarWebhook({ pool, endpoint, evento, payload, tentativa }) {
   });
 
   const sig = crypto
-    .createHmac('sha256', endpoint.secret || 'lf-erp-webhook')
+    .createHmac('sha256', endpoint.secret)
     .update(body)
     .digest('hex');
 

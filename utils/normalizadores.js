@@ -6,15 +6,16 @@ function hoje() {
 }
 
 function normalizarDecimal(valor) {
-  if (valor === null || valor === undefined || valor === '') return 0;
+  if (valor === null || valor === undefined || valor === '') return null;
   if (typeof valor === 'string') {
     // Suporta formato BR "1.234,56": remove pontos de milhar, troca vírgula por ponto
     const limpo = valor.trim().replace(/\./g, '').replace(',', '.');
+    if (limpo === '') return null;
     const numero = Number(limpo);
-    return Number.isFinite(numero) ? numero : 0;
+    return Number.isFinite(numero) ? numero : null;
   }
   const numero = Number(valor);
-  return Number.isFinite(numero) ? numero : 0;
+  return Number.isFinite(numero) ? numero : null;
 }
 
 function normalizarInt(valor) {

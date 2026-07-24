@@ -237,6 +237,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 10_000
 });
 
+// Neon derruba conexões idle — sem este handler o processo encerra com uncaughtException
+pool.on('error', (err) => {
+  console.error('[pool] erro em conexão idle (Neon dropped connection):', err.message);
+});
+
 // Disponibiliza pool para middlewares via app.locals
 app.locals.pool = pool;
 
@@ -3205,11 +3210,9 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
     await client.query('BEGIN');
 
     const compraResult = await client.query(
-      `
-      SELECT *
-      FROM compras
-      WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      `,
+      `SELECT * FROM compras
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+       FOR UPDATE`,
       [id, empresaResolvida.id, empresaResolvida.nome]
     );
 
@@ -6805,7 +6808,7 @@ app.put('/pagamentos/pix/config', auth, writeRateLimiter, requirePermissao(pool,
 });
 
 // POST /pagamentos/pix/gerar
-app.post('/pagamentos/pix/gerar', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/pagamentos/pix/gerar', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa);
@@ -7011,7 +7014,7 @@ app.put('/pagamentos/boleto/config', auth, writeRateLimiter, requirePermissao(po
 });
 
 // POST /pagamentos/boleto/gerar
-app.post('/pagamentos/boleto/gerar', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/pagamentos/boleto/gerar', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, req.body.empresa, req.empresa_id);
@@ -7295,7 +7298,7 @@ function parseCSV(texto) {
 }
 
 // POST /conciliacao/importar
-app.post('/conciliacao/importar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, jsonUpload, async (req, res) => {
+app.post('/conciliacao/importar', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), jsonUpload, async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const { conteudo, tipo, nome, conta } = req.body;
@@ -7403,7 +7406,7 @@ app.get('/conciliacao/:id/itens', auth, requirePermissao(pool, 'financeiro', 've
 });
 
 // POST /conciliacao/itens/:id/ignorar
-app.post('/conciliacao/itens/:id/ignorar', auth, requirePermissao(pool, 'financeiro', 'editar'), writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7444,7 +7447,7 @@ app.post('/conciliacao/itens/:id/ignorar', auth, requirePermissao(pool, 'finance
 });
 
 // POST /conciliacao/itens/:id/criar-lancamento
-app.post('/conciliacao/itens/:id/criar-lancamento', auth, requirePermissao(pool, 'financeiro', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -7506,7 +7509,7 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, requirePermissao(pool,
 });
 
 // DELETE /conciliacao/:id
-app.delete('/conciliacao/:id', auth, requirePermissao(pool, 'financeiro', 'deletar'), writeRateLimiter, async (req, res) => {
+app.delete('/conciliacao/:id', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'deletar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const id = Number(req.params.id);
@@ -8110,7 +8113,7 @@ app.get('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'ver'), asyn
 });
 
 // POST /metas-vendas — criar ou atualizar meta
-app.post('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/metas-vendas', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8146,7 +8149,7 @@ app.post('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'criar'), w
 });
 
 // DELETE /metas-vendas/:id
-app.delete('/metas-vendas/:id', auth, requirePermissao(pool, 'relatorios', 'deletar'), writeRateLimiter, async (req, res) => {
+app.delete('/metas-vendas/:id', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'deletar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8191,7 +8194,7 @@ app.get('/depositos', auth, requirePermissao(pool, 'estoque', 'ver'), async (req
 });
 
 // POST /depositos — criar depósito
-app.post('/depositos', auth, requirePermissao(pool, 'estoque', 'criar'), writeRateLimiter, async (req, res) => {
+app.post('/depositos', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'criar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8216,7 +8219,7 @@ app.post('/depositos', auth, requirePermissao(pool, 'estoque', 'criar'), writeRa
 });
 
 // PUT /depositos/:id — editar depósito
-app.put('/depositos/:id', auth, requirePermissao(pool, 'estoque', 'editar'), writeRateLimiter, async (req, res) => {
+app.put('/depositos/:id', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8246,7 +8249,7 @@ app.put('/depositos/:id', auth, requirePermissao(pool, 'estoque', 'editar'), wri
 });
 
 // DELETE /depositos/:id — remover depósito (só se sem estoque)
-app.delete('/depositos/:id', auth, requirePermissao(pool, 'estoque', 'deletar'), writeRateLimiter, async (req, res) => {
+app.delete('/depositos/:id', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'deletar'), async (req, res) => {
   try {
     if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -8325,7 +8328,7 @@ app.get('/depositos/:id/estoque', auth, requirePermissao(pool, 'estoque', 'ver')
 });
 
 // POST /depositos/transferir — mover estoque entre depósitos
-app.post('/depositos/transferir', auth, requirePermissao(pool, 'estoque', 'editar'), writeRateLimiter, async (req, res) => {
+app.post('/depositos/transferir', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
   const client = await pool.connect();
   try {
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);

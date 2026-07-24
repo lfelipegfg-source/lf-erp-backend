@@ -297,8 +297,20 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const r = await cancelarNfse(cfg.token_focus, cfg.ambiente, ref);
 
-      if (!r.ok) {
-        return erro(res, 422, r.data?.mensagem || 'FocusNFe recusou o cancelamento');
+      // Verifica status real no body — HTTP 200 (r.ok) não garante aprovação
+      // pela prefeitura; é necessário confirmar o campo de status no retorno.
+      const statusSefaz = r.data?.status_sefaz;
+      const situacao    = r.data?.situacao || r.data?.status;
+      const SEFAZ_CANCELADOS = { '101': true, '135': true, '150': true };
+      const cancelado = r.ok && (
+        situacao === 'cancelado' || situacao === 'cancelada' ||
+        SEFAZ_CANCELADOS[statusSefaz]
+      );
+
+      if (!cancelado) {
+        return erro(res, 422,
+          r.data?.mensagem || r.data?.erros?.[0]?.mensagem || 'FocusNFe recusou o cancelamento'
+        );
       }
 
       await pool.query(

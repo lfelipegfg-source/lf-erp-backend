@@ -586,29 +586,33 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         return res.status(401).json({ ok: false });
       }
       const sellerId = String(payload?.user_id || '');
-      if (sellerId) {
-        try {
-          const cfgCheck = await pool.query(
-            `SELECT client_secret FROM marketplace_config WHERE seller_id = $1 AND plataforma = 'mercadolivre' AND ativo = true LIMIT 1`,
-            [sellerId]
-          );
-          if (cfgCheck.rowCount > 0 && cfgCheck.rows[0].client_secret) {
-            const secret   = cfgCheck.rows[0].client_secret;
-            const notifId  = String(payload?.id || '');
-            const manifest = `id:${notifId};request-id:${xReqId}`;
-            const parts    = Object.fromEntries(xSig.split(',').map(p => { const [k, ...v] = p.split('='); return [k, v.join('=')]; }));
-            const expected = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
-            const recvBuf  = Buffer.from(parts.v1 || '', 'hex');
-            const expBuf   = Buffer.from(expected, 'hex');
-            if (recvBuf.length !== expBuf.length || !crypto.timingSafeEqual(recvBuf, expBuf)) {
-              console.warn('[marketplace] webhook ML: assinatura inválida');
-              return res.status(401).json({ ok: false });
-            }
-          }
-        } catch (sigErr) {
-          console.warn('[marketplace] webhook ML: erro na verificação de assinatura:', sigErr.message);
+      if (!sellerId) {
+        console.warn('[marketplace] webhook ML: user_id ausente no payload');
+        return res.status(401).json({ ok: false });
+      }
+      try {
+        const cfgCheck = await pool.query(
+          `SELECT client_secret FROM marketplace_config WHERE seller_id = $1 AND plataforma = 'mercadolivre' AND ativo = true LIMIT 1`,
+          [sellerId]
+        );
+        if (cfgCheck.rowCount === 0 || !cfgCheck.rows[0].client_secret) {
+          console.warn(`[marketplace] webhook ML: seller_id "${sellerId}" sem configuração HMAC`);
           return res.status(401).json({ ok: false });
         }
+        const secret   = cfgCheck.rows[0].client_secret;
+        const notifId  = String(payload?.id || '');
+        const manifest = `id:${notifId};request-id:${xReqId}`;
+        const parts    = Object.fromEntries(xSig.split(',').map(p => { const [k, ...v] = p.split('='); return [k, v.join('=')]; }));
+        const expected = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
+        const recvBuf  = Buffer.from(parts.v1 || '', 'hex');
+        const expBuf   = Buffer.from(expected, 'hex');
+        if (recvBuf.length !== expBuf.length || !crypto.timingSafeEqual(recvBuf, expBuf)) {
+          console.warn('[marketplace] webhook ML: assinatura inválida');
+          return res.status(401).json({ ok: false });
+        }
+      } catch (sigErr) {
+        console.warn('[marketplace] webhook ML: erro na verificação de assinatura:', sigErr.message);
+        return res.status(401).json({ ok: false });
       }
     }
 

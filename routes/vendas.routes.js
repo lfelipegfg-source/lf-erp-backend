@@ -281,8 +281,12 @@ module.exports = ({
         }
 
         const gradeResult = await client.query(
-          `SELECT * FROM produto_grades WHERE id = $1 AND produto_id = $2 AND empresa_id = $3 AND ativo = true FOR UPDATE`,
-          [gradeId, produtoId, empresaResolvida.id]
+          `SELECT pg.* FROM produto_grades pg
+           JOIN produtos p ON p.id = pg.produto_id
+           WHERE pg.id = $1 AND pg.produto_id = $2
+             AND (p.empresa_id = $3 OR (p.empresa_id IS NULL AND p.empresa = $4))
+             AND pg.ativo = true FOR UPDATE`,
+          [gradeId, produtoId, empresaResolvida.id, empresaResolvida.nome]
         );
 
         if (gradeResult.rowCount === 0) {

@@ -114,13 +114,14 @@ async function estornarPontosFidelidade(pool, {
     await client.query(
       `UPDATE clientes
        SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) - $1), atualizado_em = NOW()
-       WHERE id = $2 AND empresa_id = $3`,
+       WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $3)))`,
       [pontosEstornar, clienteId, empresaId]
     );
 
     const saldoResult = await client.query(
-      `SELECT COALESCE(pontos_fidelidade, 0) AS saldo FROM clientes WHERE id = $1`,
-      [clienteId]
+      `SELECT COALESCE(pontos_fidelidade, 0) AS saldo FROM clientes
+       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $2)))`,
+      [clienteId, empresaId]
     );
     const saldoApos = saldoResult.rows[0]?.saldo || 0;
 

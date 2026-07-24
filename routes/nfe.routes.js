@@ -306,7 +306,7 @@ module.exports = ({
       });
     } catch (err) {
       console.error('[nfe] POST emitir:', err.message);
-      return erro(res, 500, 'Erro ao emitir NF-e: ' + err.message);
+      return erro(res, 500, 'Erro ao emitir NF-e');
     }
   });
 
