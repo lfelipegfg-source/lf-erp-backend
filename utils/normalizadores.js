@@ -103,9 +103,17 @@ function validarECalcularTotalItens(itens) {
   return total;
 }
 
+// Garante que o valor seja um decimal estritamente positivo.
+// Usar em rotas onde o campo não aceita zero ou negativo (preços, quantidades, etc.).
+function normalizarDecimalPositivo(valor) {
+  const n = normalizarDecimal(valor);
+  return (n !== null && n > 0) ? n : null;
+}
+
 module.exports = {
   hoje,
   normalizarDecimal,
+  normalizarDecimalPositivo,
   normalizarInt,
   addDias,
   normalizarDataISO,

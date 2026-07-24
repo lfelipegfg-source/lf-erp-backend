@@ -109,7 +109,7 @@ module.exports = ({
          WHERE vi.venda_id = $1 AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))`,
         [Number(venda_id), emp.id, emp.nome]
       );
-      const itensVendaMap = new Map(itensVendaRes.rows.map((i) => [i.id || `${i.produto_id}-${i.grade_id}`, i]));
+      const itensVendaMap = new Map(itensVendaRes.rows.map((i) => [`${Number(i.produto_id)}-${i.grade_id || ''}`, i]));
 
       // Valida e prepara itens a devolver
       let totalDevolvido = 0;
@@ -122,10 +122,8 @@ module.exports = ({
 
         if (!produtoId || qtd <= 0) continue;
 
-        // Encontra o item original na venda
-        const original = itensVendaRes.rows.find(
-          (i) => Number(i.produto_id) === produtoId && (gradeId ? Number(i.grade_id) === gradeId : !i.grade_id)
-        );
+        // Encontra o item original na venda (O(1) via Map keyed por produto_id-grade_id)
+        const original = itensVendaMap.get(`${produtoId}-${gradeId || ''}`);
         if (!original) { await client.query('ROLLBACK'); return erro(res, 400, `Produto ${produtoId} não encontrado na venda`); }
         if (qtd > Number(original.quantidade)) { await client.query('ROLLBACK'); return erro(res, 400, `Quantidade a devolver (${qtd}) maior que a vendida (${original.quantidade}) para ${original.produto_nome}`); }
 
@@ -158,16 +156,17 @@ module.exports = ({
       // Advisory lock garante numeração serial por empresa sem FOR UPDATE em aggregate
       await client.query(`SELECT pg_advisory_xact_lock($1, 9001)`, [emp.id]);
       const numRes = await client.query(
-        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes WHERE empresa_id = $1`,
-        [emp.id]
+        `SELECT COALESCE(MAX(numero), 0) + 1 AS proximo FROM devolucoes
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
+        [emp.id, emp.nome]
       );
       const numero = numRes.rows[0].proximo;
 
       // Cria o registro de devolução
       const devRes = await client.query(
-        `INSERT INTO devolucoes (empresa_id, venda_id, numero, cliente_id, cliente_nome, motivo, total_devolvido, criado_por)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [emp.id, Number(venda_id), numero, venda.cliente_id || null, venda.cliente_nome || null,
+        `INSERT INTO devolucoes (empresa_id, empresa, venda_id, numero, cliente_id, cliente_nome, motivo, total_devolvido, criado_por)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [emp.id, emp.nome, Number(venda_id), numero, venda.cliente_id || null, venda.cliente_nome || null,
          motivo || null, +totalDevolvido.toFixed(2), req.user.id]
       );
       const devolucao = devRes.rows[0];
@@ -175,9 +174,9 @@ module.exports = ({
       // Insere itens e restaura estoque
       for (const item of itensValidados) {
         await client.query(
-          `INSERT INTO devolucao_itens (devolucao_id, empresa_id, produto_id, produto_nome, grade_id, quantidade, preco_unitario, total)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [devolucao.id, emp.id, item.produtoId, item.produto_nome, item.gradeId, item.qtd, item.preco, item.total]
+          `INSERT INTO devolucao_itens (devolucao_id, empresa_id, empresa, produto_id, produto_nome, grade_id, quantidade, preco_unitario, total)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [devolucao.id, emp.id, emp.nome, item.produtoId, item.produto_nome, item.gradeId, item.qtd, item.preco, item.total]
         );
 
         // Restaura estoque do produto

@@ -87,10 +87,15 @@ ${filtroEmpresa}
         dataFinal
       });
 
-      sql += ` ORDER BY m.id DESC LIMIT 2000`;
+      const limite = Math.min(Math.max(Number(req.query.limite) || 50, 1), 200);
+      const pagina = Math.max(Number(req.query.pagina) || 1, 1);
+      const offset = (pagina - 1) * limite;
+      const limIdx = params.length + 1;
+      const offIdx = params.length + 2;
+      sql += ` ORDER BY m.id DESC LIMIT $${limIdx} OFFSET $${offIdx}`;
 
-      const result = await pool.query(sql, params);
-      const truncado = result.rows.length === 2000;
+      const result = await pool.query(sql, [...params, limite, offset]);
+      const truncado = result.rows.length === limite;
 
       return res.json({ sucesso: true, dados: result.rows.map(normalizarMov), truncado });
     } catch (error) {
@@ -198,7 +203,7 @@ ${filtroEmpresa}
   router.get('/sugestao-compra', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
-      if (!empresaResolvida) return res.status(403).json({ sucesso: false, erro: 'Sem acesso' });
+      if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const result = await pool.query(
         `SELECT
@@ -247,7 +252,7 @@ ${filtroEmpresa}
       });
     } catch (err) {
       console.error('[estoque] sugestao-compra:', err.message);
-      return res.status(500).json({ sucesso: false, erro: 'Erro ao gerar sugestão de compra' });
+      return erro(res, 500, 'Erro ao gerar sugestão de compra');
     }
   });
 

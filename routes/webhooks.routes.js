@@ -150,7 +150,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
       try { parsedUrl = new URL(url.trim()); } catch { return erro(res, 400, 'URL inválida'); }
       if (!['http:', 'https:'].includes(parsedUrl.protocol)) return erro(res, 400, 'URL deve usar protocolo http ou https');
       const h = parsedUrl.hostname;
-      if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|::1$|::ffff:)/.test(h)
+      if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|169\.254\.|::1$|::ffff:)/.test(h)
         || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
         || h === 'metadata.google.internal') {
         return erro(res, 400, 'URL aponta para endereço interno não permitido');
@@ -180,7 +180,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
         try { pu = new URL(url.trim()); } catch { return erro(res, 400, 'URL inválida'); }
         if (!['http:', 'https:'].includes(pu.protocol)) return erro(res, 400, 'URL deve usar protocolo http ou https');
         const h = pu.hostname;
-        if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|::1$|::ffff:)/.test(h)
+        if (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|169\.254\.|::1$|::ffff:)/.test(h)
           || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
           || h === 'metadata.google.internal') {
           return erro(res, 400, 'URL aponta para endereço interno não permitido');

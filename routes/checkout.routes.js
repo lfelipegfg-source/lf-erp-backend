@@ -182,6 +182,16 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
 
+      const check = await pool.query(
+        `SELECT status FROM checkout_links WHERE id = $1 AND empresa_id = $2`,
+        [Number(req.params.id), e.id]
+      );
+      if (!check.rows[0]) return erro(res, 404, 'Checkout não encontrado');
+      const { status } = check.rows[0];
+      if (['cancelado', 'expirado', 'pago'].includes(status)) {
+        return erro(res, 400, `Checkout não pode ser cancelado no status "${status}"`);
+      }
+
       const r = await pool.query(
         `UPDATE checkout_links SET status = 'cancelado', atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
         [Number(req.params.id), e.id]
@@ -222,7 +232,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     try {
       const result = await pool.query(
         `SELECT cl.*, e.nome AS empresa_nome, e.cidade AS empresa_cidade,
-                cfg.pix_chave, cfg.asaas_api_key IS NOT NULL AS tem_asaas
+                cfg.asaas_api_key IS NOT NULL AS tem_asaas
          FROM checkout_links cl
          JOIN empresas e ON e.id = cl.empresa_id
          LEFT JOIN configuracoes cfg ON cfg.empresa_id = cl.empresa_id

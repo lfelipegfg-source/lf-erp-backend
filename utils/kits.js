@@ -42,7 +42,7 @@ async function calcularEstoqueKit(db, kitId, empresaId) {
 async function sincronizarEstoqueKit(db, kitId, empresaId) {
   const estoque = await calcularEstoqueKit(db, kitId, empresaId);
   await db.query(
-    `UPDATE produtos SET estoque = $1, atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
+    `UPDATE produtos SET estoque = $1, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza' WHERE id = $2 AND empresa_id = $3`,
     [estoque, kitId, empresaId]
   );
   return estoque;
@@ -88,7 +88,7 @@ async function baixarComponentesKit({ client, kitId, empresaId, qtdKits, vendaId
     const qtdBaixar = Number(comp.quantidade) * qtdKits;
 
     await client.query(
-      `UPDATE produtos SET estoque = estoque - $1, atualizado_em = NOW()
+      `UPDATE produtos SET estoque = estoque - $1, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $2 AND empresa_id = $3`,
       [qtdBaixar, comp.componente_id, empresaId]
     );
@@ -122,7 +122,7 @@ async function estornarComponentesKit({ client, kitId, empresaId, qtdKits, venda
     const qtdRestaurar = Number(comp.quantidade) * qtdKits;
 
     await client.query(
-      `UPDATE produtos SET estoque = estoque + $1, atualizado_em = NOW()
+      `UPDATE produtos SET estoque = estoque + $1, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $2 AND empresa_id = $3`,
       [qtdRestaurar, comp.componente_id, empresaId]
     );

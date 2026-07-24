@@ -18,10 +18,12 @@ function _validarCampoPeriodo(campo) {
 }
 
 function obterPeriodo(req) {
-  return {
-    dataInicial: normalizarDataISO(req.query.data_inicial || req.query.inicio || ''),
-    dataFinal: normalizarDataISO(req.query.data_final || req.query.fim || '')
-  };
+  const dataInicial = normalizarDataISO(req.query.data_inicial || req.query.inicio || '');
+  const dataFinal   = normalizarDataISO(req.query.data_final  || req.query.fim   || '');
+  if (dataInicial && dataFinal && dataInicial > dataFinal) {
+    throw new Error(`Período inválido: início (${dataInicial}) após fim (${dataFinal})`);
+  }
+  return { dataInicial, dataFinal };
 }
 
 function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {

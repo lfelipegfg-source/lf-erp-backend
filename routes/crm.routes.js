@@ -184,9 +184,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         pool.query(
           `SELECT o.*, c.telefone AS cliente_telefone, c.email AS cliente_email
            FROM crm_oportunidades o
-           LEFT JOIN clientes c ON c.id = o.cliente_id AND c.empresa_id = o.empresa_id
+           LEFT JOIN clientes c ON c.id = o.cliente_id AND (c.empresa_id = $2 OR (c.empresa_id IS NULL AND c.empresa = $3))
            WHERE o.id = $1 AND o.empresa_id = $2`,
-          [id, emp.id]
+          [id, emp.id, emp.nome]
         ),
         pool.query(
           `SELECT * FROM crm_atividades WHERE oportunidade_id = $1 AND empresa_id = $2 ORDER BY data DESC, criado_em DESC`,

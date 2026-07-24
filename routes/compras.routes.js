@@ -164,19 +164,23 @@ module.exports = function ({
         produtosMap[produtoId] = { ...produto, estoque: novoEstoque, custo_medio: novoCustoMedio };
       }
 
-      // ── Batch INSERT compra_itens (1 query, multi-row VALUES) ─────────────
+      // ── Batch INSERT compra_itens (chunked — evita limite 65535 params PG) ─
       {
         const COLS = 8;
-        let idx = 1;
-        const placeholders = compraItensRows.map(() =>
-          `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')})`
-        ).join(',');
-        await client.query(
-          `INSERT INTO compra_itens
-             (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
-           VALUES ${placeholders}`,
-          compraItensRows.flat()
-        );
+        const CHUNK_SIZE = 1000; // 1000 × 8 = 8000 params por chunk
+        for (let ci = 0; ci < compraItensRows.length; ci += CHUNK_SIZE) {
+          const chunk = compraItensRows.slice(ci, ci + CHUNK_SIZE);
+          let idx = 1;
+          const placeholders = chunk.map(() =>
+            `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')})`
+          ).join(',');
+          await client.query(
+            `INSERT INTO compra_itens
+               (compra_id, empresa, empresa_id, produto_id, produto_nome, quantidade, custo_unitario, subtotal)
+             VALUES ${placeholders}`,
+            chunk.flat()
+          );
+        }
       }
 
       // ── UPDATE produtos — sequential, deduplicado por produto_id ─────────
@@ -194,20 +198,24 @@ module.exports = function ({
         );
       }
 
-      // ── Batch INSERT movimentacoes_estoque (1 query, multi-row VALUES) ────
+      // ── Batch INSERT movimentacoes_estoque (chunked — evita limite 65535 params PG) ──
       if (typeof registrarMovimentacaoEstoque === 'function' && movRows.length > 0) {
-        const COLS = 10; // data_movimentacao = NOW() está inline
-        let idx = 1;
-        const placeholders = movRows.map(() =>
-          `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')},NOW())`
-        ).join(',');
-        await client.query(
-          `INSERT INTO movimentacoes_estoque
-             (empresa, empresa_id, produto_id, grade_id, tipo, quantidade,
-              observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
-           VALUES ${placeholders}`,
-          movRows.flat()
-        );
+        const COLS = 10; // data_movimentacao = NOW() inline
+        const CHUNK_SIZE = 1000; // 1000 × 10 = 10000 params por chunk
+        for (let mi = 0; mi < movRows.length; mi += CHUNK_SIZE) {
+          const chunk = movRows.slice(mi, mi + CHUNK_SIZE);
+          let idx = 1;
+          const placeholders = chunk.map(() =>
+            `(${Array.from({ length: COLS }, () => `$${idx++}`).join(',')},NOW())`
+          ).join(',');
+          await client.query(
+            `INSERT INTO movimentacoes_estoque
+               (empresa, empresa_id, produto_id, grade_id, tipo, quantidade,
+                observacao, referencia_tipo, referencia_id, usuario_id, data_movimentacao)
+             VALUES ${placeholders}`,
+            chunk.flat()
+          );
+        }
       }
 
       // ── Batch INSERT contas_pagar (1 query, multi-row VALUES) ─────────────

@@ -74,6 +74,13 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
         dias_atraso_minimo
       } = req.body;
 
+      if (dias_atraso_minimo != null) {
+        const diasN = parseInt(dias_atraso_minimo, 10);
+        if (isNaN(diasN) || diasN < 1 || diasN > 365) {
+          return erro(res, 400, 'dias_atraso_minimo deve ser entre 1 e 365');
+        }
+      }
+
       await pool.query(
         `INSERT INTO alertas_config
            (empresa_id, email_ativo, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from,

@@ -592,7 +592,7 @@ ${adicionarFiltroEmpresaSaaS({
             Boolean(promocao_ativa),
             estoqueNovo,
             normalizarInt(estoque_minimo),
-            codigo_barras || '',
+            (codigo_barras || '').trim() || null,
             categoria || '',
             codigo_interno !== undefined ? (codigo_interno || null) : atual.codigo_interno,
             gtin !== undefined ? (gtin || null) : atual.gtin,

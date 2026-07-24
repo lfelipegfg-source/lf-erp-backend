@@ -21,10 +21,14 @@ const jwt    = require('jsonwebtoken');
 const SECRET      = process.env.JWT_SECRET;
 const SALT_ROUNDS = 10;
 
+if (!process.env.JWT_SECRET) {
+  console.error('[portal] FATAL: JWT_SECRET não configurado. Tokens gerados sem segredo.');
+}
+
 const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 
-module.exports = ({ auth, pool }) => {
+module.exports = ({ auth, writeRateLimiter, pool }) => {
   const router = require('express').Router();
 
 
@@ -258,7 +262,7 @@ module.exports = ({ auth, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // POST /portal/admin/clientes/:id/senha — define senha (ERP auth)
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/admin/clientes/:id/senha', auth, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
+  router.post('/admin/clientes/:id/senha', auth, writeRateLimiter, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
     try {
       const clienteId = Number(req.params.id);
       const { senha } = req.body;

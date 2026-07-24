@@ -79,9 +79,9 @@ module.exports = ({
           empresaResolvida.nome,
           empresaResolvida.id,
           nome,
-          endereco || '',
-          telefone || '',
-          nascimento || '',
+          (endereco || '').trim() || null,
+          (telefone || '').trim() || null,
+          (nascimento || '').trim() || null,
           cpf || null
         ]
       );
@@ -314,7 +314,7 @@ module.exports = ({
                  SUM(COALESCE(valor_atualizado, valor)) AS total_em_aberto
           FROM contas_receber
           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-            AND status NOT IN ('pago')
+            AND LOWER(COALESCE(status, 'pendente')) NOT IN ('pago')
           GROUP BY cliente_id
         ) cr_saldo ON cr_saldo.cliente_id = c.id
         WHERE (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
@@ -471,7 +471,7 @@ module.exports = ({
             cpf = $5,
             atualizado_em = NOW()
         WHERE id = $6 AND (empresa_id = $7 OR (empresa_id IS NULL AND empresa = $8)) AND deletado_em IS NULL`,
-        [nome, endereco || '', telefone || '', nascimento || '', cpf || null, id, empresaResolvida.id, empresaResolvida.nome]
+        [nome, (endereco || '').trim() || null, (telefone || '').trim() || null, (nascimento || '').trim() || null, cpf || null, id, empresaResolvida.id, empresaResolvida.nome]
       );
 
       await registrarAuditoria({

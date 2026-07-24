@@ -47,7 +47,6 @@ function requirePermissao(pool, modulo, acao) {
          WHERE usuario_id = $1
            AND empresa_id IS NOT DISTINCT FROM $2
            AND modulo = $3
-         ORDER BY empresa_id DESC NULLS LAST
          LIMIT 1`,
         [usuarioId, empresaId, modulo]
       );
@@ -87,31 +86,36 @@ async function obterPermissoes(pool, usuarioId, empresaId, tipo) {
   const modulos = [...MODULOS_VALIDOS];
   const resultado = {};
 
-  const [individuais, padroes] = await Promise.all([
-    pool.query(
-      `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
-       FROM permissoes_usuario
-       WHERE usuario_id = $1 AND (empresa_id = $2 OR empresa_id IS NULL)`,
-      [usuarioId, empresaId]
-    ),
-    pool.query(
-      `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
-       FROM permissoes_padrao
-       WHERE tipo_usuario = $1`,
-      [tipo]
-    )
-  ]);
+  try {
+    const [individuais, padroes] = await Promise.all([
+      pool.query(
+        `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
+         FROM permissoes_usuario
+         WHERE usuario_id = $1 AND (empresa_id = $2 OR empresa_id IS NULL)`,
+        [usuarioId, empresaId]
+      ),
+      pool.query(
+        `SELECT modulo, pode_ver, pode_criar, pode_editar, pode_deletar
+         FROM permissoes_padrao
+         WHERE tipo_usuario = $1`,
+        [tipo]
+      )
+    ]);
 
-  const mapPadrao = Object.fromEntries(padroes.rows.map((r) => [r.modulo, r]));
-  const mapIndividual = Object.fromEntries(individuais.rows.map((r) => [r.modulo, r]));
+    const mapPadrao = Object.fromEntries(padroes.rows.map((r) => [r.modulo, r]));
+    const mapIndividual = Object.fromEntries(individuais.rows.map((r) => [r.modulo, r]));
 
-  for (const modulo of modulos) {
-    resultado[modulo] = mapIndividual[modulo] || mapPadrao[modulo] || {
-      pode_ver: false, pode_criar: false, pode_editar: false, pode_deletar: false
-    };
+    for (const modulo of modulos) {
+      resultado[modulo] = mapIndividual[modulo] || mapPadrao[modulo] || {
+        pode_ver: false, pode_criar: false, pode_editar: false, pode_deletar: false
+      };
+    }
+
+    return resultado;
+  } catch (err) {
+    console.error('[permissoes] Erro ao buscar permissões:', err.message);
+    return []; // fallback seguro — negar acesso implicitamente via lista vazia
   }
-
-  return resultado;
 }
 
 module.exports = { requirePermissao, obterPermissoes, MODULOS_VALIDOS, ACOES_VALIDAS };

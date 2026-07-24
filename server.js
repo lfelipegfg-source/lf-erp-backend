@@ -399,7 +399,7 @@ app.use(
   })
 );
 
-app.use('/portal', portalRoutes({ auth, pool }));
+app.use('/portal', portalRoutes({ auth, writeRateLimiter, pool }));
 app.use('/caixa',      caixaRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
 app.use('/alertas',    alertasRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/marketplace', marketplaceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje, registrarMovimentacaoEstoque, criarParcelasContasReceber }));
@@ -876,7 +876,7 @@ async function validarSenhaUsuario(senhaInformada, user) {
       await pool.query(
         `UPDATE usuarios
           SET senha = $1,
-              atualizado_em = NOW()
+              atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
           WHERE id = $2`,
         [novaHash, user.id]
       );
@@ -1082,7 +1082,7 @@ async function registrarAuditoria({
       user_agent,
       criado_em
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW() AT TIME ZONE 'America/Fortaleza')`,
     [
       empresa || null,
       empresa_id || null,
@@ -1133,6 +1133,11 @@ async function obterConfigEmpresa(empresa, empresaId = null) {
 async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null) {
   const agora = Date.now();
   if (_statusThrottleReceber.has(empresa) && agora - _statusThrottleReceber.get(empresa) < STATUS_THROTTLE_MS) return;
+  if (_statusThrottleReceber.size > 500) {
+    for (const [k, v] of _statusThrottleReceber) {
+      if (agora > v + STATUS_THROTTLE_MS) _statusThrottleReceber.delete(k);
+    }
+  }
   _statusThrottleReceber.set(empresa, agora);
   const client = await pool.connect();
   try {
@@ -1166,7 +1171,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
             )::numeric,
             2
           ),
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado', 'parcial')
         AND data_vencimento IS NOT NULL
@@ -1182,7 +1187,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
           multa = 0,
           juros = 0,
           valor_atualizado = valor,
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
         AND data_vencimento IS NOT NULL
@@ -1199,7 +1204,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
           multa = 0,
           juros = 0,
           valor_atualizado = valor,
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
         AND LOWER(COALESCE(status, 'pendente')) = 'atrasado'
         AND data_vencimento IS NOT NULL
@@ -1232,6 +1237,11 @@ async function atualizarStatusContasReceberGlobal() {
 async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
   const agora = Date.now();
   if (_statusThrottlePagar.has(empresa) && agora - _statusThrottlePagar.get(empresa) < STATUS_THROTTLE_MS) return;
+  if (_statusThrottlePagar.size > 500) {
+    for (const [k, v] of _statusThrottlePagar) {
+      if (agora > v + STATUS_THROTTLE_MS) _statusThrottlePagar.delete(k);
+    }
+  }
   _statusThrottlePagar.set(empresa, agora);
   const client = await pool.connect();
   try {
@@ -1245,7 +1255,7 @@ async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
     await client.query(
       `UPDATE contas_pagar
         SET status = 'atrasado',
-            atualizado_em = NOW()
+            atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
         WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
           AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
           AND data_vencimento IS NOT NULL
@@ -1255,7 +1265,7 @@ async function atualizarStatusContasPagarPorEmpresa(empresa, empresaId = null) {
     await client.query(
       `UPDATE contas_pagar
         SET status = 'pendente',
-            atualizado_em = NOW()
+            atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
         WHERE (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $1))
           AND LOWER(COALESCE(status, 'pendente')) = 'atrasado'
           AND data_vencimento IS NOT NULL
@@ -1379,7 +1389,7 @@ async function criarParcelasContasReceber({
         criado_em,
         atualizado_em
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, NULL, 'pendente', $10, $11, $12, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, NULL, 'pendente', $10, $11, $12, NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')
       RETURNING *`,
       [
         empresa,
@@ -2476,7 +2486,7 @@ app.get('/me', auth, async (req, res) => {
       `
         SELECT
         u.id, u.usuario, u.tipo, u.empresa, u.empresa_id,
-        u.nome_completo, u.cpf, u.nascimento,
+        u.nome_completo, u.cpf, u.nascimento, u.is_saas_owner,
         e.nome AS empresa_nome_real,
         e.assinatura_status, e.trial_fim, e.bloqueada,
         p.nome AS plano_nome, p.codigo AS plano_codigo
@@ -2518,7 +2528,8 @@ app.get('/me', auth, async (req, res) => {
       dias_restantes_trial,
       plano_nome: user.plano_nome || null,
       plano_codigo: user.plano_codigo || null,
-      bloqueada: Boolean(user.bloqueada)
+      bloqueada: Boolean(user.bloqueada),
+      is_saas_owner: Boolean(user.is_saas_owner)
     });
   } catch (error) {
     console.error('Erro ao validar sessão:', error);
@@ -2731,14 +2742,6 @@ app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios',
       return jsonErro(res, 403, limitePlano.mensagem);
     }
 
-    const usuarioExiste = await pool.query(`SELECT id FROM usuarios WHERE usuario = $1`, [
-      usuario.trim()
-    ]);
-
-    if (usuarioExiste.rowCount > 0) {
-      return jsonErro(res, 400, 'Usuário já existe');
-    }
-
     const senhaHash = await bcrypt.hash(senha.trim(), 10);
 
     const clienteTx = await pool.connect();
@@ -2751,10 +2754,17 @@ app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios',
         INSERT INTO usuarios
         (empresa, empresa_id, nome_completo, usuario, senha, tipo, criado_em, atualizado_em)
         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        ON CONFLICT (usuario) DO NOTHING
         RETURNING id
         `,
         [empresaResolvida.nome, empresaResolvida.id, nome.trim(), usuario.trim(), senhaHash, tipo]
       );
+
+      if (result.rowCount === 0) {
+        await clienteTx.query('ROLLBACK');
+        return jsonErro(res, 400, 'Usuário já existe');
+      }
+
       novoUsuario = result.rows[0];
 
       await clienteTx.query('COMMIT');
@@ -4213,10 +4223,10 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, requirePermissao(pool
         AND LOWER(COALESCE(tipo, '')) = 'receita'
         AND LOWER(COALESCE(categoria, '')) = 'contas_receber'
         AND LOWER(COALESCE(status, '')) = 'pago'
-        AND descricao = $3
+        AND (conta_receber_id = $3 OR (conta_receber_id IS NULL AND descricao = $4))
       ORDER BY pagamento_data DESC, id DESC
       `,
-      [empresaResolvida.nome, empresaResolvida.id, `Recebimento parcial da conta #${id}`]
+      [empresaResolvida.nome, empresaResolvida.id, id, `Recebimento parcial da conta #${id}`]
     );
 
     res.json({
@@ -5065,6 +5075,22 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
       [novoStatusCP, novoValorCP, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
+    if (!pagamentoTotalCP) {
+      await client.query(
+        `INSERT INTO lancamentos_financeiros
+          (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, criado_em, atualizado_em)
+          VALUES ($1, $2, 'despesa', 'contas_pagar', $3, $4, $5, $5, 'pago',
+                  NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')`,
+        [
+          empresaResolvida.nome,
+          empresaResolvida.id,
+          `Pagamento parcial - ${conta.descricao || ''}`,
+          valorPagoFinal,
+          dataPagamento
+        ]
+      );
+    }
+
     await client.query('COMMIT');
 
     try {
@@ -5655,6 +5681,9 @@ app.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'finan
       return jsonErro(res, 403, 'Sem acesso');
     }
 
+    const valorN = normalizarDecimal(valor);
+    if (!valorN || valorN <= 0) return jsonErro(res, 400, 'Valor do investimento deve ser positivo');
+
     const result = await pool.query(
       `INSERT INTO investimentos
         (empresa, empresa_id, tipo_investimento, descricao, valor, data, forma_pagamento, observacao, criado_por, criado_em, atualizado_em)
@@ -5665,7 +5694,7 @@ app.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'finan
         empresaResolvida.id,
         tipo_investimento,
         descricao,
-        normalizarDecimal(valor),
+        valorN,
         normalizarDataISO(data) || data,
         forma_pagamento || '',
         observacao || '',
@@ -8743,8 +8772,17 @@ app.get('/sse-notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    const SSE_MAX_EMPRESAS = 1000;
     const empresaId = empresaResolvida.id;
-    if (!_sseClients.has(empresaId)) _sseClients.set(empresaId, new Set());
+    if (!_sseClients.has(empresaId)) {
+      if (_sseClients.size >= SSE_MAX_EMPRESAS) {
+        const [primeiraKey] = _sseClients.keys();
+        const primeiroSet = _sseClients.get(primeiraKey);
+        for (const r of primeiroSet) { try { r.end(); } catch {} }
+        _sseClients.delete(primeiraKey);
+      }
+      _sseClients.set(empresaId, new Set());
+    }
     const clientes = _sseClients.get(empresaId);
     if (clientes.size >= 30) {
       return jsonErro(res, 429, 'Limite de conexões SSE atingido para esta empresa');
@@ -8846,7 +8884,7 @@ app.get('/admin/dashboard', auth, apenasAdmin, async (req, res) => {
           COUNT(*) FILTER (WHERE assinatura_status = 'trial')   AS em_trial,
           COUNT(*) FILTER (WHERE bloqueada = true)              AS bloqueados,
           COUNT(*) FILTER (WHERE assinatura_status IN ('inativo','cancelado')) AS inativos,
-          COUNT(*) FILTER (WHERE criado_em >= NOW() - INTERVAL '30 days') AS novos_30d,
+          COUNT(*) FILTER (WHERE criado_em >= (NOW() AT TIME ZONE 'America/Fortaleza') - INTERVAL '30 days') AS novos_30d,
           COUNT(*) FILTER (WHERE assinatura_status = 'trial' AND trial_fim < CURRENT_DATE) AS trial_expirado
         FROM empresas`),
       pool.query(`
@@ -8859,7 +8897,7 @@ app.get('/admin/dashboard', auth, apenasAdmin, async (req, res) => {
           COUNT(*) AS total_vendas_30d,
           COALESCE(SUM(total), 0) AS volume_vendas_30d
         FROM vendas
-        WHERE criado_em >= NOW() - INTERVAL '30 days'`),
+        WHERE criado_em >= (NOW() AT TIME ZONE 'America/Fortaleza') - INTERVAL '30 days'`),
     ]);
 
     const e = empresasResult.rows[0];

@@ -94,7 +94,8 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const { saldo_inicial = 0, observacao } = req.body;
-      const saldoInicial = normalizarDecimal(saldo_inicial);
+      const saldoInicial = normalizarDecimal(saldo_inicial) ?? 0;
+      if (saldoInicial < 0) return erro(res, 400, 'Saldo inicial não pode ser negativo');
 
       client = await pool.connect();
       await client.query('BEGIN');
