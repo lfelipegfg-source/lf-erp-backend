@@ -259,6 +259,7 @@ app.use(
   '/financeiro',
   financeiroRoutes({
     auth,
+    writeRateLimiter,
     pool,
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
@@ -604,7 +605,7 @@ async function obterEmpresaPorId(empresaId) {
 async function obterEmpresaPorNome(nome) {
   if (!nome) return null;
 
-  const result = await pool.query(`SELECT id, nome FROM empresas WHERE nome = $1 LIMIT 1`, [nome]);
+  const result = await pool.query(`SELECT id, nome FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1`, [nome]);
 
   if (result.rowCount === 0) return null;
   return result.rows[0];
@@ -1226,7 +1227,7 @@ async function atualizarStatusContasReceberGlobal() {
   await pool.query(
     `UPDATE contas_receber
       SET status = 'atrasado',
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE status = 'pendente'
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $1`,
@@ -1285,7 +1286,7 @@ async function atualizarStatusContasPagarGlobal() {
   await pool.query(
     `UPDATE contas_pagar
       SET status = 'atrasado',
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE status = 'pendente'
         AND data_vencimento IS NOT NULL
         AND data_vencimento < $1`,
@@ -2197,7 +2198,8 @@ app.get('/', (req, res) => {
 // ================= AUTH =================
 app.post('/login', loginRateLimiter, async (req, res) => {
   try {
-    const { usuario, senha } = req.body;
+    const { usuario: _rawUsuario, senha } = req.body;
+    const usuario = _rawUsuario ? String(_rawUsuario).trim() : _rawUsuario;
 
     if (!usuario || !senha) {
       return jsonErro(res, 400, 'Informe usuário e senha.');
@@ -2396,7 +2398,7 @@ app.post('/logout', auth, (req, res) => {
   res.json({ sucesso: true });
 });
 
-app.put('/me/perfil', auth, async (req, res) => {
+app.put('/me/perfil', auth, writeRateLimiter, async (req, res) => {
   try {
     const { nome_completo, cpf, nascimento } = req.body;
 
@@ -2413,7 +2415,7 @@ app.put('/me/perfil', auth, async (req, res) => {
         nome_completo = COALESCE($1, nome_completo),
         cpf = COALESCE($2, cpf),
         nascimento = COALESCE($3, nascimento),
-        atualizado_em = NOW()
+        atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $4`,
       [nome_completo || null, cpf || null, nascimento || null, req.user.id]
     );
@@ -2447,7 +2449,10 @@ app.put('/me/senha', auth, writeRateLimiter, async (req, res) => {
     if (!senhaOk) return jsonErro(res, 401, 'Senha atual incorreta', 'SENHA_INCORRETA');
 
     const hash = await bcrypt.hash(nova_senha, 10);
-    await pool.query(`UPDATE usuarios SET senha = $1, atualizado_em = NOW() WHERE id = $2`, [hash, req.user.id]);
+    await pool.query(
+      `UPDATE usuarios SET senha = $1, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza' WHERE id = $2`,
+      [hash, req.user.id]
+    );
 
     registrarAuditoria({
       empresa: req.empresa_nome || null,
@@ -2754,7 +2759,7 @@ app.post('/usuarios', auth, writeRateLimiter, requirePermissao(pool, 'usuarios',
         `
         INSERT INTO usuarios
         (empresa, empresa_id, nome_completo, usuario, senha, tipo, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')
         ON CONFLICT (usuario) DO NOTHING
         RETURNING id
         `,
@@ -2839,7 +2844,7 @@ app.put('/usuarios/:id', auth, writeRateLimiter, requirePermissao(pool, 'usuario
               usuario = $2,
               senha = $3,
               tipo = $4,
-              atualizado_em = NOW()
+              atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
           WHERE id = $5 AND (empresa_id = $6 OR (empresa_id IS NULL AND empresa = $7))
           `,
         [nome.trim(), usuario.trim(), senhaHash, tipo, id, empresaResolvida.id, empresaResolvida.nome]
@@ -2851,7 +2856,7 @@ app.put('/usuarios/:id', auth, writeRateLimiter, requirePermissao(pool, 'usuario
           SET nome_completo = $1,
               usuario = $2,
               tipo = $3,
-              atualizado_em = NOW()
+              atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
           WHERE id = $4 AND (empresa_id = $5 OR (empresa_id IS NULL AND empresa = $6))
           `,
         [nome.trim(), usuario.trim(), tipo, id, empresaResolvida.id, empresaResolvida.nome]
@@ -3073,7 +3078,7 @@ app.put('/lixeira/recuperar/:tabela/:id', auth, writeRateLimiter, requirePermiss
 
     const result = await pool.query(
       `UPDATE ${tabela}
-       SET deletado_em = NULL, atualizado_em = NOW()
+       SET deletado_em = NULL, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $1
          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
          AND deletado_em IS NOT NULL
@@ -3249,6 +3254,7 @@ app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compr
       WHERE compra_id = $1
         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
       ORDER BY id ASC
+      FOR UPDATE
       `,
       [id, empresaResolvida.id, empresaResolvida.nome]
     );
@@ -3424,7 +3430,7 @@ app.get('/compras-fornecedores/:empresa', auth, requirePermissao(pool, 'financei
           COUNT(c.id) AS total_compras,
           COALESCE(SUM(c.total), 0) AS valor_total
         FROM fornecedores f
-        LEFT JOIN compras c ON c.fornecedor_id = f.id AND (c.empresa_id = f.empresa_id OR c.empresa = f.empresa)
+        LEFT JOIN compras c ON c.fornecedor_id = f.id AND (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
         WHERE (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
         GROUP BY f.id, f.nome
         ORDER BY valor_total DESC, f.nome ASC
@@ -4103,8 +4109,8 @@ VALUES (
   $5,
   $6,
   $7,
-  NOW(),
-  NOW()
+  NOW() AT TIME ZONE 'America/Fortaleza',
+  NOW() AT TIME ZONE 'America/Fortaleza'
 )
         `,
         [

@@ -9,6 +9,7 @@ const { erro } = require('../utils/routeHelpers');
 
 module.exports = function ({
   auth,
+  writeRateLimiter,
   pool,
   validarAcessoEmpresa,
   adicionarFiltroEmpresaSaaS,
@@ -19,7 +20,7 @@ module.exports = function ({
 
   // ================= FLUXO DE CAIXA =================
 
-  router.get('/fluxo-caixa/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
+  router.get('/fluxo-caixa/:empresa', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -176,8 +177,8 @@ module.exports = function ({
           valor,data_pagamento data_movimento,forma_pagamento,
           venda_id referencia_id,observacao
           FROM contas_receber ${whereReceber}
-          ORDER BY data_pagamento DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsReceber
+          ORDER BY data_pagamento DESC LIMIT $${paramsReceber.length + 1}`,
+          [...paramsReceber, FLUXO_LIMIT]
         ),
 
         pool.query(
@@ -186,8 +187,8 @@ module.exports = function ({
           valor,data_pagamento data_movimento,forma_pagamento,
           compra_id referencia_id,observacao
           FROM contas_pagar ${wherePagar}
-          ORDER BY data_pagamento DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsPagar
+          ORDER BY data_pagamento DESC LIMIT $${paramsPagar.length + 1}`,
+          [...paramsPagar, FLUXO_LIMIT]
         ),
 
         pool.query(
@@ -196,8 +197,8 @@ module.exports = function ({
           descricao,valor,pagamento_data data_movimento,
           NULL forma_pagamento,NULL referencia_id,observacao
           FROM lancamentos_financeiros ${whereLanc}
-          ORDER BY pagamento_data DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsLanc
+          ORDER BY pagamento_data DESC LIMIT $${paramsLanc.length + 1}`,
+          [...paramsLanc, FLUXO_LIMIT]
         ),
 
         pool.query(
@@ -205,8 +206,8 @@ module.exports = function ({
           descricao,valor,data data_movimento,
           NULL forma_pagamento,NULL referencia_id,observacao
           FROM investimentos ${whereInvest}
-          ORDER BY data DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsInvest
+          ORDER BY data DESC LIMIT $${paramsInvest.length + 1}`,
+          [...paramsInvest, FLUXO_LIMIT]
         ),
 
         pool.query(
@@ -216,8 +217,8 @@ module.exports = function ({
           v.pagamento forma_pagamento,
           v.id referencia_id,NULL observacao
           FROM vendas v ${whereVendas}
-          ORDER BY v.data DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsVendas
+          ORDER BY v.data DESC LIMIT $${paramsVendas.length + 1}`,
+          [...paramsVendas, FLUXO_LIMIT]
         ),
 
         pool.query(
@@ -229,8 +230,8 @@ module.exports = function ({
           FROM compras c
           LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
           ${whereCompras}
-          ORDER BY c.data DESC LIMIT ${FLUXO_LIMIT}`,
-          paramsCompras
+          ORDER BY c.data DESC LIMIT $${paramsCompras.length + 1}`,
+          [...paramsCompras, FLUXO_LIMIT]
         )
       ]);
 
@@ -311,7 +312,7 @@ module.exports = function ({
              COUNT(*) AS qtd
            FROM contas_receber
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-             AND COALESCE(status,'pendente') NOT IN ('pago')
+             AND COALESCE(status,'pendente') NOT IN ('pago', 'cancelado', 'estornado')
              AND data_vencimento IS NOT NULL
              AND data_vencimento >= $3
              AND data_vencimento <= $4
@@ -326,7 +327,7 @@ module.exports = function ({
              COUNT(*) AS qtd
            FROM contas_pagar
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-             AND COALESCE(status,'pendente') NOT IN ('pago')
+             AND COALESCE(status,'pendente') NOT IN ('pago', 'cancelado', 'estornado')
              AND data_vencimento IS NOT NULL
              AND data_vencimento >= $3
              AND data_vencimento <= $4

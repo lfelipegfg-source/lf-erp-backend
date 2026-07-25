@@ -246,6 +246,11 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
       const { saldo_contado, observacao } = req.body;
       const saldoContado  = normalizarDecimal(saldo_contado ?? 0);
 
+      if (saldoContado < 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'saldo_contado não pode ser negativo');
+      }
+
       const [movimentosResult, vendasResult] = await Promise.all([
         client.query(
           `SELECT COALESCE(SUM(valor), 0) AS saldo FROM caixa_movimentos WHERE sessao_id = $1`,
@@ -274,7 +279,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normaliz
            saldo_calculado   = $2,
            diferenca         = $3,
            observacao        = COALESCE($4, observacao),
-           fechado_em        = NOW()
+           fechado_em        = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $5`,
         [saldoContado, +saldoCalculado.toFixed(2), diferenca, observacao || null, sessao.id]
       );

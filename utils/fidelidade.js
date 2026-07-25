@@ -42,7 +42,7 @@ async function acumularPontosFidelidade(pool, { empresaId, clienteId, vendaId, t
     }
 
     await client.query(
-      `UPDATE clientes SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) + $1), atualizado_em = NOW()
+      `UPDATE clientes SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) + $1), atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $3)))`,
       [pontos, clienteId, empresaId]
     );
@@ -127,7 +127,7 @@ async function estornarPontosFidelidade(pool, {
 
     await client.query(
       `UPDATE clientes
-       SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) - $1), atualizado_em = NOW()
+       SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) - $1), atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
        WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = (SELECT nome FROM empresas WHERE id = $3)))`,
       [pontosEstornar, clienteId, empresaId]
     );

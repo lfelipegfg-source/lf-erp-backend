@@ -121,6 +121,7 @@ module.exports = ({
 
       if (precoFinal < 0) return erro(res, 400, 'Preço não pode ser negativo');
       if (custoBase < 0) return erro(res, 400, 'Custo não pode ser negativo');
+      if (preco_promocional != null && normalizarDecimal(preco_promocional) < 0) return erro(res, 400, 'Preço promocional não pode ser negativo');
       if (normalizarInt(estoque) < 0) return erro(res, 400, 'Estoque inicial não pode ser negativo');
       if (normalizarInt(estoque_minimo) < 0) return erro(res, 400, 'Estoque mínimo não pode ser negativo');
 
@@ -506,7 +507,9 @@ ${adicionarFiltroEmpresaSaaS({
       const estoqueN = normalizarInt(estoque);
       if (precoN < 0)   return erro(res, 400, 'Preço não pode ser negativo');
       if (custoN < 0)   return erro(res, 400, 'Custo não pode ser negativo');
+      if (preco_promocional != null && normalizarDecimal(preco_promocional) < 0) return erro(res, 400, 'Preço promocional não pode ser negativo');
       if (estoqueN < 0) return erro(res, 400, 'Estoque não pode ser negativo');
+      if (estoque_minimo !== undefined && normalizarInt(estoque_minimo) < 0) return erro(res, 400, 'estoque_minimo não pode ser negativo');
 
       const client = await pool.connect();
       try {

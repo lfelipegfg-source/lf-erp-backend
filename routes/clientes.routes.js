@@ -453,26 +453,42 @@ module.exports = ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const atualResult = await pool.query(
-        `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
+      const client = await pool.connect();
+      let dadosAnteriores;
+      try {
+        await client.query('BEGIN');
 
-      if (atualResult.rowCount === 0) {
-        return erro(res, 404, 'Cliente não encontrado');
+        const atualResult = await client.query(
+          `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (atualResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 404, 'Cliente não encontrado');
+        }
+
+        dadosAnteriores = atualResult.rows[0];
+
+        await client.query(
+          `UPDATE clientes
+          SET nome = $1,
+              endereco = $2,
+              telefone = $3,
+              nascimento = $4,
+              cpf = $5,
+              atualizado_em = NOW()
+          WHERE id = $6 AND (empresa_id = $7 OR (empresa_id IS NULL AND empresa = $8)) AND deletado_em IS NULL`,
+          [nome, (endereco || '').trim() || null, (telefone || '').trim() || null, (nascimento || '').trim() || null, cpf || null, id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
       }
-
-      await pool.query(
-        `UPDATE clientes
-        SET nome = $1,
-            endereco = $2,
-            telefone = $3,
-            nascimento = $4,
-            cpf = $5,
-            atualizado_em = NOW()
-        WHERE id = $6 AND (empresa_id = $7 OR (empresa_id IS NULL AND empresa = $8)) AND deletado_em IS NULL`,
-        [nome, (endereco || '').trim() || null, (telefone || '').trim() || null, (nascimento || '').trim() || null, cpf || null, id, empresaResolvida.id, empresaResolvida.nome]
-      );
 
       await registrarAuditoria({
         empresa: empresaResolvida.nome,
@@ -482,7 +498,7 @@ module.exports = ({
         modulo: 'clientes',
         acao: 'edicao',
         referencia_id: id,
-        dados_anteriores: atualResult.rows[0],
+        dados_anteriores: dadosAnteriores,
         dados_novos: {
           nome,
           endereco,

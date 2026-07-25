@@ -95,7 +95,7 @@ module.exports = ({
         `INSERT INTO comissoes_config (empresa_id, usuario_id, percentual, ativa)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (empresa_id, usuario_id)
-         DO UPDATE SET percentual = $3, ativa = $4, atualizado_em = NOW()
+         DO UPDATE SET percentual = $3, ativa = $4, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          RETURNING *`,
         [emp.id, Number(usuario_id), normalizarDecimal(percentual), Boolean(ativa)]
       );
@@ -202,22 +202,29 @@ module.exports = ({
       const pagina = Math.max(Number(req.query.pagina) || 1, 1);
       const offset = (pagina - 1) * limite;
 
-      const result = await pool.query(
-        `SELECT c.*,
-                u.nome_completo AS vendedor_nome,
-                u.usuario       AS vendedor_usuario,
-                v.data          AS data_venda,
-                v.cliente_nome
-         FROM comissoes c
-         JOIN usuarios u ON u.id = c.usuario_id
-         LEFT JOIN vendas v ON v.id = c.venda_id
-         ${where}
-         ORDER BY c.criado_em DESC
-         LIMIT $${idx} OFFSET $${idx + 1}`,
-        [...params, limite, offset]
-      );
+      const [countResult, result] = await Promise.all([
+        pool.query(
+          `SELECT COUNT(*) AS total FROM comissoes c ${where}`,
+          params
+        ),
+        pool.query(
+          `SELECT c.*,
+                  u.nome_completo AS vendedor_nome,
+                  u.usuario       AS vendedor_usuario,
+                  v.data          AS data_venda,
+                  v.cliente_nome
+           FROM comissoes c
+           JOIN usuarios u ON u.id = c.usuario_id
+           LEFT JOIN vendas v ON v.id = c.venda_id
+           ${where}
+           ORDER BY c.criado_em DESC
+           LIMIT $${idx} OFFSET $${idx + 1}`,
+          [...params, limite, offset]
+        )
+      ]);
 
-      return ok(res, { comissoes: result.rows });
+      const total = Number(countResult.rows[0]?.total || 0);
+      return ok(res, { total, pagina, paginas: Math.ceil(total / limite), dados: result.rows });
     } catch (err) {
       console.error('[comissoes] GET lista:', err.message);
       return erro(res, 500, 'Erro ao listar comissões');
@@ -339,7 +346,7 @@ module.exports = ({
       if (!emp) return erro(res, 403, 'Sem acesso');
 
       const vendaId = Number(req.params.vendaId);
-      const venda = await pool.query(`SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, emp.id]);
+      const venda = await pool.query(`SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`, [vendaId, emp.id, emp.nome]);
       if (venda.rowCount === 0) return erro(res, 404, 'Venda não encontrada');
 
       const paga = await pool.query(
