@@ -353,32 +353,52 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const fornecedorResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
+      // Todas as verificações + soft-delete dentro de uma única transação
+      // com FOR UPDATE para evitar TOCTOU
+      const txClient = await pool.connect();
+      let fornecedorParaAudit;
+      try {
+        await txClient.query('BEGIN');
 
-      if (fornecedorResult.rowCount === 0) {
-        return erro(res, 404, 'Fornecedor não encontrado');
+        // Lock no fornecedor impede corrida entre verificação e deleção
+        const fornecedorResult = await txClient.query(
+          `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (fornecedorResult.rowCount === 0) {
+          await txClient.query('ROLLBACK');
+          return erro(res, 404, 'Fornecedor não encontrado');
+        }
+
+        fornecedorParaAudit = fornecedorResult.rows[0];
+
+        const compraResult = await txClient.query(
+          `SELECT COUNT(*) AS total FROM compras WHERE fornecedor_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (Number(compraResult.rows[0].total || 0) > 0) {
+          await txClient.query('ROLLBACK');
+          return erro(res, 400, 'Fornecedor já possui compras vinculadas e não pode ser excluído');
+        }
+
+        await txClient.query(
+          `UPDATE fornecedores
+          SET deletado_em = NOW(),
+              atualizado_em = NOW()
+          WHERE id = $1
+          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        await txClient.query('COMMIT');
+      } catch (txErr) {
+        await txClient.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        txClient.release();
       }
-
-      const compraResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM compras WHERE fornecedor_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (Number(compraResult.rows[0].total || 0) > 0) {
-        return erro(res, 400, 'Fornecedor já possui compras vinculadas e não pode ser excluído');
-      }
-
-      await pool.query(
-        `UPDATE fornecedores
-        SET deletado_em = NOW(),
-            atualizado_em = NOW()
-        WHERE id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
 
       await registrarAuditoria({
         empresa: empresaResolvida.nome,
@@ -388,7 +408,7 @@ module.exports = function ({
         modulo: 'fornecedores',
         acao: 'soft_delete',
         referencia_id: id,
-        dados_anteriores: fornecedorResult.rows[0],
+        dados_anteriores: fornecedorParaAudit,
         dados_novos: {
           deletado_em: new Date()
         },

@@ -696,59 +696,67 @@ ${adicionarFiltroEmpresaSaaS({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const produtoResult = await pool.query(
-        `SELECT * FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (produtoResult.rowCount === 0) {
-        return erro(res, 404, 'Produto não encontrado');
-      }
-
-      const produto = produtoResult.rows[0];
-
-      if (normalizarInt(produto.estoque) > 0) {
-        return erro(res, 400, `Produto possui ${produto.estoque} unidade(s) em estoque. Zere o estoque antes de excluir.`);
-      }
-
-      const vendaItemResult = await pool.query(
-        `SELECT COUNT(*) AS total
-   FROM venda_itens
-   WHERE produto_id = $1
-   AND (
-     empresa_id = $2
-     OR (
-       empresa_id IS NULL
-       AND empresa = $3
-     )
-   )`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      const compraItemResult = await pool.query(
-        `SELECT COUNT(*) AS total
-   FROM compra_itens
-   WHERE produto_id = $1
-   AND (
-     empresa_id = $2
-     OR (
-       empresa_id IS NULL
-       AND empresa = $3
-     )
-   )`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (
-        Number(vendaItemResult.rows[0].total || 0) > 0 ||
-        Number(compraItemResult.rows[0].total || 0) > 0
-      ) {
-        return erro(res, 400, 'Produto já possui movimentações e não pode ser excluído');
-      }
-
+      // Todas as verificações + soft-delete dentro de uma única transação
+      // com FOR UPDATE para evitar TOCTOU
       const clienteDel = await pool.connect();
+      let produtoParaAudit;
       try {
         await clienteDel.query('BEGIN');
+
+        // Lock no produto impede corrida entre verificação e deleção
+        const produtoResult = await clienteDel.query(
+          `SELECT * FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (produtoResult.rowCount === 0) {
+          await clienteDel.query('ROLLBACK');
+          return erro(res, 404, 'Produto não encontrado');
+        }
+
+        const produto = produtoResult.rows[0];
+        produtoParaAudit = produto;
+
+        if (normalizarInt(produto.estoque) > 0) {
+          await clienteDel.query('ROLLBACK');
+          return erro(res, 400, `Produto possui ${produto.estoque} unidade(s) em estoque. Zere o estoque antes de excluir.`);
+        }
+
+        const vendaItemResult = await clienteDel.query(
+          `SELECT COUNT(*) AS total
+     FROM venda_itens
+     WHERE produto_id = $1
+     AND (
+       empresa_id = $2
+       OR (
+         empresa_id IS NULL
+         AND empresa = $3
+       )
+     )`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        const compraItemResult = await clienteDel.query(
+          `SELECT COUNT(*) AS total
+     FROM compra_itens
+     WHERE produto_id = $1
+     AND (
+       empresa_id = $2
+       OR (
+         empresa_id IS NULL
+         AND empresa = $3
+       )
+     )`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (
+          Number(vendaItemResult.rows[0].total || 0) > 0 ||
+          Number(compraItemResult.rows[0].total || 0) > 0
+        ) {
+          await clienteDel.query('ROLLBACK');
+          return erro(res, 400, 'Produto já possui movimentações e não pode ser excluído');
+        }
 
         await clienteDel.query(
           `DELETE FROM movimentacoes_estoque
@@ -780,7 +788,7 @@ ${adicionarFiltroEmpresaSaaS({
         modulo: 'produtos',
         acao: 'soft_delete',
         referencia_id: id,
-        dados_anteriores: produtoResult.rows[0],
+        dados_anteriores: produtoParaAudit,
         dados_novos: {
           deletado_em: new Date()
         },

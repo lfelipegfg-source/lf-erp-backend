@@ -20,13 +20,6 @@ async function acumularPontosFidelidade(pool, { empresaId, clienteId, vendaId, t
   const pontos = Math.floor(Number(totalVenda) * Number(cfg.pontos_por_real));
   if (pontos <= 0) return;
 
-  // Verifica se já acumulou pontos para esta venda (idempotência)
-  const jaAcumulou = await pool.query(
-    `SELECT id FROM fidelidade_movimentos WHERE referencia_tipo = 'venda' AND referencia_id = $1 AND empresa_id = $2`,
-    [vendaId, empresaId]
-  );
-  if (jaAcumulou.rowCount > 0) return;
-
   const expiraEm = cfg.validade_dias > 0
     ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' })
         .format(new Date(Date.now() + cfg.validade_dias * 86_400_000))
@@ -36,6 +29,17 @@ async function acumularPontosFidelidade(pool, { empresaId, clienteId, vendaId, t
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Idempotência DENTRO da transação para evitar race condition:
+    // duas chamadas simultâneas não passam ambas pelo mesmo check
+    const jaAcumulou = await client.query(
+      `SELECT id FROM fidelidade_movimentos WHERE referencia_tipo = 'venda' AND referencia_id = $1 AND empresa_id = $2`,
+      [vendaId, empresaId]
+    );
+    if (jaAcumulou.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
 
     await client.query(
       `UPDATE clientes SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) + $1), atualizado_em = NOW()
@@ -86,31 +90,40 @@ async function estornarPontosFidelidade(pool, {
   );
   if (cfgResult.rowCount === 0) return;
 
-  // Idempotência — não estorna a mesma devolução duas vezes
-  const jaEstornou = await pool.query(
-    `SELECT id FROM fidelidade_movimentos
-     WHERE referencia_tipo = 'devolucao' AND referencia_id = $1 AND empresa_id = $2`,
-    [devolucaoId, empresaId]
-  );
-  if (jaEstornou.rowCount > 0) return;
-
-  // Busca movimento original da venda para saber quantos pontos foram creditados
-  const movOriginal = await pool.query(
-    `SELECT pontos FROM fidelidade_movimentos
-     WHERE referencia_tipo = 'venda' AND referencia_id = $1 AND empresa_id = $2 AND tipo = 'credito'
-     LIMIT 1`,
-    [vendaId, empresaId]
-  );
-  if (movOriginal.rowCount === 0) return; // venda não gerou pontos
-
-  const pontosOriginais = Number(movOriginal.rows[0].pontos);
-  const proporcao = vendaTotal > 0 ? Math.min(Number(totalDevolvido) / Number(vendaTotal), 1) : 1;
-  const pontosEstornar = Math.floor(pontosOriginais * proporcao);
-  if (pontosEstornar <= 0) return;
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Idempotência DENTRO da transação para evitar race condition no estorno
+    const jaEstornou = await client.query(
+      `SELECT id FROM fidelidade_movimentos
+       WHERE referencia_tipo = 'devolucao' AND referencia_id = $1 AND empresa_id = $2`,
+      [devolucaoId, empresaId]
+    );
+    if (jaEstornou.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    // Busca movimento original da venda para saber quantos pontos foram creditados
+    const movOriginal = await client.query(
+      `SELECT pontos FROM fidelidade_movimentos
+       WHERE referencia_tipo = 'venda' AND referencia_id = $1 AND empresa_id = $2 AND tipo = 'credito'
+       LIMIT 1`,
+      [vendaId, empresaId]
+    );
+    if (movOriginal.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return; // venda não gerou pontos
+    }
+
+    const pontosOriginais = Number(movOriginal.rows[0].pontos);
+    const proporcao = vendaTotal > 0 ? Math.min(Number(totalDevolvido) / Number(vendaTotal), 1) : 1;
+    const pontosEstornar = Math.floor(pontosOriginais * proporcao);
+    if (pontosEstornar <= 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
 
     await client.query(
       `UPDATE clientes

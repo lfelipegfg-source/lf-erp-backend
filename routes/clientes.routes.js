@@ -517,44 +517,65 @@ module.exports = ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const clienteResult = await pool.query(
-        `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
+      // Todas as verificações + soft-delete dentro de uma única transação
+      // com FOR UPDATE para evitar TOCTOU
+      const dbClient = await pool.connect();
+      let clienteParaAudit;
+      try {
+        await dbClient.query('BEGIN');
 
-      if (clienteResult.rowCount === 0) {
-        return erro(res, 404, 'Cliente não encontrado');
+        // Lock no cliente impede corrida entre verificação e deleção
+        const clienteResult = await dbClient.query(
+          `SELECT * FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (clienteResult.rowCount === 0) {
+          await dbClient.query('ROLLBACK');
+          return erro(res, 404, 'Cliente não encontrado');
+        }
+
+        clienteParaAudit = clienteResult.rows[0];
+
+        const vendaResult = await dbClient.query(
+          `SELECT COUNT(*) AS total FROM vendas
+           WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (Number(vendaResult.rows[0].total || 0) > 0) {
+          await dbClient.query('ROLLBACK');
+          return erro(res, 400, 'Cliente já possui vendas vinculadas e não pode ser excluído');
+        }
+
+        const crAbertoResult = await dbClient.query(
+          `SELECT COUNT(*) AS total FROM contas_receber
+           WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+             AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago','cancelado')`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (Number(crAbertoResult.rows[0].total || 0) > 0) {
+          await dbClient.query('ROLLBACK');
+          return erro(res, 400, 'Cliente possui contas a receber em aberto e não pode ser excluído');
+        }
+
+        await dbClient.query(
+          `UPDATE clientes
+          SET deletado_em = NOW(),
+              atualizado_em = NOW()
+          WHERE id = $1
+          AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        await dbClient.query('COMMIT');
+      } catch (txErr) {
+        await dbClient.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        dbClient.release();
       }
-
-      const vendaResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM vendas
-         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (Number(vendaResult.rows[0].total || 0) > 0) {
-        return erro(res, 400, 'Cliente já possui vendas vinculadas e não pode ser excluído');
-      }
-
-      const crAbertoResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM contas_receber
-         WHERE cliente_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-           AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago','cancelado')`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (Number(crAbertoResult.rows[0].total || 0) > 0) {
-        return erro(res, 400, 'Cliente possui contas a receber em aberto e não pode ser excluído');
-      }
-
-      await pool.query(
-        `UPDATE clientes
-        SET deletado_em = NOW(),
-            atualizado_em = NOW()
-        WHERE id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
 
       await registrarAuditoria({
         empresa: empresaResolvida.nome,
@@ -564,7 +585,7 @@ module.exports = ({
         modulo: 'clientes',
         acao: 'soft_delete',
         referencia_id: id,
-        dados_anteriores: clienteResult.rows[0],
+        dados_anteriores: clienteParaAudit,
         dados_novos: {
           deletado_em: new Date()
         },
