@@ -2382,7 +2382,7 @@ app.post('/logout', auth, (req, res) => {
       `INSERT INTO jwt_blacklist (token_hash, revoked_at, expires_at)
        VALUES ($1, NOW(), $2) ON CONFLICT DO NOTHING`,
       [hash, expiresAt]
-    ).catch((e) => console.warn('[blacklist] Falha ao persistir logout:', e.message));
+    ).catch((e) => console.error('[logout] Falha ao invalidar token:', e));
   }
 
   registrarAuditoria({
@@ -4376,9 +4376,13 @@ app.post('/contas-receber/estornar-parcial/:lancamentoId', auth, writeRateLimite
 
     const lancamento = lancamentoResult.rows[0];
 
-    if (String(lancamento.status || '').toLowerCase() !== 'pago') {
+    if (String(lancamento.status || '').toLowerCase() === 'estornado') {
       await client.query('ROLLBACK');
       return jsonErro(res, 400, 'Este recebimento parcial já foi estornado');
+    }
+    if (String(lancamento.status || '').toLowerCase() !== 'pago') {
+      await client.query('ROLLBACK');
+      return jsonErro(res, 400, 'Este recebimento parcial ainda não foi pago');
     }
 
     const contaId = Number(lancamento.conta_receber_id || 0);
@@ -5426,28 +5430,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
 
     const id = Number(req.params.id);
 
-    const atualResult = req.user.is_saas_owner
-      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
-      : await pool.query(
-          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-          [id, req.user.empresa_id || 0, req.user.empresa || '']
-        );
-
-    if (atualResult.rowCount === 0) {
-      return jsonErro(res, 404, 'Lançamento não encontrado');
-    }
-
-    const atual = atualResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    if (atual.conta_receber_id) {
-      return jsonErro(res, 400, 'Lançamentos vinculados a contas a receber não podem ser editados diretamente');
-    }
-
+    // Validate body fields early, before opening transaction
     const {
       tipo,
       categoria,
@@ -5478,6 +5461,36 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
     const client7 = await pool.connect();
     try {
       await client7.query('BEGIN');
+
+      // SELECT with FOR UPDATE inside transaction to prevent lost updates
+      const atualResult = req.user.is_saas_owner
+        ? await client7.query(
+            `SELECT * FROM lancamentos_financeiros WHERE id = $1 FOR UPDATE`,
+            [id]
+          )
+        : await client7.query(
+            `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
+
+      if (atualResult.rowCount === 0) {
+        await client7.query('ROLLBACK');
+        return jsonErro(res, 404, 'Lançamento não encontrado');
+      }
+
+      const atual = atualResult.rows[0];
+      const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
+
+      if (!empresaResolvida) {
+        await client7.query('ROLLBACK');
+        return jsonErro(res, 403, 'Sem acesso');
+      }
+
+      if (atual.conta_receber_id) {
+        await client7.query('ROLLBACK');
+        return jsonErro(res, 400, 'Lançamentos vinculados a contas a receber não podem ser editados diretamente');
+      }
+
       await client7.query(
         `
       UPDATE lancamentos_financeiros
@@ -5492,7 +5505,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
           recorrente = $9,
           frequencia = $10,
           observacao = $11,
-          atualizado_em = NOW()
+          atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
       WHERE id = $12 AND (empresa_id = $13 OR (empresa_id IS NULL AND empresa = $14))
 `,
         [
@@ -5502,7 +5515,9 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
           valorFinal,
           normalizarDataISO(vencimento) || null,
           normalizarDataISO(pagamento_data) || null,
-          ['pendente', 'pago', 'atrasado'].includes(String(status || '').toLowerCase()) ? String(status).toLowerCase() : 'pendente',
+          ['pendente', 'pago', 'atrasado'].includes(String(status || '').toLowerCase())
+            ? String(status).toLowerCase()
+            : 'pendente',
           forma_pagamento || '',
           Boolean(recorrente),
           frequencia || '',
@@ -5718,6 +5733,13 @@ app.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'finan
 
     if (!empresa || !tipo_investimento || !descricao || !data) {
       return jsonErro(res, 400, 'Dados do investimento incompletos');
+    }
+
+    const TIPOS_INVESTIMENTO_VALIDOS = [
+      'CDB', 'LCI', 'LCA', 'Tesouro Direto', 'Ações', 'FII', 'Poupança', 'Outro'
+    ];
+    if (!TIPOS_INVESTIMENTO_VALIDOS.includes(tipo_investimento)) {
+      return jsonErro(res, 400, 'tipo_investimento inválido');
     }
 
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
@@ -7700,6 +7722,10 @@ app.put('/configuracoes', auth, writeRateLimiter, requirePermissao(pool, 'config
     const taxaJurosDiaFinal =
       taxa_juros_dia !== undefined ? Number(taxa_juros_dia) : null;
 
+    if (logo_url && !logo_url.startsWith('http://') && !logo_url.startsWith('https://')) {
+      return jsonErro(res, 400, 'logo_url deve começar com http:// ou https://');
+    }
+
     const logoFinal = logo_url !== undefined ? (logo_url || null) : undefined;
 
     // cor_primaria: hex válido ou null para remover; undefined = não alterar
@@ -7864,7 +7890,7 @@ app.get('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
 });
 
 // PUT /admin/billing/config
-app.put('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
+app.put('/admin/billing/config', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const { asaas_api_key, asaas_sandbox } = req.body;
     const _saasKeyParaSalvar = (asaas_api_key && asaas_api_key !== '****')
@@ -7884,7 +7910,7 @@ app.put('/admin/billing/config', auth, apenasAdmin, async (req, res) => {
 });
 
 // POST /admin/billing/cobrar/:empresaId — gera cobrança de assinatura
-app.post('/admin/billing/cobrar/:empresaId', auth, apenasAdmin, async (req, res) => {
+app.post('/admin/billing/cobrar/:empresaId', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const empresaId = Number(req.params.empresaId);
     const empresaResult = await pool.query(
@@ -8081,7 +8107,7 @@ app.get('/admin/planos', auth, apenasAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/planos', auth, apenasAdmin, async (req, res) => {
+app.post('/admin/planos', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const {
       codigo, nome, preco_mensal,
@@ -8113,7 +8139,7 @@ app.post('/admin/planos', auth, apenasAdmin, async (req, res) => {
   }
 });
 
-app.put('/admin/planos/:id', auth, apenasAdmin, async (req, res) => {
+app.put('/admin/planos/:id', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
@@ -8271,6 +8297,7 @@ app.delete('/metas-vendas/:id', auth, writeRateLimiter, requirePermissao(pool, '
     if (r.rowCount === 0) return jsonErro(res, 404, 'Meta não encontrada');
     res.json({ sucesso: true });
   } catch (err) {
+    console.error('[metas] DELETE:', err.message);
     jsonErro(res, 500, 'Erro ao excluir meta');
   }
 });
@@ -8571,7 +8598,7 @@ app.get('/empresa/exportar-dados', auth, writeRateLimiter, requirePermissao(pool
     };
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const _nomeExport = empresaResolvida.nome.replace(/\s+/g,'_').replace(/["\\]/g,'').replace(/[\r\n]/g,'');
+    const _nomeExport = empresaResolvida.nome.replace(/\s+/g,'_').replace(/[;="\\]/g,'_').replace(/[\r\n]/g,'');
     res.setHeader('Content-Disposition',
       `attachment; filename="lferp-dados-${_nomeExport}-${hoje()}.json"`
     );
@@ -8607,19 +8634,19 @@ app.get('/notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'), a
       pool.query(
         `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
          FROM contas_receber
-         WHERE empresa_id = $1
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
            AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
            AND data_vencimento <= $2`,
-        [empresaResolvida.id, dataHoje]
+        [empresaResolvida.id, dataHoje, empresaResolvida.nome]
       ),
       // Contas a pagar vencendo hoje ou amanhã
       pool.query(
         `SELECT COUNT(*) AS total, COALESCE(SUM(valor), 0) AS valor_total
          FROM contas_pagar
-         WHERE empresa_id = $1
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
            AND LOWER(COALESCE(status,'pendente')) = 'pendente'
            AND data_vencimento <= $2`,
-        [empresaResolvida.id, amanha]
+        [empresaResolvida.id, amanha, empresaResolvida.nome]
       ),
       // Trial expirando em até 7 dias
       pool.query(
@@ -8879,7 +8906,7 @@ app.get('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
   }
 });
 
-app.put('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
+app.put('/admin/smtp/config', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const { smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, app_url } = req.body;
     await pool.query(
@@ -8896,7 +8923,7 @@ app.put('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/smtp/testar', auth, apenasAdmin, async (req, res) => {
+app.post('/admin/smtp/testar', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const cfg = await getSaasSmtp(pool);
     const transporter = criarTransporter(cfg);
@@ -9124,7 +9151,7 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
     // Verifica unicidade DENTRO da transação para evitar TOCTOU
     const [empresaExiste, usuarioExiste] = await Promise.all([
       client.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1 FOR UPDATE`, [nome_empresa.trim()]),
-      client.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER($1) LIMIT 1`, [usuario.trim()])
+      client.query(`SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER($1) LIMIT 1 FOR UPDATE`, [usuario.trim()])
     ]);
     if (empresaExiste.rowCount > 0) { await client.query('ROLLBACK'); return jsonErro(res, 409, 'Já existe uma empresa com esse nome'); }
     if (usuarioExiste.rowCount > 0) { await client.query('ROLLBACK'); return jsonErro(res, 409, 'Esse nome de usuário já está em uso'); }
@@ -9206,7 +9233,7 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
   }
 });
 
-app.post('/admin/empresas', auth, apenasAdmin, async (req, res) => {
+app.post('/admin/empresas', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const { nome, plano_id, trial_dias = 30, email, telefone, cnpj } = req.body;
 
@@ -9245,7 +9272,7 @@ app.post('/admin/empresas', auth, apenasAdmin, async (req, res) => {
   }
 });
 
-app.put('/admin/empresas/:id/status', auth, apenasAdmin, async (req, res) => {
+app.put('/admin/empresas/:id/status', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { assinatura_status, bloqueada, plano_id, trial_fim, motivo_bloqueio } = req.body;
