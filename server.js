@@ -999,7 +999,7 @@ function auth(req, res, next) {
 }
 
 function apenasAdmin(req, res, next) {
-  if (!req.user.is_saas_owner) {
+  if (!req.user.is_saas_owner && req.user.tipo !== 'admin') {
     return res.status(403).json({ sucesso: false, erro: 'Acesso restrito ao SaaS Owner', codigo: 'SEM_PERMISSAO' });
   }
   next();
@@ -1885,6 +1885,7 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_receber_id INTEGER;
+    ALTER TABLE lancamentos_financeiros ADD COLUMN IF NOT EXISTS conta_pagar_id INTEGER;
   `);
 
   await pool.query(`
@@ -2424,7 +2425,7 @@ app.put('/me/perfil', auth, async (req, res) => {
   }
 });
 
-app.put('/me/senha', auth, async (req, res) => {
+app.put('/me/senha', auth, writeRateLimiter, async (req, res) => {
   try {
     const { senha_atual, nova_senha, confirmar_senha } = req.body;
 
@@ -5078,15 +5079,16 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
     if (!pagamentoTotalCP) {
       await client.query(
         `INSERT INTO lancamentos_financeiros
-          (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, criado_em, atualizado_em)
-          VALUES ($1, $2, 'despesa', 'contas_pagar', $3, $4, $5, $5, 'pago',
+          (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, conta_pagar_id, criado_em, atualizado_em)
+          VALUES ($1, $2, 'despesa', 'contas_pagar', $3, $4, $5, $5, 'pago', $6,
                   NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')`,
         [
           empresaResolvida.nome,
           empresaResolvida.id,
           `Pagamento parcial - ${conta.descricao || ''}`,
           valorPagoFinal,
-          dataPagamento
+          dataPagamento,
+          id
         ]
       );
     }
@@ -5634,11 +5636,43 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
       return jsonErro(res, 403, 'Sem acesso');
     }
 
-    const delResult = await pool.query(
-      `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2)) RETURNING id`,
-      [id, empresaResolvida.nome, empresaResolvida.id]
-    );
-    if (delResult.rowCount === 0) return jsonErro(res, 404, 'Lançamento não encontrado');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const delResult = await client.query(
+        `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2)) RETURNING id`,
+        [id, empresaResolvida.nome, empresaResolvida.id]
+      );
+      if (delResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return jsonErro(res, 404, 'Lançamento não encontrado');
+      }
+
+      // Restaurar CR se este lançamento era uma baixa parcial de conta a receber
+      if (atual.conta_receber_id) {
+        const valorLancamento = normalizarDecimal(atual.valor || 0);
+        await client.query(
+          `UPDATE contas_receber
+           SET valor = valor + $1,
+               status = CASE
+                 WHEN (valor + $1) >= COALESCE(valor_original, valor + $1) THEN 'pendente'
+                 ELSE 'parcial'
+               END,
+               atualizado_em = NOW()
+           WHERE id = $2
+             AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+          [valorLancamento, atual.conta_receber_id, empresaResolvida.id, empresaResolvida.nome]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     try {
       await registrarLogFinanceiro({
@@ -5653,6 +5687,10 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
       });
     } catch (logErr) {
       console.error('[lancamentos-delete] log financeiro:', logErr.message);
+    }
+
+    if (atual.conta_receber_id) {
+      try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[lancamentos-delete] status-cr:', e.message); }
     }
 
     res.json({ sucesso: true });
@@ -8489,22 +8527,23 @@ app.get('/empresa/exportar-dados', auth, writeRateLimiter, requirePermissao(pool
     if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
 
     const id = empresaResolvida.id;
+    const nome = empresaResolvida.nome;
 
     const [
       clientesResult, produtosResult, vendasResult,
       venda_itensResult, comprasResult, compra_itensResult,
       crResult, cpResult, movimResult, lancamentosResult
     ] = await Promise.all([
-      pool.query(`SELECT id,nome,telefone,email,cpf,cpf_cnpj,endereco,criado_em FROM clientes WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT id,nome,categoria,preco,custo_medio,estoque,estoque_minimo,codigo_barras,criado_em FROM produtos WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT id,cliente_nome,subtotal,desconto,acrescimo,total,pagamento,status_pagamento,data,criado_em FROM vendas WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT vi.venda_id,vi.produto_nome,vi.quantidade,vi.preco_unitario,vi.total FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE v.empresa_id=$1 ORDER BY vi.venda_id,vi.id`, [id]),
-      pool.query(`SELECT id,fornecedor_id,data,total,pagamento,status,criado_em FROM compras WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT ci.compra_id,ci.produto_nome,ci.quantidade,ci.custo_unitario FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE c.empresa_id=$1 ORDER BY ci.compra_id`, [id]),
-      pool.query(`SELECT id,cliente_nome,parcela,total_parcelas,valor,data_vencimento,data_pagamento,status,forma_pagamento FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT id,fornecedor_id,descricao,valor,data_vencimento,data_pagamento,status FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT produto_id,tipo,quantidade,data_movimentacao FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
-      pool.query(`SELECT id,tipo,descricao,valor,vencimento AS data,categoria FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY vencimento`, [id])
+      pool.query(`SELECT id,nome,telefone,email,cpf,cpf_cnpj,endereco,criado_em FROM clientes WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, nome]),
+      pool.query(`SELECT id,nome,categoria,preco,custo_medio,estoque,estoque_minimo,codigo_barras,criado_em FROM produtos WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, nome]),
+      pool.query(`SELECT id,cliente_nome,subtotal,desconto,acrescimo,total,pagamento,status_pagamento,data,criado_em FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
+      pool.query(`SELECT vi.venda_id,vi.produto_nome,vi.quantidade,vi.preco_unitario,vi.total FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE (v.empresa_id=$1 OR (v.empresa_id IS NULL AND v.empresa=$2)) ORDER BY vi.venda_id,vi.id`, [id, nome]),
+      pool.query(`SELECT id,fornecedor_id,data,total,pagamento,status,criado_em FROM compras WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
+      pool.query(`SELECT ci.compra_id,ci.produto_nome,ci.quantidade,ci.custo_unitario FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE (c.empresa_id=$1 OR (c.empresa_id IS NULL AND c.empresa=$2)) ORDER BY ci.compra_id`, [id, nome]),
+      pool.query(`SELECT id,cliente_nome,parcela,total_parcelas,valor,data_vencimento,data_pagamento,status,forma_pagamento FROM contas_receber WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
+      pool.query(`SELECT id,fornecedor_id,descricao,valor,data_vencimento,data_pagamento,status FROM contas_pagar WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
+      pool.query(`SELECT produto_id,tipo,quantidade,data_movimentacao FROM movimentacoes_estoque WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY data_movimentacao`, [id, nome]),
+      pool.query(`SELECT id,tipo,descricao,valor,vencimento AS data,categoria FROM lancamentos_financeiros WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY vencimento`, [id, nome])
     ]);
 
     const payload = {
@@ -8971,22 +9010,23 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
     const empresaResult = await pool.query(`SELECT * FROM empresas WHERE id = $1`, [id]);
     if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
     const empresa = empresaResult.rows[0];
+    const empresaNome = empresa.nome;
 
     const [
       clientesR, produtosR, fornecedoresR, vendasR, vendaItensR,
       comprasR, compraItensR, crR, cpR, movimR, lancamentosR
     ] = await Promise.all([
-      pool.query(`SELECT * FROM clientes WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM produtos WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM fornecedores WHERE empresa_id=$1 AND deletado_em IS NULL ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM vendas WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE v.empresa_id=$1 ORDER BY vi.venda_id,vi.id`, [id]),
-      pool.query(`SELECT * FROM compras WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT ci.* FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE c.empresa_id=$1 ORDER BY ci.compra_id`, [id]),
-      pool.query(`SELECT * FROM contas_receber WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM contas_pagar WHERE empresa_id=$1 ORDER BY id`, [id]),
-      pool.query(`SELECT * FROM movimentacoes_estoque WHERE empresa_id=$1 ORDER BY data_movimentacao`, [id]),
-      pool.query(`SELECT * FROM lancamentos_financeiros WHERE empresa_id=$1 ORDER BY vencimento`, [id])
+      pool.query(`SELECT * FROM clientes WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM produtos WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM fornecedores WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE (v.empresa_id=$1 OR (v.empresa_id IS NULL AND v.empresa=$2)) ORDER BY vi.venda_id,vi.id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM compras WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT ci.* FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE (c.empresa_id=$1 OR (c.empresa_id IS NULL AND c.empresa=$2)) ORDER BY ci.compra_id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM contas_receber WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM contas_pagar WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
+      pool.query(`SELECT * FROM movimentacoes_estoque WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY data_movimentacao`, [id, empresaNome]),
+      pool.query(`SELECT * FROM lancamentos_financeiros WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY vencimento`, [id, empresaNome])
     ]);
 
     const payload = {
