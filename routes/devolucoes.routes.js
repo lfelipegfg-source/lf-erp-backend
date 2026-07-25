@@ -58,17 +58,33 @@ module.exports = ({
       const emp = await getEmpresa(req);
       if (!emp) return erro(res, 403, 'Sem acesso');
 
-      const result = await pool.query(
-        `SELECT d.*, COUNT(di.id) AS total_itens
-         FROM devolucoes d
-         LEFT JOIN devolucao_itens di ON di.devolucao_id = d.id
-         WHERE (d.empresa_id = $1 OR (d.empresa_id IS NULL AND d.empresa = $2))
-         GROUP BY d.id ORDER BY d.criado_em DESC
-         LIMIT 200`,
-        [emp.id, emp.nome]
-      );
+      const pagina = Math.max(parseInt(req.query.pagina) || 1, 1);
+      const limite = Math.min(Math.max(parseInt(req.query.limite) || 20, 1), 100);
+      const offset = (pagina - 1) * limite;
+
+      const [countResult, result] = await Promise.all([
+        pool.query(
+          `SELECT COUNT(*) FROM devolucoes d
+           WHERE (d.empresa_id = $1 OR (d.empresa_id IS NULL AND d.empresa = $2))`,
+          [emp.id, emp.nome]
+        ),
+        pool.query(
+          `SELECT d.*, COUNT(di.id) AS total_itens
+           FROM devolucoes d
+           LEFT JOIN devolucao_itens di ON di.devolucao_id = d.id
+           WHERE (d.empresa_id = $1 OR (d.empresa_id IS NULL AND d.empresa = $2))
+           GROUP BY d.id ORDER BY d.criado_em DESC
+           LIMIT $3 OFFSET $4`,
+          [emp.id, emp.nome, limite, offset]
+        )
+      ]);
+
+      const total = parseInt(countResult.rows[0].count);
 
       return ok(res, {
+        total,
+        pagina,
+        paginas: Math.ceil(total / limite),
         devolucoes: result.rows.map((r) => ({
           ...r,
           total_devolvido: Number(r.total_devolvido || 0),

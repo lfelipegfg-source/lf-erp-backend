@@ -320,8 +320,8 @@ module.exports = ({
         // Baixa estoque da grade
         await client.query(
           `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW()
-           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND produto_id = $4))`,
-          [estoqueGrade - quantidade, gradeId, empresaResolvida.id, produtoId]
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+          [estoqueGrade - quantidade, gradeId, empresaResolvida.id, empresaResolvida.nome]
         );
 
         // Sincroniza estoque do produto-pai como soma das grades
@@ -329,6 +329,7 @@ module.exports = ({
           `UPDATE produtos SET estoque = (
              SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
              WHERE produto_id = $1 AND ativo = true
+               AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
            ), atualizado_em = NOW()
            WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
           [produtoId, empresaResolvida.id, empresaResolvida.nome]
@@ -973,22 +974,26 @@ module.exports = ({
         return erro(res, 404, 'Venda não encontrada para atualização');
       }
 
-      await registrarAuditoria({
-        empresa: empresaResolvida.nome,
-        empresa_id: empresaResolvida.id,
-        usuario_id: req.user.id,
-        usuario_nome: req.user.nome || '',
-        modulo: 'vendas',
-        acao: 'edicao_observacao',
-        referencia_id: id,
-        dados_anteriores: {
-          observacao: venda.observacao || ''
-        },
-        dados_novos: {
-          observacao: observacao || ''
-        },
-        req
-      });
+      try {
+        await registrarAuditoria({
+          empresa: empresaResolvida.nome,
+          empresa_id: empresaResolvida.id,
+          usuario_id: req.user.id,
+          usuario_nome: req.user.nome || '',
+          modulo: 'vendas',
+          acao: 'edicao_observacao',
+          referencia_id: id,
+          dados_anteriores: {
+            observacao: venda.observacao || ''
+          },
+          dados_novos: {
+            observacao: observacao || ''
+          },
+          req
+        });
+      } catch (auditErr) {
+        console.error('[auditoria] edicao_observacao venda:', auditErr.message);
+      }
 
       return res.json({
         sucesso: true,

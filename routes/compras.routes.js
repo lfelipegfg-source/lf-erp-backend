@@ -410,6 +410,15 @@ module.exports = function ({
         return erro(res, 400, 'Itens da compra inválidos');
       }
 
+      const FORMAS_PAGAMENTO_VALIDAS = [
+        'dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'boleto',
+        'transferencia', 'cheque', 'prazo', 'outro', 'promissoria', 'duplicata mercantil'
+      ];
+      if (pagamento && !FORMAS_PAGAMENTO_VALIDAS.includes(String(pagamento).toLowerCase())) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'forma_pagamento inválida');
+      }
+
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
       const geraContaPagar = pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria' || pagamentoNormalizado === 'duplicata mercantil';
       const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;

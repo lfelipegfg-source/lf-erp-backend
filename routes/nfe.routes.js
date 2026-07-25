@@ -216,7 +216,10 @@ module.exports = ({
 
       // Busca venda + itens com dados do produto
       const [vendaResult, itensResult] = await Promise.all([
-        pool.query(`SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, empresaResolvida.id]),
+        pool.query(
+          `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [vendaId, empresaResolvida.id, empresaResolvida.nome]
+        ),
         pool.query(
           `SELECT vi.*, p.ncm, p.cfop_padrao, p.origem, p.unidade,
                   p.icms_cst, p.icms_aliquota, p.icms_base_calculo,
@@ -224,7 +227,8 @@ module.exports = ({
                   p.ipi_cst, p.ipi_aliquota, p.gtin
            FROM venda_itens vi
            LEFT JOIN produtos p ON p.id = vi.produto_id AND (p.empresa_id = $2 OR (p.empresa_id IS NULL AND p.empresa = $3))
-           WHERE vi.venda_id = $1`,
+           WHERE vi.venda_id = $1
+             AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))`,
           [vendaId, empresaResolvida.id, empresaResolvida.nome]
         )
       ]);
