@@ -38,7 +38,7 @@ async function dispatchWebhook({ pool, empresaId, evento, payload }) {
 function isUrlSegura(urlStr) {
   try {
     const { hostname } = new URL(urlStr);
-    const privado = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|::1$|fc00:|fd[0-9a-f]{2}:)/i;
+    const privado = /^(localhost$|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|0\.0\.0\.0$|::1$|fc00:|fd[0-9a-f]{2}:|::ffff:(10\.|127\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.))/i;
     return !privado.test(hostname);
   } catch { return false; }
 }

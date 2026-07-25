@@ -116,7 +116,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         `UPDATE marketplace_config SET
            access_token = $1, refresh_token = $2,
            token_expires_at = NOW() + INTERVAL '6 hours',
-           atualizado_em = NOW()
+           atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE empresa_id = $3 AND plataforma = 'mercadolivre'`,
         [data.access_token, data.refresh_token || cfg.refresh_token, empresaId]
       );
@@ -455,7 +455,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       await pool.query(
         `UPDATE marketplace_config
          SET access_token = $1, refresh_token = $2, seller_id = $3,
-             token_expires_at = NOW() + INTERVAL '6 hours', atualizado_em = NOW()
+             token_expires_at = NOW() + INTERVAL '6 hours', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE empresa_id = $4 AND plataforma = $5`,
         [accessToken, refreshToken, sellerId, empresa_id, plataforma]
       );
@@ -557,6 +557,13 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!/^[A-Za-z0-9_\-]{3,60}$/.test(String(listing_id))) {
         return erro(res, 400, 'listing_id inválido');
       }
+
+      // Verifica que o produto pertence à empresa antes de vincular (evita IDOR)
+      const prod = await pool.query(
+        `SELECT id FROM produtos WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND ativo = true AND deletado_em IS NULL`,
+        [produto_id, empresaResolvida.id, empresaResolvida.nome]
+      );
+      if (prod.rows.length === 0) return erro(res, 404, 'Produto não encontrado');
 
       const result = await pool.query(
         `INSERT INTO marketplace_produtos

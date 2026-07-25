@@ -205,7 +205,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
            secret        = COALESCE(NULLIF($4,''), secret),
            ativo         = COALESCE($5, ativo),
            atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
-         WHERE id = $6 AND empresa_id = $7 RETURNING *`,
+         WHERE id = $6 AND empresa_id = $7 RETURNING id, nome, url, eventos, ativo`,
         [
           nome?.trim() || null,
           url?.trim()  || null,
@@ -265,7 +265,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa 
         evento,
         payload: { teste: true, evento, timestamp: new Date().toISOString(), empresa: emp.nome },
         tentativa: 1
-      }).catch(() => {});
+      }).catch((err) => { console.error('[webhook-test]', err); });
 
       return ok(res, { mensagem: `Evento de teste "${evento}" enviado para ${ep.url}` });
     } catch (err) {

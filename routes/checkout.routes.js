@@ -165,6 +165,16 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
 
+      // Verifica estado terminal antes de atualizar
+      const checkoutAtual = await pool.query(
+        `SELECT status FROM checkout_links WHERE id = $1 AND empresa_id = $2`,
+        [Number(req.params.id), e.id]
+      );
+      if (!checkoutAtual.rows[0]) return erro(res, 404, 'Link não encontrado');
+      if (['cancelado', 'estornado'].includes(checkoutAtual.rows[0].status)) {
+        return res.status(409).json({ erro: 'Checkout em estado terminal não pode ser alterado' });
+      }
+
       const r = await pool.query(
         `UPDATE checkout_links SET status = 'pago', pago_em = NOW() AT TIME ZONE 'America/Fortaleza', metodo_pago = COALESCE($1, metodo_pago), atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE id = $2 AND empresa_id = $3 RETURNING *`,
@@ -193,7 +203,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       }
 
       const r = await pool.query(
-        `UPDATE checkout_links SET status = 'cancelado', atualizado_em = NOW() WHERE id = $1 AND empresa_id = $2`,
+        `UPDATE checkout_links SET status = 'cancelado', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza' WHERE id = $1 AND empresa_id = $2`,
         [Number(req.params.id), e.id]
       );
       if (r.rowCount === 0) return erro(res, 404, 'Link não encontrado');
@@ -322,7 +332,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       });
 
       await pool.query(
-        `UPDATE checkout_links SET boleto_url = $1, boleto_linha = $2, asaas_payment_id = $3, atualizado_em = NOW() WHERE token = $4`,
+        `UPDATE checkout_links SET boleto_url = $1, boleto_linha = $2, asaas_payment_id = $3, atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza' WHERE token = $4`,
         [boleto.invoiceUrl || boleto.bankSlipUrl, boleto.linhaDigitavel, boleto.id, link.token]
       );
 

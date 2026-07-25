@@ -112,7 +112,7 @@ module.exports = ({ auth, writeRateLimiter, pool }) => {
       }
 
       if (result.rowCount > 1) {
-        return erro(res, 400, 'CPF/CNPJ encontrado em mais de uma empresa. Entre em contato com o suporte.');
+        return erro(res, 400, 'Dados inválidos ou acesso não autorizado');
       }
 
       const cliente = result.rows[0];
@@ -297,7 +297,7 @@ module.exports = ({ auth, writeRateLimiter, pool }) => {
   // ─────────────────────────────────────────────────────────────────────────
   // PATCH /portal/admin/clientes/:id/toggle — ativa/desativa portal (ERP auth)
   // ─────────────────────────────────────────────────────────────────────────
-  router.patch('/admin/clientes/:id/toggle', auth, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
+  router.patch('/admin/clientes/:id/toggle', auth, writeRateLimiter, requirePermissao(pool, 'clientes', 'editar'), async (req, res) => {
     try {
       const clienteId = Number(req.params.id);
 

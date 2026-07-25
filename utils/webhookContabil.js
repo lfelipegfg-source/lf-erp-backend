@@ -69,7 +69,7 @@ async function dispararWebhook(pool, empresaId, evento, dados) {
 }
 
 // Erros transitórios que justificam retry (rede/timeout); erros permanentes relançam imediatamente
-const TRANSIENT_ERRORS = new Set(['AbortError', 'TypeError']);
+const TRANSIENT_ERRORS = new Set(['AbortError', 'TimeoutError', 'TypeError']);
 
 async function dispararWebhookComRetry(pool, empresaId, evento, dados) {
   try {

@@ -26,8 +26,8 @@ async function calcularComissaoVenda(pool, { vendaId, usuarioId, empresaId }) {
   const itens = await pool.query(
     `SELECT vi.produto_id, vi.total, vi.quantidade
      FROM venda_itens vi
-     WHERE vi.venda_id = $1`,
-    [vendaId]
+     WHERE vi.venda_id = $1 AND vi.empresa_id = $2`,
+    [vendaId, empresaId]
   );
 
   // Busca overrides por produto
@@ -60,7 +60,7 @@ async function calcularComissaoVenda(pool, { vendaId, usuarioId, empresaId }) {
     }
   } else {
     // Fallback: aplica % global sobre o total da venda
-    const venda = await pool.query(`SELECT total FROM vendas WHERE id = $1`, [vendaId]);
+    const venda = await pool.query(`SELECT total FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, empresaId]);
     if (venda.rowCount > 0) {
       const totalVenda = Number(venda.rows[0].total || 0);
       valorComissao = Number((totalVenda * Number(cfg.percentual) / 100).toFixed(2));

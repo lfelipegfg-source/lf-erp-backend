@@ -147,10 +147,9 @@ function montarPayloadNfe({ venda, itens, empresa, cliente, nfeConfig }) {
       telefone:         (cliente.telefone || '').replace(/\D/g, '') || undefined
     };
   } else {
-    // Consumidor final sem identificação
+    // Consumidor final sem identificação — omitir CPF (000.000.000-00 é rejeitado pela SEFAZ na NF-e modelo 55)
     destinatario = {
-      nome: 'CONSUMIDOR FINAL',
-      cpf: '000.000.000-00'  // Focus NFe aceita para NFC-e, não NF-e modelo 55
+      nome: 'CONSUMIDOR FINAL'
     };
   }
 

@@ -85,9 +85,9 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
         `INSERT INTO alertas_config
            (empresa_id, email_ativo, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from,
             email_assunto, email_corpo, whatsapp_ativo, whatsapp_msg, dias_atraso_minimo, atualizado_em)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW() AT TIME ZONE 'America/Fortaleza')
+         VALUES ($1,COALESCE($2,false),$3,$4,$5,$6,$7,$8,$9,COALESCE($10,false),$11,$12,NOW() AT TIME ZONE 'America/Fortaleza')
          ON CONFLICT (empresa_id) DO UPDATE SET
-           email_ativo           = $2,
+           email_ativo           = COALESCE($2, alertas_config.email_ativo),
            smtp_host             = COALESCE($3, alertas_config.smtp_host),
            smtp_port             = COALESCE($4, alertas_config.smtp_port),
            smtp_user             = COALESCE($5, alertas_config.smtp_user),
@@ -95,13 +95,13 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
            smtp_from             = COALESCE($7, alertas_config.smtp_from),
            email_assunto         = COALESCE($8, alertas_config.email_assunto),
            email_corpo           = COALESCE($9, alertas_config.email_corpo),
-           whatsapp_ativo        = $10,
+           whatsapp_ativo        = COALESCE($10, alertas_config.whatsapp_ativo),
            whatsapp_msg          = COALESCE($11, alertas_config.whatsapp_msg),
            dias_atraso_minimo    = COALESCE($12, alertas_config.dias_atraso_minimo),
            atualizado_em         = NOW() AT TIME ZONE 'America/Fortaleza'`,
         [
           emp.id,
-          Boolean(email_ativo),
+          email_ativo !== undefined ? Boolean(email_ativo) : null,
           smtp_host || null,
           smtp_port ? Number(smtp_port) : null,
           smtp_user || null,
@@ -109,7 +109,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
           smtp_from || null,
           email_assunto || null,
           email_corpo || null,
-          Boolean(whatsapp_ativo),
+          whatsapp_ativo !== undefined ? Boolean(whatsapp_ativo) : null,
           whatsapp_msg || null,
           dias_atraso_minimo != null ? Number(dias_atraso_minimo) : null
         ]
@@ -149,7 +149,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
          FROM contas_receber cr
          LEFT JOIN clientes c ON c.id = cr.cliente_id AND (c.empresa_id = cr.empresa_id OR (c.empresa_id IS NULL AND c.empresa = cr.empresa))
          WHERE (cr.empresa_id = $1 OR (cr.empresa_id IS NULL AND cr.empresa = $3))
-           AND LOWER(COALESCE(cr.status,'pendente')) NOT IN ('pago')
+           AND LOWER(COALESCE(cr.status,'pendente')) NOT IN ('pago', 'cancelado', 'estornado')
            AND cr.data_vencimento::date < CURRENT_DATE
            AND CURRENT_DATE - cr.data_vencimento::date >= $2
          GROUP BY cr.cliente_id, cr.cliente_nome, c.email, c.telefone

@@ -110,8 +110,8 @@ function montarPayloadNfce({ venda, itens, empresa, cliente, nfeConfig }) {
 
   // ── Destinatário (opcional na NFC-e) ──────────────────────────────────────
   let destinatario;
-  if (cliente?.cpf) {
-    const cpf = (cliente.cpf || '').replace(/\D/g, '');
+  if (cliente?.cpf_cnpj) {
+    const cpf = (cliente.cpf_cnpj || '').replace(/\D/g, '');
     if (cpf.length === 11) {
       destinatario = { cpf, nome: cliente.nome || 'Consumidor Final' };
     }

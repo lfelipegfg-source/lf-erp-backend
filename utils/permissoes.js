@@ -114,7 +114,7 @@ async function obterPermissoes(pool, usuarioId, empresaId, tipo) {
     return resultado;
   } catch (err) {
     console.error('[permissoes] Erro ao buscar permissões:', err.message);
-    return []; // fallback seguro — negar acesso implicitamente via lista vazia
+    return {}; // fallback seguro — negar acesso implicitamente via objeto vazio
   }
 }
 

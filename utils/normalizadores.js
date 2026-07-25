@@ -95,7 +95,7 @@ function validarECalcularTotalItens(itens) {
       item.custo_unitario ?? item.preco_unitario ?? item.custo
     );
 
-    if (!produtoId || quantidade <= 0 || custoUnitario < 0) return null;
+    if (!produtoId || quantidade <= 0 || custoUnitario == null || custoUnitario < 0) return null;
 
     total = Number((total + Number((quantidade * custoUnitario).toFixed(2))).toFixed(2));
   }

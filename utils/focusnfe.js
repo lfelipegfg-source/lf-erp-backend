@@ -49,7 +49,7 @@ async function focusRequest(token, ambiente, method, path, body = null) {
  * @param {object} payload  Payload completo da NF-e
  */
 async function emitirNfe(token, ambiente, ref, payload) {
-  return focusRequest(token, ambiente, 'POST', `/nfe?ref=${ref}`, payload);
+  return focusRequest(token, ambiente, 'POST', `/nfe?ref=${encodeURIComponent(ref)}`, payload);
 }
 
 /**
@@ -107,7 +107,7 @@ async function downloadXml(token, ambiente, ref) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function emitirNfce(token, ambiente, ref, payload) {
-  return focusRequest(token, ambiente, 'POST', `/nfce?ref=${ref}`, payload);
+  return focusRequest(token, ambiente, 'POST', `/nfce?ref=${encodeURIComponent(ref)}`, payload);
 }
 
 async function consultarNfce(token, ambiente, ref) {
@@ -131,7 +131,7 @@ async function downloadDanfce(token, ambiente, ref) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function emitirNfse(token, ambiente, ref, payload) {
-  return focusRequest(token, ambiente, 'POST', `/nfse?ref=${ref}`, payload);
+  return focusRequest(token, ambiente, 'POST', `/nfse?ref=${encodeURIComponent(ref)}`, payload);
 }
 
 async function consultarNfse(token, ambiente, ref) {
