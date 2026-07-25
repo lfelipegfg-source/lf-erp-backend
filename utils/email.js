@@ -20,7 +20,7 @@ function criarTransporter(cfg) {
     port:   Number(cfg.smtp_port || 587),
     secure: Number(cfg.smtp_port) === 465,
     auth:   { user: cfg.smtp_user, pass: cfg.smtp_pass },
-    tls:    { rejectUnauthorized: false }
+    tls:    { rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false' }
   });
 }
 

@@ -175,7 +175,13 @@ module.exports = ({
         return erro(res, 400, 'Configure o token Focus NFe antes de emitir NF-e. Acesse Configurações → NF-e.');
       }
 
-      // Advisory lock previne emissão duplicada simultânea para a mesma (empresa, venda)
+      // Gera referência única antes do lock — necessário para registrar 'processando'
+      // dentro da mesma transação e evitar race condition entre chamadas simultâneas
+      const ref = `lferp-${empresaResolvida.id}-${vendaId}-${randomUUID().slice(0, 8)}`;
+
+      // Advisory lock previne emissão duplicada simultânea para a mesma (empresa, venda).
+      // O registro 'processando' é inserido dentro da transação para garantir que a próxima
+      // chamada concorrente o encontre ANTES de o lock ser liberado.
       const clientNfe = await pool.connect();
       try {
         await clientNfe.query('BEGIN');
@@ -191,6 +197,15 @@ module.exports = ({
           await clientNfe.query('ROLLBACK');
           return erro(res, 400, `Esta venda já possui NF-e em processamento ou autorizada. Chave: ${jaEmitida.rows[0].chave_nfe || 'pendente'}`);
         }
+
+        // Registra como processando DENTRO da transação — garante visibilidade atômica
+        await clientNfe.query(
+          `INSERT INTO nfe_emissoes (empresa_id, venda_id, ref, ambiente, status, mensagem, atualizado_em)
+           VALUES ($1,$2,$3,$4,'processando','Aguardando resposta do Focus NFe',NOW())
+           ON CONFLICT (ref) DO NOTHING`,
+          [empresaResolvida.id, vendaId, ref, config.ambiente]
+        );
+
         await clientNfe.query('COMMIT');
       } catch (lockErr) {
         await clientNfe.query('ROLLBACK');
@@ -242,21 +257,8 @@ module.exports = ({
         if (cliResult.rowCount > 0) cliente = cliResult.rows[0];
       }
 
-      // Gera referência única
-      const ref = `lferp-${empresaResolvida.id}-${vendaId}-${randomUUID().slice(0, 8)}`;
-
-      // Monta payload
+      // Monta payload (ref já gerado e 'processando' registrado no advisory lock acima)
       const payload = montarPayloadNfe({ venda, itens, empresa, cliente, nfeConfig: config });
-
-      // Registra como processando
-      await salvarEmissao({
-        empresa_id: empresaResolvida.id,
-        venda_id: vendaId,
-        ref,
-        ambiente: config.ambiente,
-        status: 'processando',
-        mensagem: 'Aguardando resposta do Focus NFe'
-      });
 
       // Envia ao Focus NFe
       const resposta = await emitirNfe(config.token_focusnfe, config.ambiente, ref, payload);

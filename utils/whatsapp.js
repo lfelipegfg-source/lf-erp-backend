@@ -5,6 +5,33 @@
 
 const TIMEOUT_MS = 12000;
 
+function validarUrlExterna(url) {
+  try {
+    const u = new URL(url);
+    if (!['http:', 'https:'].includes(u.protocol)) return false;
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const bloqueados = [
+      /^localhost$/i,
+      /^127\./,
+      /^10\./,
+      /^172\.(1[6-9]|2\d|3[01])\./,
+      /^192\.168\./,
+      /^169\.254\./,
+      /^::1$/,
+      /^fc00:/i,
+      /^fe80:/i,
+      /^0\.0\.0\.0$/,
+      /^::ffff:127\./i,
+      /^::ffff:10\./i,
+      /^::ffff:172\.(1[6-9]|2\d|3[01])\./i,
+      /^::ffff:192\.168\./i,
+    ];
+    return !bloqueados.some(r => r.test(host));
+  } catch {
+    return false;
+  }
+}
+
 function limparTelefone(tel) {
   let num = String(tel || '').replace(/\D/g, '');
   if (!num) return null;
@@ -37,6 +64,9 @@ async function enviarMensagem({ cfg, telefone, mensagem }) {
 
   // ── Evolution API ──────────────────────────────────────────────────────────
   if (provider === 'evolution' && cfg?.wpp_api_url && cfg?.wpp_instance && cfg?.wpp_token) {
+    if (!validarUrlExterna(cfg.wpp_api_url)) {
+      return { sucesso: false, status: 'erro', erro: 'wpp_api_url inválida ou aponta para rede privada' };
+    }
     try {
       const url = `${cfg.wpp_api_url.replace(/\/$/, '')}/message/sendText/${cfg.wpp_instance}`;
       const controller = new AbortController();
@@ -63,6 +93,9 @@ async function enviarMensagem({ cfg, telefone, mensagem }) {
 
   // ── Z-API ──────────────────────────────────────────────────────────────────
   if (provider === 'zapi' && cfg?.wpp_instance && cfg?.wpp_token) {
+    if (cfg.wpp_api_url && !validarUrlExterna(cfg.wpp_api_url)) {
+      return { sucesso: false, status: 'erro', erro: 'wpp_api_url inválida ou aponta para rede privada' };
+    }
     try {
       const baseUrl = cfg.wpp_api_url || 'https://api.z-api.io';
       const url = `${baseUrl}/instances/${cfg.wpp_instance}/token/${cfg.wpp_token}/send-text`;

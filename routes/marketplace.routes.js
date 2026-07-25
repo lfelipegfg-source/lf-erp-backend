@@ -216,6 +216,20 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Advisory lock por (empresa, pedido ML) — serializa chamadas simultâneas com o mesmo orderId
+      // evitando criação de venda duplicada e débito duplo de estoque em race conditions
+      const lockKey = parseInt(empresaId) * 1000000 + (parseInt(orderId) % 1000000);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [lockKey]);
+
+      // Re-verifica idempotência dentro da transação (cobertura de race condition)
+      const jaProcessadoTx = await client.query(
+        `SELECT id, venda_id FROM marketplace_pedidos WHERE plataforma = 'mercadolivre' AND pedido_externo = $1 AND empresa_id = $2`,
+        [String(orderId), empresaId]
+      );
+      if (jaProcessadoTx.rowCount > 0) {
+        await client.query('ROLLBACK');
+        return { jaProcessado: true, vendaId: jaProcessadoTx.rows[0].venda_id };
+      }
 
       // Buscar nome do cliente se vinculado
       let clienteNomeFinal = buyerNome;
@@ -362,7 +376,11 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!cfg?.app_id) return erro(res, 400, 'Configure o App ID antes de autorizar');
 
       const redirectUri = process.env.MARKETPLACE_REDIRECT_URI || `${process.env.BACKEND_URL || ''}/marketplace/oauth/callback`;
-      const stateSecret = process.env.MARKETPLACE_STATE_SECRET || process.env.JWT_SECRET || 'lferp-marketplace-state';
+      const stateSecret = process.env.MARKETPLACE_STATE_SECRET;
+      if (!stateSecret) {
+        console.error('[marketplace] MARKETPLACE_STATE_SECRET não definido — OAuth desabilitado');
+        return erro(res, 503, 'Integração ML não configurada: defina MARKETPLACE_STATE_SECRET no ambiente');
+      }
       const statePayload = JSON.stringify({ empresa_id: empresaResolvida.id, plataforma, ts: Date.now() });
       const stateSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
       const state = Buffer.from(JSON.stringify({ p: statePayload, s: stateSig })).toString('base64url');
@@ -388,7 +406,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       let empresa_id, plataforma;
       try {
-        const stateSecret = process.env.MARKETPLACE_STATE_SECRET || process.env.JWT_SECRET || 'lferp-marketplace-state';
+        const stateSecret = process.env.MARKETPLACE_STATE_SECRET;
+        if (!stateSecret) {
+          return res.send('<h3>Integração ML não configurada. Contate o suporte.</h3>');
+        }
         const { p: statePayload, s: stateSig } = JSON.parse(Buffer.from(state, 'base64url').toString());
         const expectedSig = crypto.createHmac('sha256', stateSecret).update(statePayload).digest('hex');
         const bufA = Buffer.from(stateSig);

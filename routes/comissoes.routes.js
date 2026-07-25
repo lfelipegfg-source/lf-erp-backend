@@ -84,9 +84,9 @@ module.exports = ({
         return erro(res, 400, 'Percentual deve ser entre 0 e 100');
       }
 
-      // Valida que usuário existe e pertence à empresa
+      // Valida que usuário existe, pertence à empresa e está ativo (sem exceção por tipo — previne IDOR)
       const usuario = await pool.query(
-        `SELECT id, nome_completo, usuario FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR tipo = 'admin')`,
+        `SELECT id, nome_completo, usuario FROM usuarios WHERE id = $1 AND empresa_id = $2 AND ativo = true`,
         [Number(usuario_id), emp.id]
       );
       if (usuario.rowCount === 0) return erro(res, 404, 'Usuário não encontrado');
