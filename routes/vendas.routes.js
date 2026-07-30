@@ -303,7 +303,7 @@ module.exports = ({
         }
 
         const precoRef = normalizarDecimal(
-          await resolverPreco({ pool, produtoId, gradeId, clienteId, empresaId: empresaResolvida.id, quantidade })
+          await resolverPreco({ pool: client, produtoId, gradeId, clienteId, empresaId: empresaResolvida.id, quantidade })
           || grade.preco || produto.preco
         );
         const precoEnviado = item.preco_unitario != null ? normalizarDecimal(item.preco_unitario) : null;
@@ -311,6 +311,9 @@ module.exports = ({
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
         const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        if (precoUnitario <= 0) {
+          throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
+        }
         const custoUnitario = normalizarDecimal(item.custo_unitario || grade.custo || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
         somaItens += totalItem;
@@ -345,7 +348,7 @@ module.exports = ({
         await validarEstoqueKit(client, produtoId, empresaResolvida.id, quantidade);
 
         const precoRef = normalizarDecimal(
-          await resolverPreco({ pool, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
+          await resolverPreco({ pool: client, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
           || produto.preco
         );
         const precoEnviado = item.preco_unitario != null ? normalizarDecimal(item.preco_unitario) : null;
@@ -353,6 +356,9 @@ module.exports = ({
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
         const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        if (precoUnitario <= 0) {
+          throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
+        }
         const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
         somaItens += totalItem;
@@ -376,7 +382,7 @@ module.exports = ({
       // ── Produto simples (sem grade, sem kit) ───────────────────────
       } else {
         const precoRef = normalizarDecimal(
-          await resolverPreco({ pool, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
+          await resolverPreco({ pool: client, produtoId, gradeId: null, clienteId, empresaId: empresaResolvida.id, quantidade })
           || produto.preco
         );
         const precoEnviado = item.preco_unitario != null ? normalizarDecimal(item.preco_unitario) : null;
@@ -384,6 +390,9 @@ module.exports = ({
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
         const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        if (precoUnitario <= 0) {
+          throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
+        }
         const custoUnitario = normalizarDecimal(item.custo_unitario || produto.custo);
         const totalItem = Number((quantidade * precoUnitario).toFixed(2));
         somaItens += totalItem;
