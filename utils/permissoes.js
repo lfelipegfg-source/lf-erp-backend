@@ -23,7 +23,8 @@ const MODULOS_VALIDOS = new Set([
   'dre', 'lucratividade',
   'usuarios', 'configuracoes',
   'caixa', 'comissoes',
-  'fidelidade', 'marketplace', 'nfe', 'nfse', 'filiais'
+  'fidelidade', 'marketplace', 'nfe', 'nfse', 'filiais',
+  'dashboard'
 ]);
 
 // requirePermissao recebe pool explicitamente — o pool não é acessível via req.app.locals neste projeto
