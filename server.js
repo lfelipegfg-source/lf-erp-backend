@@ -234,7 +234,9 @@ const pool = new Pool({
   max: 10,
   min: 0,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000
+  connectionTimeoutMillis: 10_000,
+  statement_timeout: 30_000, // FIX 4: mata queries lentas antes de exaurir o pool
+  query_timeout: 35_000      // FIX 4: timeout do driver (superior ao statement_timeout)
 });
 
 // Neon derruba conexões idle — sem este handler o processo encerra com uncaughtException

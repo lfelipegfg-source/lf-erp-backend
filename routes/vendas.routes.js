@@ -464,6 +464,22 @@ module.exports = ({
         return erro(res, 403, 'Sem acesso');
       }
 
+      // FIX 3: deduplicação por idempotency_key (PDV offline retry)
+      const idempotencyKey = req.body.idempotency_key || null;
+      if (idempotencyKey) {
+        try {
+          const existing = await pool.query(
+            `SELECT id FROM vendas WHERE idempotency_key = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
+            [idempotencyKey, empresaResolvida.id, empresaResolvida.nome]
+          );
+          if (existing.rows.length > 0) {
+            return res.status(200).json({ success: true, venda_id: existing.rows[0].id, deduplicated: true });
+          }
+        } catch (_e) {
+          // Coluna idempotency_key ainda não existe no schema — ignorar verificação (migration pendente)
+        }
+      }
+
       const limiteVendas = await validarLimiteVendasMes(empresaResolvida);
 
       if (!limiteVendas.permitido) {
@@ -493,6 +509,10 @@ module.exports = ({
       const descontoFinal = normalizarDecimal(desconto);
       const acrescimoFinal = normalizarDecimal(acrescimo);
       const totalFinal = normalizarDecimal(total);
+
+      // FIX 2: rejeitar desconto/acréscimo negativos
+      if (descontoFinal < 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Desconto não pode ser negativo'); }
+      if (acrescimoFinal < 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Acréscimo não pode ser negativo'); }
 
       const {
         pagamentosArray,
@@ -763,6 +783,11 @@ module.exports = ({
       const descontoFinal = normalizarDecimal(desconto);
       const acrescimoFinal = normalizarDecimal(acrescimo);
       const totalFinal = normalizarDecimal(total);
+
+      // FIX 2: rejeitar desconto/acréscimo negativos
+      if (descontoFinal < 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Desconto não pode ser negativo'); }
+      if (acrescimoFinal < 0) { await client.query('ROLLBACK'); return erro(res, 400, 'Acréscimo não pode ser negativo'); }
+
       const parcelasFinal = Math.max(1, normalizarInt(parcelas || 1));
       const dataFinal = normalizarDataISO(data) || hoje();
 
@@ -1138,9 +1163,8 @@ module.exports = ({
 
       const venda = vendaResult.rows[0];
 
-      const empresaBase = venda.empresa_id || venda.empresa;
-
-      const empresaResolvida = await validarAcessoEmpresa(req, empresaBase);
+      // FIX 1: empresaBase era INTEGER quando empresa_id preenchido — agora passa nome e id separados
+      const empresaResolvida = await validarAcessoEmpresa(req, venda.empresa || null, venda.empresa_id || null);
 
       if (!empresaResolvida) {
         return erro(res, 403, 'Sem acesso');
@@ -1242,9 +1266,8 @@ ORDER BY parcela ASC
       }
 
       const venda = vendaResult.rows[0];
-      const empresaBase = venda.empresa_id || venda.empresa;
-
-      const empresaResolvida = await validarAcessoEmpresa(req, empresaBase);
+      // FIX 1: empresaBase era INTEGER quando empresa_id preenchido — agora passa nome e id separados
+      const empresaResolvida = await validarAcessoEmpresa(req, venda.empresa || null, venda.empresa_id || null);
       if (!empresaResolvida) {
         await client.query('ROLLBACK');
         return erro(res, 403, 'Sem acesso');
