@@ -53,7 +53,7 @@ module.exports = ({
   // Normaliza array de pagamentos do split.
   // Retorna { pagamentosArray, pagamentoPrincipal, totalPromissoria, statusPagamento }
   function normalizarPagamentosSplit({ pagamentos, pagamento, total, status_pagamento, parcelas }) {
-    const FORMAS_PENDENTES = ['promissoria', 'promissória', 'boleto'];
+    const FORMAS_PENDENTES = ['promissoria', 'boleto'];
 
     let pagamentosArray;
 
@@ -979,45 +979,60 @@ module.exports = ({
         return erro(res, 400, 'Venda inválida');
       }
 
-      const vendaResult = req.user.is_saas_owner
-        ? await pool.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1`, [id])
-        : await pool.query(
-            `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
-            [id, req.user.empresa_id || 0, req.user.empresa || '']
-          );
+      const client = await pool.connect();
+      let vendaResult, venda, empresaResolvida, result;
+      try {
+        await client.query('BEGIN');
 
-      if (vendaResult.rowCount === 0) {
-        return erro(res, 404, 'Venda não encontrada');
+        vendaResult = req.user.is_saas_owner
+          ? await client.query(`SELECT * FROM vendas WHERE id = $1 LIMIT 1 FOR UPDATE`, [id])
+          : await client.query(
+              `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1 FOR UPDATE`,
+              [id, req.user.empresa_id || 0, req.user.empresa || '']
+            );
+
+        if (vendaResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          client.release();
+          return erro(res, 404, 'Venda não encontrada');
+        }
+
+        venda = vendaResult.rows[0];
+        const empresaBase = empresa || venda.empresa;
+        empresaResolvida = await validarAcessoEmpresa(req, empresaBase);
+
+        if (!empresaResolvida) {
+          await client.query('ROLLBACK');
+          client.release();
+          return erro(res, 403, 'Sem acesso');
+        }
+
+        const vendaEmpresaId = venda.empresa_id ? Number(venda.empresa_id) : null;
+        const pertenceEmpresa =
+          (vendaEmpresaId && vendaEmpresaId === Number(empresaResolvida.id)) ||
+          (!vendaEmpresaId && venda.empresa === empresaResolvida.nome);
+
+        if (!pertenceEmpresa) {
+          await client.query('ROLLBACK');
+          client.release();
+          return erro(res, 403, 'Venda não pertence à empresa autenticada');
+        }
+
+        result = await client.query(
+          `UPDATE vendas
+           SET observacao = $1, atualizado_em = NOW()
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
+           RETURNING id, observacao`,
+          [observacao || '', id, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+        throw txErr;
       }
-
-      const venda = vendaResult.rows[0];
-      const empresaBase = empresa || venda.empresa;
-      const empresaResolvida = await validarAcessoEmpresa(req, empresaBase);
-
-      if (!empresaResolvida) {
-        return erro(res, 403, 'Sem acesso');
-      }
-
-      const vendaEmpresaId = venda.empresa_id ? Number(venda.empresa_id) : null;
-      const pertenceEmpresa =
-        (vendaEmpresaId && vendaEmpresaId === Number(empresaResolvida.id)) ||
-        (!vendaEmpresaId && venda.empresa === empresaResolvida.nome);
-
-      if (!pertenceEmpresa) {
-        return erro(res, 403, 'Venda não pertence à empresa autenticada');
-      }
-
-      const result = await pool.query(
-        `
-      UPDATE vendas
-      SET observacao = $1,
-          atualizado_em = NOW()
-      WHERE id = $2
-        AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
-      RETURNING id, observacao
-      `,
-        [observacao || '', id, empresaResolvida.id, empresaResolvida.nome]
-      );
+      client.release();
 
       if (result.rowCount === 0) {
         return erro(res, 404, 'Venda não encontrada para atualização');
