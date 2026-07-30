@@ -310,7 +310,10 @@ module.exports = ({
         if (precoEnviado !== null && precoEnviado < 0) {
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
-        const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        // Usa precoEnviado apenas se for >= 10% do preço de referência (bloqueia data-preco DOM bypass)
+        const precoValido = precoEnviado != null && precoEnviado > 0 &&
+          (precoRef <= 0 || precoEnviado >= precoRef * 0.1);
+        const precoUnitario = precoValido ? precoEnviado : precoRef;
         if (precoUnitario <= 0) {
           throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
         }
@@ -355,7 +358,9 @@ module.exports = ({
         if (precoEnviado !== null && precoEnviado < 0) {
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
-        const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        const precoValidoKit = precoEnviado != null && precoEnviado > 0 &&
+          (precoRef <= 0 || precoEnviado >= precoRef * 0.1);
+        const precoUnitario = precoValidoKit ? precoEnviado : precoRef;
         if (precoUnitario <= 0) {
           throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
         }
@@ -389,7 +394,9 @@ module.exports = ({
         if (precoEnviado !== null && precoEnviado < 0) {
           throw new Error(`Preço inválido para "${produto.nome}"`);
         }
-        const precoUnitario = (precoEnviado != null && precoEnviado > 0) ? precoEnviado : precoRef;
+        const precoValidoSimples = precoEnviado != null && precoEnviado > 0 &&
+          (precoRef <= 0 || precoEnviado >= precoRef * 0.1);
+        const precoUnitario = precoValidoSimples ? precoEnviado : precoRef;
         if (precoUnitario <= 0) {
           throw new Error(`Produto "${produto.nome}" não possui preço cadastrado.`);
         }
