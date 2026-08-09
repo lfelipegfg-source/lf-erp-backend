@@ -307,11 +307,15 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       try {
         await client.query('BEGIN');
 
-        await client.query(
+        const upd = await client.query(
           `UPDATE clientes SET pontos_fidelidade = GREATEST(0, COALESCE(pontos_fidelidade,0) + $1), atualizado_em = NOW()
            WHERE id = $2 AND empresa_id = $3`,
           [qtd, Number(cliente_id), e.id]
         );
+        if (upd.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 404, 'Cliente não encontrado');
+        }
 
         const saldoRes = await client.query(`SELECT pontos_fidelidade FROM clientes WHERE id = $1 AND empresa_id = $2`, [Number(cliente_id), e.id]);
         const saldo = saldoRes.rows[0]?.pontos_fidelidade || 0;
@@ -331,7 +335,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       } finally {
         client.release();
       }
-    } catch (err) { return erro(res, 500, err.message); }
+    } catch (err) { return erro(res, 500, 'Erro ao ajustar pontos de fidelidade'); }
   });
 
   // ── Processar expiração ───────────────────────────────────────────────────

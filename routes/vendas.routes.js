@@ -480,21 +480,7 @@ module.exports = ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      // FIX 3: deduplicação por idempotency_key (PDV offline retry)
       const idempotencyKey = req.body.idempotency_key || null;
-      if (idempotencyKey) {
-        try {
-          const existing = await pool.query(
-            `SELECT id FROM vendas WHERE idempotency_key = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
-            [idempotencyKey, empresaResolvida.id, empresaResolvida.nome]
-          );
-          if (existing.rows.length > 0) {
-            return res.status(200).json({ success: true, venda_id: existing.rows[0].id, deduplicated: true });
-          }
-        } catch (_e) {
-          // Coluna idempotency_key ainda não existe no schema — ignorar verificação (migration pendente)
-        }
-      }
 
       const limiteVendas = await validarLimiteVendasMes(empresaResolvida);
 
@@ -503,6 +489,22 @@ module.exports = ({
       }
 
       await client.query('BEGIN');
+
+      // Deduplicação por idempotency_key dentro da transação — evita race condition entre requests paralelos
+      if (idempotencyKey) {
+        try {
+          const existing = await client.query(
+            `SELECT id FROM vendas WHERE idempotency_key = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1 FOR UPDATE`,
+            [idempotencyKey, empresaResolvida.id, empresaResolvida.nome]
+          );
+          if (existing.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(200).json({ success: true, venda_id: existing.rows[0].id, deduplicated: true });
+          }
+        } catch (_e) {
+          // Coluna idempotency_key ainda não existe no schema — ignorar verificação (migration pendente)
+        }
+      }
 
       let clienteNomeFinal = cliente_nome || '';
       let clienteIdFinal = cliente_id || null;

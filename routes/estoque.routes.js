@@ -116,7 +116,7 @@ ${filtroEmpresa}
       return erro(res, 403, 'Sem acesso');
     }
 
-    const tiposPermitidos = ['ajuste_entrada', 'ajuste_saida', 'perda', 'avaria', 'estorno_venda'];
+    const tiposPermitidos = ['ajuste_entrada', 'ajuste_saida', 'perda', 'avaria'];
     if (!tiposPermitidos.includes(tipo)) {
       return erro(res, 400, 'Tipo de ajuste inválido');
     }

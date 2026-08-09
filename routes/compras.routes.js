@@ -74,7 +74,9 @@ module.exports = function ({
       }
 
       const FORMAS_PAGAMENTO_COMPRA_VALIDAS = [
-        'dinheiro', 'pix', 'cartao', 'boleto', 'promissoria', 'duplicata mercantil', 'outros'
+        'dinheiro', 'pix', 'cartao', 'cartao_credito', 'cartao_debito',
+        'boleto', 'promissoria', 'duplicata mercantil',
+        'transferencia', 'cheque', 'prazo', 'outros', 'outro'
       ];
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
       if (pagamentoNormalizado && !FORMAS_PAGAMENTO_COMPRA_VALIDAS.includes(pagamentoNormalizado)) {
@@ -85,7 +87,7 @@ module.exports = function ({
         pagamentoNormalizado === 'boleto' ||
         pagamentoNormalizado === 'promissoria' ||
         pagamentoNormalizado === 'duplicata mercantil';
-      const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;
+      const parcelasFinal = geraContaPagar ? Math.max(1, Math.min(120, normalizarInt(parcelas || 1) || 1)) : 1;
 
       const compraResult = await client.query(
         `INSERT INTO compras
@@ -411,8 +413,9 @@ module.exports = function ({
       }
 
       const FORMAS_PAGAMENTO_VALIDAS = [
-        'dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'boleto',
-        'transferencia', 'cheque', 'prazo', 'outro', 'promissoria', 'duplicata mercantil'
+        'dinheiro', 'pix', 'cartao', 'cartao_credito', 'cartao_debito',
+        'boleto', 'promissoria', 'duplicata mercantil',
+        'transferencia', 'cheque', 'prazo', 'outros', 'outro'
       ];
       if (pagamento && !FORMAS_PAGAMENTO_VALIDAS.includes(String(pagamento).toLowerCase())) {
         await client.query('ROLLBACK');
@@ -421,7 +424,7 @@ module.exports = function ({
 
       const pagamentoNormalizado = String(pagamento || '').toLowerCase();
       const geraContaPagar = pagamentoNormalizado === 'boleto' || pagamentoNormalizado === 'promissoria' || pagamentoNormalizado === 'duplicata mercantil';
-      const parcelasFinal = geraContaPagar ? Math.max(1, normalizarInt(parcelas || 1)) : 1;
+      const parcelasFinal = geraContaPagar ? Math.max(1, Math.min(120, normalizarInt(parcelas || 1) || 1)) : 1;
 
       // Buscar fornecedor
       const fornecedorResult = await client.query(
