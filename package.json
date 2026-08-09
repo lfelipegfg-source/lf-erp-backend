@@ -6,10 +6,15 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/validate.js"
+    "test": "jest",
+    "test:smoke": "node test/validate.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

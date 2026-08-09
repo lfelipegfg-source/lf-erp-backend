@@ -8061,7 +8061,12 @@ async function start() {
   }
 }
 
-start();
+if (require.main === module) {
+  start();
+} else {
+  // Permite que testes importem o app sem iniciar o servidor
+  module.exports = { app };
+}
 
 
 
