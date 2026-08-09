@@ -30,7 +30,7 @@ async function calcularEstoqueKit(db, kitId, empresaId) {
   let minKits = Infinity;
   for (const row of r.rows) {
     const estoque      = Number(row.estoque || 0);
-    const qtdPorKit    = Number(row.qtd_por_kit || 1);
+    const qtdPorKit    = Number(row.qtd_por_kit ?? 1); // ?? preserva zero; || convertia 0→1
     const kitsPosiveis = qtdPorKit > 0 ? Math.floor(estoque / qtdPorKit) : 0;
     if (kitsPosiveis < minKits) minKits = kitsPosiveis;
   }

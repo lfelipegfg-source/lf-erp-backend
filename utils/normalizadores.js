@@ -12,16 +12,16 @@ function normalizarDecimal(valor) {
     const limpo = valor.trim().replace(/\./g, '').replace(',', '.');
     if (limpo === '') return null;
     const numero = Number(limpo);
-    return Number.isFinite(numero) ? numero : null;
+    return Number.isFinite(numero) ? numero + 0 : null; // +0 normaliza -0 → 0
   }
   const numero = Number(valor);
-  return Number.isFinite(numero) ? numero : null;
+  return Number.isFinite(numero) ? numero + 0 : null; // +0 normaliza -0 → 0
 }
 
 function normalizarInt(valor) {
   if (valor === null || valor === undefined || valor === '') return null;
   const numero = parseInt(valor, 10);
-  return Number.isFinite(numero) ? numero : null;
+  return Number.isFinite(numero) ? numero + 0 : null; // +0 normaliza -0 → 0
 }
 
 const _fmtDiasFortaleza = new Intl.DateTimeFormat('en-CA', {

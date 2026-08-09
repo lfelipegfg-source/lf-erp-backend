@@ -70,7 +70,7 @@ async function calcularComissaoVenda(pool, { vendaId, usuarioId, empresaId }) {
   if (valorComissao <= 0) return;
 
   // Busca total da venda para registrar
-  const venda = await pool.query(`SELECT total FROM vendas WHERE id = $1`, [vendaId]);
+  const venda = await pool.query(`SELECT total FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, empresaId]);
   const valorVenda = venda.rowCount > 0 ? Number(venda.rows[0].total || 0) : 0;
 
   // Evita duplicata se já existe comissão para essa venda+usuario
