@@ -1002,7 +1002,7 @@ function auth(req, res, next) {
 }
 
 function apenasAdmin(req, res, next) {
-  if (!req.user.is_saas_owner && req.user.tipo !== 'admin') {
+  if (!req.user.is_saas_owner) {
     return res.status(403).json({ sucesso: false, erro: 'Acesso restrito ao SaaS Owner', codigo: 'SEM_PERMISSAO' });
   }
   next();
