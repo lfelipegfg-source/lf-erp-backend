@@ -14,7 +14,7 @@
 
 const { erro, ok } = require('../utils/routeHelpers');
 
-module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
+module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePermissao }) {
   const router = require('express').Router();
 
 
@@ -22,7 +22,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Tendência de vendas (últimos N meses) ─────────────────────────────────
 
-  router.get('/tendencia-vendas', auth, async (req, res) => {
+  router.get('/tendencia-vendas', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -67,7 +67,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Comparativo de períodos ───────────────────────────────────────────────
 
-  router.get('/comparativo', auth, async (req, res) => {
+  router.get('/comparativo', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -145,7 +145,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Top produtos ──────────────────────────────────────────────────────────
 
-  router.get('/top-produtos', auth, async (req, res) => {
+  router.get('/top-produtos', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -191,7 +191,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Top clientes ──────────────────────────────────────────────────────────
 
-  router.get('/top-clientes', auth, async (req, res) => {
+  router.get('/top-clientes', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -233,7 +233,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Mix de pagamentos ─────────────────────────────────────────────────────
 
-  router.get('/mix-pagamentos', auth, async (req, res) => {
+  router.get('/mix-pagamentos', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -274,7 +274,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Margem por categoria ──────────────────────────────────────────────────
 
-  router.get('/margem-categorias', auth, async (req, res) => {
+  router.get('/margem-categorias', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -321,7 +321,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   // ── Funil de conversão ────────────────────────────────────────────────────
 
-  router.get('/funil', auth, async (req, res) => {
+  router.get('/funil', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -362,7 +362,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje }) {
 
   const _iaCache = new Map(); // empresa_id → { ts, texto, gerado_em }
 
-  router.get('/insights-ia', auth, async (req, res) => {
+  router.get('/insights-ia', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return erro(res, 503, 'ANTHROPIC_API_KEY não configurada no servidor');
 
@@ -497,7 +497,7 @@ Máximo 200 palavras. Use os números reais fornecidos acima.`;
 
   // ── Resumo executivo (tudo em uma chamada) ────────────────────────────────
 
-  router.get('/resumo-executivo', auth, async (req, res) => {
+  router.get('/resumo-executivo', auth, requirePermissao(pool, 'bi', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');

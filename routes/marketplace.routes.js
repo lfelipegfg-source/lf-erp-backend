@@ -19,6 +19,12 @@ const https = require('https');
 const crypto = require('crypto');
 const { erro, ok } = require('../utils/routeHelpers');
 const { requirePermissao } = require('../utils/permissoes');
+const { encryptField, decryptField } = require('../utils/pixCrypto');
+
+function safeDecrypt(v) {
+  if (!v) return v;
+  try { return decryptField(v); } catch { return v; }
+}
 
 // Rate limiter por IP para o endpoint de webhook (sem auth JWT)
 const _webhookIpMap = new Map();
@@ -92,7 +98,13 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       `SELECT * FROM marketplace_config WHERE empresa_id = $1 AND plataforma = $2`,
       [empresaId, plataforma]
     );
-    return r.rows[0] || null;
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      ...row,
+      access_token:  safeDecrypt(row.access_token),
+      refresh_token: safeDecrypt(row.refresh_token)
+    };
   }
 
   async function refreshMlToken(cfg, empresaId) {
@@ -118,7 +130,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
            token_expires_at = NOW() + INTERVAL '6 hours',
            atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE empresa_id = $3 AND plataforma = 'mercadolivre'`,
-        [data.access_token, data.refresh_token || cfg.refresh_token, empresaId]
+        [encryptField(data.access_token), encryptField(data.refresh_token || cfg.refresh_token), empresaId]
       );
       return data.access_token;
     } catch { return null; }
@@ -457,7 +469,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
          SET access_token = $1, refresh_token = $2, seller_id = $3,
              token_expires_at = NOW() + INTERVAL '6 hours', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
          WHERE empresa_id = $4 AND plataforma = $5`,
-        [accessToken, refreshToken, sellerId, empresa_id, plataforma]
+        [encryptField(accessToken), encryptField(refreshToken), sellerId, empresa_id, plataforma]
       );
 
       res.send(`<h3>✅ Autorização concluída!</h3><p>Feche esta janela e volte ao LF ERP.</p><script>window.close();</script>`);
