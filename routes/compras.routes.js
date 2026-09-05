@@ -128,6 +128,15 @@ module.exports = function ({
         const custoUnitario = normalizarDecimal(item.custo_unitario ?? item.preco_unitario ?? item.custo);
         const subtotalItem  = Number((quantidade * custoUnitario).toFixed(2));
 
+        if (quantidade <= 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Quantidade do produto ${produtoId} deve ser maior que zero`);
+        }
+        if (custoUnitario <= 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Custo unitário do produto ${produtoId} deve ser maior que zero`);
+        }
+
         const produto = produtosMap[produtoId];
         if (!produto) {
           await client.query('ROLLBACK');

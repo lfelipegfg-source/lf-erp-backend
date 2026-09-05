@@ -18,6 +18,15 @@ function aplicarTemplate(template, vars) {
   return String(template || '').replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '');
 }
 
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Limpa número de telefone e gera URL wa.me
 function gerarLinkWhatsApp(telefone, mensagem) {
   if (!telefone) return null;
@@ -198,15 +207,17 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
 
         // Email
         if (transporter && cli.email) {
-          const assunto = aplicarTemplate(cfg.email_assunto || defaultAssunto, vars);
-          const corpo   = aplicarTemplate(cfg.email_corpo   || defaultCorpo,   vars);
+          const assunto  = aplicarTemplate(cfg.email_assunto || defaultAssunto, vars);
+          const corpo    = aplicarTemplate(cfg.email_corpo   || defaultCorpo,   vars);
+          const htmlVars = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, escHtml(v)]));
+          const corpoHtml = aplicarTemplate(cfg.email_corpo  || defaultCorpo,   htmlVars).replace(/\n/g, '<br>');
           try {
             await transporter.sendMail({
               from:    cfg.smtp_from || cfg.smtp_user,
               to:      cli.email,
               subject: assunto,
               text:    corpo,
-              html:    corpo.replace(/\n/g, '<br>')
+              html:    corpoHtml
             });
             results.enviados_email++;
             await pool.query(
