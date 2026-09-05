@@ -4057,13 +4057,15 @@ app.post('/contas-receber/pagar/:id', auth, writeRateLimiter, requirePermissao(p
 
     await client.query('BEGIN');
 
-    const contaResult = await client.query(
-      `SELECT * FROM contas_receber
-       WHERE id = $1
-         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-       FOR UPDATE`,
-      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
-    );
+    const contaResult = req.user?.is_saas_owner
+      ? await client.query(`SELECT * FROM contas_receber WHERE id = $1 FOR UPDATE`, [id])
+      : await client.query(
+          `SELECT * FROM contas_receber
+           WHERE id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           FOR UPDATE`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -4236,13 +4238,15 @@ app.get('/contas-receber/:id/recebimentos-parciais', auth, requirePermissao(pool
 
     const id = Number(req.params.id);
 
-    const contaResult = await pool.query(
-      `SELECT * FROM contas_receber
-       WHERE id = $1
-         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-       LIMIT 1`,
-      [id, req.empresa_id, req.empresa_nome]
-    );
+    const contaResult = req.user?.is_saas_owner
+      ? await pool.query(`SELECT * FROM contas_receber WHERE id = $1 LIMIT 1`, [id])
+      : await pool.query(
+          `SELECT * FROM contas_receber
+           WHERE id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           LIMIT 1`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       return jsonErro(res, 404, 'Conta não encontrada');
