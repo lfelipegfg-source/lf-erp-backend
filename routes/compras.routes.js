@@ -38,7 +38,8 @@ module.exports = function ({
       parcelas,
       observacao,
       primeiro_vencimento,
-      itens
+      itens,
+      idempotency_key
     } = req.body;
 
     if (!fornecedor_id || !data || !pagamento || !Array.isArray(itens) || itens.length === 0) {
@@ -48,6 +49,18 @@ module.exports = function ({
     const empresaResolvida = await validarAcessoEmpresa(req, empresa);
     if (!empresaResolvida) {
       return erro(res, 403, 'Sem acesso');
+    }
+
+    // Idempotência: retorna a compra existente se a key já foi processada
+    if (idempotency_key) {
+      const keyStr = String(idempotency_key).slice(0, 128);
+      const existente = await pool.query(
+        `SELECT id FROM compras WHERE empresa_id = $1 AND idempotency_key = $2 LIMIT 1`,
+        [empresaResolvida.id, keyStr]
+      );
+      if (existente.rowCount > 0) {
+        return ok(res, { compra_id: existente.rows[0].id, dados: { compra_id: existente.rows[0].id }, idempotente: true });
+      }
     }
 
     const client = await pool.connect();
@@ -89,10 +102,11 @@ module.exports = function ({
         pagamentoNormalizado === 'duplicata mercantil';
       const parcelasFinal = geraContaPagar ? Math.max(1, Math.min(120, normalizarInt(parcelas || 1) || 1)) : 1;
 
+      const keyFinal = idempotency_key ? String(idempotency_key).slice(0, 128) : null;
       const compraResult = await client.query(
         `INSERT INTO compras
-        (empresa, empresa_id, fornecedor_id, data, total, observacao, gerar_conta_pagar, pagamento, status, criado_por, criado_em, atualizado_em)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'finalizada', $9, NOW(), NOW())
+        (empresa, empresa_id, fornecedor_id, data, total, observacao, gerar_conta_pagar, pagamento, status, criado_por, idempotency_key, criado_em, atualizado_em)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'finalizada', $9, $10, NOW(), NOW())
         RETURNING *`,
         [
           empresaResolvida.nome,
@@ -103,7 +117,8 @@ module.exports = function ({
           observacao || '',
           geraContaPagar,
           pagamentoNormalizado || 'dinheiro',
-          req.user.id
+          req.user.id,
+          keyFinal
         ]
       );
 

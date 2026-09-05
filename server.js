@@ -2209,6 +2209,12 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_jwt_blacklist_expires ON jwt_blacklist (expires_at);
   `);
 
+  await pool.query(`
+    ALTER TABLE compras ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS compras_idempotency_idx
+      ON compras (empresa_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+  `);
+
   try {
     const { rows: _empresasInit } = await pool.query(`SELECT id, nome FROM empresas ORDER BY id`);
     for (const _emp of _empresasInit) {
