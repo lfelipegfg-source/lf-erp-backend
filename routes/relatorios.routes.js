@@ -602,7 +602,9 @@ module.exports = function ({
 
       try { await atualizarStatusContasReceberPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cr:', e.message); }
 
+      const STATUS_CR_VALIDOS = new Set(['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado']);
       const status = (req.query.status || '').trim().toLowerCase();
+      if (status && !STATUS_CR_VALIDOS.has(status)) return erro(res, 400, 'Status inválido');
       const busca = (req.query.busca || '').trim().toLowerCase();
       const { dataInicial, dataFinal } = obterPeriodo(req);
 
@@ -681,7 +683,9 @@ module.exports = function ({
 
       try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[relatorios] status-cp:', e.message); }
 
+      const STATUS_CP_VALIDOS = new Set(['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado']);
       const status = (req.query.status || '').trim().toLowerCase();
+      if (status && !STATUS_CP_VALIDOS.has(status)) return erro(res, 400, 'Status inválido');
       const busca = (req.query.busca || '').trim().toLowerCase();
       const { dataInicial, dataFinal } = obterPeriodo(req);
 

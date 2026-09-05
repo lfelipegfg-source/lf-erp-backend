@@ -125,7 +125,7 @@ module.exports = ({
       const id = Number(req.params.id);
       if (!id) return erro(res, 400, 'Cliente inválido');
 
-      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
+      const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
 
       const clienteResult = await pool.query(

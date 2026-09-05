@@ -554,11 +554,17 @@ function obterPeriodo(req) {
 }
 
 const CAMPOS_PERIODO_PERMITIDOS = new Set([
-  'c.data', 'cr.data_vencimento', 'cp.data_vencimento', 'data', 'fl.criado_em',
-  'data_pagamento', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
-  'data_vencimento', 'data_emissao', 'criado_em', 'atualizado_em',
-  'lancamento_data', 'competencia', 'vencimento', 'pagamento_data',
-  'data_entrada', 'data_saida', 'data_movimento'
+  // simples
+  'data', 'data_pagamento', 'data_vencimento', 'data_emissao', 'data_entrada', 'data_saida',
+  'criado_em', 'atualizado_em', 'pagamento_data', 'vencimento', 'competencia',
+  'data_movimento', 'lancamento_data',
+  // aliases de tabela
+  'c.data', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
+  'cr.data_vencimento', 'cp.data_vencimento', 'fl.criado_em',
+  'm.data_movimentacao',
+  // expressões compostas (hardcoded no código)
+  'COALESCE(pagamento_data, vencimento)',
+  'COALESCE(pagamento_data,vencimento)'
 ]);
 
 function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {
@@ -7106,11 +7112,51 @@ app.get('/pagamentos/pix/status/:txid', auth, requirePermissao(pool, 'financeiro
       { 'Authorization': `Bearer ${accessToken}` }, agentOpts);
 
     if (checkRes.status === 200 && checkRes.body.status === 'CONCLUIDA') {
-      await pool.query(
-        `UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW() AT TIME ZONE 'America/Fortaleza'
-         WHERE txid=$1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-        [txid, empresaResolvida.id, empresaResolvida.nome]
-      );
+      const pixClient = await pool.connect();
+      try {
+        await pixClient.query('BEGIN');
+
+        await pixClient.query(
+          `UPDATE cobrancas_pix SET status='CONCLUIDA', pago_em=NOW() AT TIME ZONE 'America/Fortaleza'
+           WHERE txid=$1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [txid, empresaResolvida.id, empresaResolvida.nome]
+        );
+
+        if (cobr.conta_receber_id) {
+          const crUpd = await pixClient.query(
+            `UPDATE contas_receber
+               SET status='pago', data_pagamento=(NOW() AT TIME ZONE 'America/Fortaleza')::date,
+                   valor_pago=valor, atualizado_em=NOW() AT TIME ZONE 'America/Fortaleza'
+             WHERE id=$1 AND status != 'pago'
+             RETURNING id, descricao, valor, data_vencimento`,
+            [cobr.conta_receber_id]
+          );
+
+          if (crUpd.rowCount > 0) {
+            const cr = crUpd.rows[0];
+            await pixClient.query(
+              `INSERT INTO lancamentos_financeiros
+                 (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data,
+                  status, conta_receber_id, criado_em, atualizado_em)
+               VALUES ($1,$2,'receita','contas_receber',$3,$4,$5,
+                       (NOW() AT TIME ZONE 'America/Fortaleza')::date,
+                       'pago',$6,
+                       NOW() AT TIME ZONE 'America/Fortaleza',
+                       NOW() AT TIME ZONE 'America/Fortaleza')`,
+              [empresaResolvida.nome, empresaResolvida.id,
+               `PIX recebido - ${cr.descricao || txid}`,
+               Number(cr.valor), cr.data_vencimento, cobr.conta_receber_id]
+            );
+          }
+        }
+
+        await pixClient.query('COMMIT');
+      } catch (pixErr) {
+        await pixClient.query('ROLLBACK').catch(() => {});
+        console.error('[PIX] Erro ao registrar pagamento:', pixErr.message);
+      } finally {
+        pixClient.release();
+      }
     }
 
     res.json({ status: checkRes.body.status || 'ATIVA' });
