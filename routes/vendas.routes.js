@@ -165,11 +165,15 @@ module.exports = ({
 
       if (gradeId) {
         // Restaura estoque na grade específica
-        await client.query(
+        const gradeRestoreResult = await client.query(
           `UPDATE produto_grades SET estoque = estoque + $1, atualizado_em = NOW()
-           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
+           RETURNING id`,
           [quantidade, gradeId, empresaResolvida.id, empresaResolvida.nome]
         );
+        if (gradeRestoreResult.rowCount === 0) {
+          throw new Error(`Grade ID ${gradeId} não encontrada ao estornar cancelamento.`);
+        }
         await client.query(
           `UPDATE produtos SET estoque = (
              SELECT COALESCE(SUM(estoque), 0) FROM produto_grades
@@ -335,11 +339,15 @@ module.exports = ({
         );
 
         // Baixa estoque da grade
-        await client.query(
+        const gradeUpdateResult = await client.query(
           `UPDATE produto_grades SET estoque = $1, atualizado_em = NOW()
-           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))
+           RETURNING id`,
           [estoqueGrade - quantidade, gradeId, empresaResolvida.id, empresaResolvida.nome]
         );
+        if (gradeUpdateResult.rowCount === 0) {
+          throw new Error(`Grade ID ${gradeId} não encontrada ou sem acesso.`);
+        }
 
         // Sincroniza estoque do produto-pai como soma das grades
         await client.query(

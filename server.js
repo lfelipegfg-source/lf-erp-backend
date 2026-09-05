@@ -410,15 +410,15 @@ app.use('/crm', crmRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, 
 app.use('/exportacao', exportacaoRoutes({ auth, pool, validarAcessoEmpresa, adicionarFiltroPeriodo, obterPeriodo, normalizarDecimal, hoje }));
 app.use('/api/v1',    apiPublicaRoutes({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje }));
 app.use('/webhooks',         webhooksRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
-app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }));
-app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }));
+app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje, requirePermissao }));
+app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje, requirePermissao }));
 app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje, requirePermissao }));
 app.use('/checkout',     checkoutRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
 app.use('/filiais',     filiaisRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, obterPeriodo, adicionarFiltroPeriodo, hoje }));
 app.use('/bi',         biRoutes({ auth, pool, validarAcessoEmpresa, hoje }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
-app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal }));
+app.use('/nfce', nfceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, requirePermissao }));
 app.use('/nfse', nfseRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, requirePermissao }));
 
 app.use(
@@ -467,7 +467,8 @@ app.use(
     normalizarInt,
     normalizarDataISO,
     obterPeriodo,
-    adicionarFiltroPeriodo
+    adicionarFiltroPeriodo,
+    requirePermissao
   })
 );
 
@@ -486,7 +487,8 @@ app.use(
     criarParcelasContasReceber,
     atualizarStatusContasReceberPorEmpresa,
     atualizarStatusContasPagarPorEmpresa,
-    registrarAuditoria
+    registrarAuditoria,
+    requirePermissao
   })
 );
 
@@ -551,7 +553,19 @@ function obterPeriodo(req) {
   };
 }
 
+const CAMPOS_PERIODO_PERMITIDOS = new Set([
+  'c.data', 'cr.data_vencimento', 'cp.data_vencimento', 'data', 'fl.criado_em',
+  'data_pagamento', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
+  'data_vencimento', 'data_emissao', 'criado_em', 'atualizado_em',
+  'lancamento_data', 'competencia', 'vencimento', 'pagamento_data',
+  'data_entrada', 'data_saida', 'data_movimento'
+]);
+
 function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {
+  if (!CAMPOS_PERIODO_PERMITIDOS.has(campo)) {
+    console.error(`[adicionarFiltroPeriodo] campo não permitido: ${campo}`);
+    return '';
+  }
   let sql = '';
   const campoSql = castDate ? `DATE(${campo})` : campo;
 
@@ -802,7 +816,9 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
   }
 
   const totalResult = await pool.query(
-    `SELECT COUNT(*) AS total FROM ${config.tabela} WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))`,
+    `SELECT COUNT(*) AS total FROM ${config.tabela}
+     WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+       AND deletado_em IS NULL`,
     [empresaResolvida.id, empresaResolvida.nome]
   );
 
@@ -1350,7 +1366,7 @@ async function criarParcelasContasReceber({
   criado_por,
   forma_pagamento
 }) {
-  const parcelas = normalizarInt(quantidade_parcelas);
+  const parcelas = Math.min(normalizarInt(quantidade_parcelas), 360);
   const valorTotal = normalizarDecimal(total);
   const primeiroVencimento = data_primeiro_vencimento || hoje();
 
@@ -2348,6 +2364,9 @@ app.post('/auth/refresh', auth, async (req, res) => {
     if (result.rowCount === 0) return jsonErro(res, 403, 'Usuário inativo ou não encontrado');
     const u = result.rows[0];
     if (!u.is_saas_owner && u.bloqueada) return jsonErro(res, 403, 'Empresa bloqueada');
+    if (!u.is_saas_owner && (u.assinatura_status === 'inativo' || u.assinatura_status === 'cancelado')) {
+      return jsonErro(res, 403, 'Assinatura inativa. Regularize o acesso para continuar.', 'ASSINATURA_INATIVA');
+    }
     const novoToken = jwt.sign(
       {
         id:               u.id,
@@ -5048,13 +5067,18 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
 
     await client.query('BEGIN');
 
-    const contaResult = await client.query(
-      `SELECT * FROM contas_pagar
-       WHERE id = $1
-         AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-       FOR UPDATE`,
-      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
-    );
+    const contaResult = req.user?.is_saas_owner
+      ? await client.query(
+          `SELECT * FROM contas_pagar WHERE id = $1 FOR UPDATE`,
+          [id]
+        )
+      : await client.query(
+          `SELECT * FROM contas_pagar
+           WHERE id = $1
+             AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
+           FOR UPDATE`,
+          [id, req.user.empresa_id || 0, req.user.empresa || '']
+        );
 
     if (contaResult.rowCount === 0) {
       await client.query('ROLLBACK');
@@ -5100,22 +5124,21 @@ app.post('/contas-pagar/pagar/:id', auth, writeRateLimiter, requirePermissao(poo
       [novoStatusCP, novoValorCP, dataPagamento, id, empresaResolvida.id, empresaResolvida.nome]
     );
 
-    if (!pagamentoTotalCP) {
-      await client.query(
-        `INSERT INTO lancamentos_financeiros
-          (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, conta_pagar_id, criado_em, atualizado_em)
-          VALUES ($1, $2, 'despesa', 'contas_pagar', $3, $4, $5, $5, 'pago', $6,
-                  NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')`,
-        [
-          empresaResolvida.nome,
-          empresaResolvida.id,
-          `Pagamento parcial - ${conta.descricao || ''}`,
-          valorPagoFinal,
-          dataPagamento,
-          id
-        ]
-      );
-    }
+    await client.query(
+      `INSERT INTO lancamentos_financeiros
+        (empresa, empresa_id, tipo, categoria, descricao, valor, vencimento, pagamento_data, status, conta_pagar_id, criado_em, atualizado_em)
+        VALUES ($1, $2, 'despesa', 'contas_pagar', $3, $4, $5, $6, 'pago', $7,
+                NOW() AT TIME ZONE 'America/Fortaleza', NOW() AT TIME ZONE 'America/Fortaleza')`,
+      [
+        empresaResolvida.nome,
+        empresaResolvida.id,
+        pagamentoTotalCP ? `Pagamento total - ${conta.descricao || ''}` : `Pagamento parcial - ${conta.descricao || ''}`,
+        valorPagoFinal,
+        conta.data_vencimento || dataPagamento,
+        dataPagamento,
+        id
+      ]
+    );
 
     await client.query('COMMIT');
 
@@ -5472,6 +5495,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
       return jsonErro(res, 400, 'Valor inválido');
     }
 
+    let empresaResolvida;
     const client7 = await pool.connect();
     try {
       await client7.query('BEGIN');
@@ -5493,7 +5517,7 @@ app.put('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermissao(
       }
 
       const atual = atualResult.rows[0];
-      const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
+      empresaResolvida = await validarAcessoEmpresa(req, atual.empresa, atual.empresa_id);
 
       if (!empresaResolvida) {
         await client7.query('ROLLBACK');
@@ -5653,27 +5677,30 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
 
     const id = Number(req.params.id);
 
-    const atualResult = req.user.is_saas_owner
-      ? await pool.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1`, [id])
-      : await pool.query(
-          `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-          [id, req.user.empresa_id || 0, req.user.empresa || '']
-        );
-
-    if (atualResult.rowCount === 0) {
-      return jsonErro(res, 404, 'Lançamento não encontrado');
-    }
-
-    const atual = atualResult.rows[0];
-    const empresaResolvida = await validarAcessoEmpresa(req, atual.empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
+    let atual, empresaResolvida;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      const atualResult = req.user.is_saas_owner
+        ? await client.query(`SELECT * FROM lancamentos_financeiros WHERE id = $1 FOR UPDATE`, [id])
+        : await client.query(
+            `SELECT * FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) FOR UPDATE`,
+            [id, req.user.empresa_id || 0, req.user.empresa || '']
+          );
+
+      if (atualResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return jsonErro(res, 404, 'Lançamento não encontrado');
+      }
+
+      atual = atualResult.rows[0];
+      empresaResolvida = await validarAcessoEmpresa(req, atual.empresa, atual.empresa_id);
+
+      if (!empresaResolvida) {
+        await client.query('ROLLBACK');
+        return jsonErro(res, 403, 'Sem acesso');
+      }
 
       const delResult = await client.query(
         `DELETE FROM lancamentos_financeiros WHERE id = $1 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $2)) RETURNING id`,
@@ -5691,10 +5718,12 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
           `UPDATE contas_receber
            SET valor = valor + $1,
                status = CASE
-                 WHEN (valor + $1) >= COALESCE(valor_original, valor + $1) THEN 'pendente'
-                 ELSE 'parcial'
+                 WHEN (valor + $1) >= COALESCE(valor_original, valor + $1) THEN
+                   CASE WHEN data_vencimento IS NOT NULL AND data_vencimento < CURRENT_DATE THEN 'atrasado' ELSE 'pendente' END
+                 ELSE
+                   CASE WHEN data_vencimento IS NOT NULL AND data_vencimento < CURRENT_DATE THEN 'parcial_atrasado' ELSE 'parcial' END
                END,
-               atualizado_em = NOW()
+               atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
            WHERE id = $2
              AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
           [valorLancamento, atual.conta_receber_id, empresaResolvida.id, empresaResolvida.nome]
@@ -5703,7 +5732,7 @@ app.delete('/financeiro/lancamentos/:id', auth, writeRateLimiter, requirePermiss
 
       await client.query('COMMIT');
     } catch (txErr) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       throw txErr;
     } finally {
       client.release();
@@ -7574,7 +7603,7 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, requirePermis
     const item = await pool.query(
       `SELECT * FROM conciliacao_itens
        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
+      [id, req.empresa_id || 0, req.empresa_nome || req.user?.empresa || '']
     );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
 
@@ -7619,7 +7648,7 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, requ
     const item = await pool.query(
       `SELECT * FROM conciliacao_itens
        WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
-      [id, req.empresa_id, req.empresa_nome || req.user?.empresa]
+      [id, req.empresa_id || 0, req.empresa_nome || req.user?.empresa || '']
     );
     if (!item.rowCount) return jsonErro(res, 404, 'Item não encontrado');
     if (item.rows[0].status === 'conciliado') return jsonErro(res, 400, 'Item já conciliado');
@@ -9124,7 +9153,7 @@ app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
       lancamentos_financeiros: lancamentosR.rows
     };
 
-    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_').replace(/["\\]/g,'').replace(/[\r\n]/g,'')}-${hoje()}.json`;
+    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_').replace(/[;"\\]/g,'').replace(/[\r\n]/g,'')}-${hoje()}.json`;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
     res.send(JSON.stringify(payload, null, 2));
@@ -9277,6 +9306,7 @@ app.post('/registro', loginRateLimiter, async (req, res) => {
 });
 
 app.post('/admin/empresas', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
+  let adminClient;
   try {
     const { nome, plano_id, trial_dias = 30, email, telefone, cnpj } = req.body;
 
@@ -9284,14 +9314,21 @@ app.post('/admin/empresas', auth, apenasAdmin, writeRateLimiter, async (req, res
       return jsonErro(res, 400, 'Nome da empresa é obrigatório');
     }
 
-    const existe = await pool.query(`SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1`, [nome]);
+    adminClient = await pool.connect();
+    await adminClient.query('BEGIN');
+
+    const existe = await adminClient.query(
+      `SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1 FOR UPDATE`,
+      [nome]
+    );
     if (existe.rowCount > 0) {
+      await adminClient.query('ROLLBACK');
       return jsonErro(res, 400, 'Já existe uma empresa com esse nome');
     }
 
     const trialFim = addDias(hoje(), trial_dias);
 
-    const empresaResult = await pool.query(
+    const empresaResult = await adminClient.query(
       `INSERT INTO empresas
         (nome, cnpj, telefone, email, plano_id, assinatura_status, trial_inicio, trial_fim, bloqueada, criado_em, atualizado_em)
        VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7, false, NOW(), NOW())
@@ -9301,17 +9338,22 @@ app.post('/admin/empresas', auth, apenasAdmin, writeRateLimiter, async (req, res
 
     const empresa = empresaResult.rows[0];
 
-    await pool.query(
+    await adminClient.query(
       `INSERT INTO configuracoes (empresa, empresa_id, nome_empresa, criado_em, atualizado_em)
        VALUES ($1, $2, $3, NOW(), NOW())
        ON CONFLICT DO NOTHING`,
       [empresa.nome, empresa.id, empresa.nome]
     );
 
+    await adminClient.query('COMMIT');
+
     return res.status(201).json({ sucesso: true, empresa });
   } catch (error) {
+    if (adminClient) await adminClient.query('ROLLBACK').catch(() => {});
     console.error('Erro ao criar empresa:', error);
     jsonErro(res, 500, 'Erro ao criar empresa');
+  } finally {
+    if (adminClient) adminClient.release();
   }
 });
 

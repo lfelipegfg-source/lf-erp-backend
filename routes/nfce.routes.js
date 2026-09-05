@@ -20,7 +20,8 @@ module.exports = ({
   writeRateLimiter,
   pool,
   validarAcessoEmpresa,
-  normalizarDecimal
+  normalizarDecimal,
+  requirePermissao
 }) => {
   const router = require('express').Router();
 
@@ -52,7 +53,7 @@ module.exports = ({
   }
 
   // ── POST /nfce/emitir/:vendaId ─────────────────────────────────────────────
-  router.post('/emitir/:vendaId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/emitir/:vendaId', auth, writeRateLimiter, requirePermissao(pool, 'nfce', 'criar'), async (req, res) => {
     try {
       const vendaId = Number(req.params.vendaId);
       if (!vendaId) return erro(res, 400, 'ID de venda inválido');
@@ -64,6 +65,10 @@ module.exports = ({
       if (!config?.token_focusnfe) {
         return erro(res, 400, 'Configure o token Focus NFe em Configurações → NF-e antes de emitir NFC-e.');
       }
+
+      // Advisory lock para evitar emissão duplicada concorrente (mesmo padrão do NF-e)
+      await pool.query(`SELECT pg_advisory_lock($1)`, [vendaId]);
+      try {
 
       // Verifica emissão duplicada
       const jaEmitida = await pool.query(
@@ -83,8 +88,9 @@ module.exports = ({
                   p.pis_cst, p.pis_aliquota, p.cofins_cst, p.cofins_aliquota, p.gtin
            FROM venda_itens vi
            LEFT JOIN produtos p ON p.id = vi.produto_id
-           WHERE vi.venda_id = $1`,
-          [vendaId]
+           WHERE vi.venda_id = $1
+             AND (vi.empresa_id = $2 OR (vi.empresa_id IS NULL AND vi.empresa = $3))`,
+          [vendaId, empresaResolvida.id, empresaResolvida.nome]
         )
       ]);
 
@@ -151,6 +157,10 @@ module.exports = ({
         ref, status: statusFinal, chave_nfe: chave, numero, serie, mensagem,
         ambiente: config.ambiente === 1 ? 'producao' : 'homologacao'
       });
+
+      } finally {
+        pool.query(`SELECT pg_advisory_unlock($1)`, [vendaId]).catch(() => {});
+      }
     } catch (err) {
       console.error('[nfce] POST emitir:', err.message);
       return erro(res, 500, 'Erro ao emitir NFC-e: ' + err.message);
@@ -158,7 +168,7 @@ module.exports = ({
   });
 
   // ── GET /nfce/consultar/:ref ───────────────────────────────────────────────
-  router.get('/consultar/:ref', auth, async (req, res) => {
+  router.get('/consultar/:ref', auth, requirePermissao(pool, 'nfce', 'ver'), async (req, res) => {
     try {
       const ref = req.params.ref;
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -197,7 +207,7 @@ module.exports = ({
   });
 
   // ── POST /nfce/cancelar/:nfceId ───────────────────────────────────────────
-  router.post('/cancelar/:nfceId', auth, writeRateLimiter, async (req, res) => {
+  router.post('/cancelar/:nfceId', auth, writeRateLimiter, requirePermissao(pool, 'nfce', 'editar'), async (req, res) => {
     try {
       const nfceId = Number(req.params.nfceId);
       const { justificativa } = req.body;
@@ -241,7 +251,7 @@ module.exports = ({
   });
 
   // ── GET /nfce/lista ───────────────────────────────────────────────────────
-  router.get('/lista', auth, async (req, res) => {
+  router.get('/lista', auth, requirePermissao(pool, 'nfce', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -278,7 +288,7 @@ module.exports = ({
   });
 
   // ── GET /nfce/pdf/:ref — proxy DANFCE ─────────────────────────────────────
-  router.get('/pdf/:ref', auth, async (req, res) => {
+  router.get('/pdf/:ref', auth, requirePermissao(pool, 'nfce', 'ver'), async (req, res) => {
     try {
       const ref = req.params.ref;
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);

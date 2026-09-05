@@ -56,9 +56,10 @@ function normalizarDataISO(valor) {
     // Suporte a DD/MM/YYYY (formato BR)
     const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
     if (brMatch) {
+      const dia = Number(brMatch[1]), mes = Number(brMatch[2]), ano = Number(brMatch[3]);
       const iso = `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
       const d = new Date(iso + 'T12:00:00');
-      if (isNaN(d.getTime())) return null;
+      if (isNaN(d.getTime()) || d.getFullYear() !== ano || d.getMonth() + 1 !== mes || d.getDate() !== dia) return null;
       return iso;
     }
   }

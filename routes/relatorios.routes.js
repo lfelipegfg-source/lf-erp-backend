@@ -84,7 +84,7 @@ module.exports = function ({
     params: paramsFluxoReceber,
     empresaResolvida
   })}
-  AND LOWER(COALESCE(status, 'pendente')) IN ('pago', 'parcial', 'parcial_atrasado')
+  AND LOWER(COALESCE(status, 'pendente')) = 'pago'
   AND data_pagamento IS NOT NULL
 `;
 
@@ -94,7 +94,7 @@ module.exports = function ({
     params: paramsFluxoPagar,
     empresaResolvida
   })}
-  AND LOWER(COALESCE(status, 'pendente')) IN ('pago', 'parcial', 'parcial_atrasado')
+  AND LOWER(COALESCE(status, 'pendente')) = 'pago'
   AND data_pagamento IS NOT NULL
 `;
 

@@ -44,7 +44,9 @@ const TEMPLATES_PADRAO = {
   'manual': 'Olá {{nome}}, mensagem de *{{empresa}}*.'
 };
 
-module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje }) {
+const SSRF_BLOCKED = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|::1|metadata\.google\.internal)/i;
+
+module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje, requirePermissao }) {
   const router = require('express').Router();
 
 
@@ -57,7 +59,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Config ────────────────────────────────────────────────────────────────
 
-  router.get('/config', auth, async (req, res) => {
+  router.get('/config', auth, requirePermissao(pool, 'whatsapp', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -79,12 +81,23 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.put('/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/config', auth, writeRateLimiter, requirePermissao(pool, 'whatsapp', 'editar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const { wpp_provider, wpp_api_url, wpp_instance, wpp_token, wpp_numero, wpp_ativo, wpp_cooldown_h } = req.body;
+
+      if (wpp_api_url) {
+        try {
+          const parsedUrl = new URL(wpp_api_url);
+          if (SSRF_BLOCKED.test(parsedUrl.hostname)) {
+            return erro(res, 400, 'URL de API não permitida');
+          }
+        } catch {
+          return erro(res, 400, 'URL de API inválida');
+        }
+      }
 
       await pool.query(
         `INSERT INTO alertas_config (empresa_id, wpp_provider, wpp_api_url, wpp_instance, wpp_token, wpp_numero, wpp_ativo, wpp_cooldown_h)
@@ -118,7 +131,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Testar conexão ────────────────────────────────────────────────────────
 
-  router.post('/testar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/testar', auth, writeRateLimiter, requirePermissao(pool, 'whatsapp', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -143,7 +156,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Templates ─────────────────────────────────────────────────────────────
 
-  router.get('/templates', auth, async (req, res) => {
+  router.get('/templates', auth, requirePermissao(pool, 'whatsapp', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -172,7 +185,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.put('/templates/:evento', auth, writeRateLimiter, async (req, res) => {
+  router.put('/templates/:evento', auth, writeRateLimiter, requirePermissao(pool, 'whatsapp', 'editar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -198,7 +211,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Envio manual ──────────────────────────────────────────────────────────
 
-  router.post('/enviar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/enviar', auth, writeRateLimiter, requirePermissao(pool, 'whatsapp', 'criar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -224,7 +237,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Processar cobranças automáticas ───────────────────────────────────────
 
-  router.post('/processar/cobrancas', auth, writeRateLimiter, async (req, res) => {
+  router.post('/processar/cobrancas', auth, writeRateLimiter, requirePermissao(pool, 'whatsapp', 'criar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -345,7 +358,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Histórico ─────────────────────────────────────────────────────────────
 
-  router.get('/historico', auth, async (req, res) => {
+  router.get('/historico', auth, requirePermissao(pool, 'whatsapp', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');

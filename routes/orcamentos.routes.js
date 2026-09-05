@@ -28,7 +28,8 @@ module.exports = ({
   normalizarInt,
   normalizarDataISO,
   obterPeriodo,
-  adicionarFiltroPeriodo
+  adicionarFiltroPeriodo,
+  requirePermissao
 }) => {
   const router = require('express').Router();
 
@@ -56,7 +57,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /orcamentos
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'orcamentos', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -100,7 +101,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /orcamentos
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'criar'), async (req, res) => {
     try {
       const {
         empresa, cliente_id, cliente_nome,
@@ -191,7 +192,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /orcamentos/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/:id', auth, async (req, res) => {
+  router.get('/:id', auth, requirePermissao(pool, 'orcamentos', 'ver'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -222,7 +223,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /orcamentos/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -318,7 +319,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /orcamentos/:id — só rascunho
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'deletar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -362,7 +363,7 @@ module.exports = ({
   }
 
   // POST /orcamentos/:id/enviar
-  router.post('/:id/enviar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/enviar', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'editar'), async (req, res) => {
     try {
       return await transicaoStatus(req, res, Number(req.params.id), 'enviado', ['rascunho']);
     } catch (err) {
@@ -372,7 +373,7 @@ module.exports = ({
   });
 
   // POST /orcamentos/:id/aprovar
-  router.post('/:id/aprovar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/aprovar', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'editar'), async (req, res) => {
     try {
       return await transicaoStatus(req, res, Number(req.params.id), 'aprovado', ['enviado', 'rascunho']);
     } catch (err) {
@@ -382,7 +383,7 @@ module.exports = ({
   });
 
   // POST /orcamentos/:id/recusar
-  router.post('/:id/recusar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/recusar', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'editar'), async (req, res) => {
     try {
       return await transicaoStatus(req, res, Number(req.params.id), 'recusado', ['enviado', 'rascunho', 'aprovado']);
     } catch (err) {
@@ -394,7 +395,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /orcamentos/:id/converter — converte em pedido
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/converter', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/converter', auth, writeRateLimiter, requirePermissao(pool, 'orcamentos', 'criar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);

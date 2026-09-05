@@ -30,7 +30,8 @@ module.exports = ({
   criarParcelasContasReceber,
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa,
-  registrarAuditoria
+  registrarAuditoria,
+  requirePermissao
 }) => {
   const router = require('express').Router();
 
@@ -47,7 +48,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /pedidos
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'pedidos', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -90,7 +91,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /pedidos — criação direta (sem orçamento)
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'criar'), async (req, res) => {
     try {
       const {
         empresa, cliente_id, cliente_nome,
@@ -174,7 +175,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /pedidos/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/:id', auth, async (req, res) => {
+  router.get('/:id', auth, requirePermissao(pool, 'pedidos', 'ver'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -204,7 +205,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /pedidos/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -259,17 +260,17 @@ module.exports = ({
     return ok(res, { pedido: r.rows[0] });
   }
 
-  router.post('/:id/confirmar',  auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/confirmar',  auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'editar'), async (req, res) => {
     try { return await mudarStatus(req, res, Number(req.params.id), 'confirmado', ['pendente']); }
     catch (err) { return erro(res, 500, 'Erro ao confirmar pedido'); }
   });
 
-  router.post('/:id/separacao', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/separacao', auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'editar'), async (req, res) => {
     try { return await mudarStatus(req, res, Number(req.params.id), 'em_separacao', ['confirmado']); }
     catch (err) { return erro(res, 500, 'Erro ao atualizar status'); }
   });
 
-  router.post('/:id/cancelar', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/cancelar', auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'editar'), async (req, res) => {
     try { return await mudarStatus(req, res, Number(req.params.id), 'cancelado', ['pendente', 'confirmado', 'em_separacao']); }
     catch (err) { return erro(res, 500, 'Erro ao cancelar pedido'); }
   });
@@ -277,7 +278,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /pedidos/:id/converter-venda — converte pedido em venda completa
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/converter-venda', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/converter-venda', auth, writeRateLimiter, requirePermissao(pool, 'pedidos', 'criar'), async (req, res) => {
     const id = Number(req.params.id);
     const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
     if (!empresaResolvida) return erro(res, 403, 'Sem acesso');

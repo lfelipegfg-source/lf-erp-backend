@@ -25,7 +25,7 @@
 
 const { erro, ok } = require('../utils/routeHelpers');
 
-module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje }) {
+module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje, requirePermissao }) {
   const router = require('express').Router();
 
 
@@ -33,7 +33,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
-  router.get('/dashboard', auth, async (req, res) => {
+  router.get('/dashboard', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -79,7 +79,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Config por produto ────────────────────────────────────────────────────
 
-  router.put('/produtos/:id/config', auth, writeRateLimiter, async (req, res) => {
+  router.put('/produtos/:id/config', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'editar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -100,7 +100,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.get('/produtos', auth, async (req, res) => {
+  router.get('/produtos', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -120,7 +120,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Lotes ─────────────────────────────────────────────────────────────────
 
-  router.get('/lotes', auth, async (req, res) => {
+  router.get('/lotes', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -153,7 +153,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.post('/lotes', auth, writeRateLimiter, async (req, res) => {
+  router.post('/lotes', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'criar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -218,7 +218,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.get('/lotes/:id', auth, async (req, res) => {
+  router.get('/lotes/:id', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -248,7 +248,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.post('/lotes/:id/saida', auth, writeRateLimiter, async (req, res) => {
+  router.post('/lotes/:id/saida', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'editar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -296,7 +296,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.delete('/lotes/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/lotes/:id', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'excluir'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -320,7 +320,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Números de série ──────────────────────────────────────────────────────
 
-  router.get('/series', auth, async (req, res) => {
+  router.get('/series', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -342,7 +342,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.post('/series', auth, writeRateLimiter, async (req, res) => {
+  router.post('/series', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'criar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -382,7 +382,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  router.patch('/series/:id/status', auth, writeRateLimiter, async (req, res) => {
+  router.patch('/series/:id/status', auth, writeRateLimiter, requirePermissao(pool, 'rastreabilidade', 'editar'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
@@ -423,7 +423,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
   // ── Rastrear ──────────────────────────────────────────────────────────────
 
-  router.get('/rastrear', auth, async (req, res) => {
+  router.get('/rastrear', auth, requirePermissao(pool, 'rastreabilidade', 'ver'), async (req, res) => {
     try {
       const e = await emp(req);
       if (!e) return erro(res, 403, 'Sem acesso');
