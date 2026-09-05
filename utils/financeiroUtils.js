@@ -12,9 +12,18 @@ function normalizarFormaPagamentoFluxo(value) {
     crédito: 'Cartão',
     debito: 'Cartão',
     débito: 'Cartão',
+    cartao_credito: 'Cartão',
+    cartao_debito: 'Cartão',
     boleto: 'Boleto',
     promissoria: 'Promissória',
-    promissória: 'Promissória'
+    promissória: 'Promissória',
+    transferencia: 'Transferência',
+    transferência: 'Transferência',
+    ted: 'Transferência',
+    doc: 'Transferência',
+    cheque: 'Cheque',
+    crediario: 'Crediário',
+    crediário: 'Crediário'
   };
 
   return mapa[forma] || 'Não informado';

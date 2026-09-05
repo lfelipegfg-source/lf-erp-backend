@@ -4515,7 +4515,7 @@ app.delete('/contas-receber/:id', auth, writeRateLimiter, requirePermissao(pool,
       return jsonErro(res, 400, 'Contas originadas de venda não podem ser excluídas');
     }
 
-    if (String(conta.status || '').toLowerCase() === 'parcial') {
+    if (['parcial', 'parcial_atrasado'].includes(String(conta.status || '').toLowerCase())) {
       const recebimentosAtivosResult = await client.query(
         `SELECT COUNT(*) AS total FROM lancamentos_financeiros
          WHERE (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $1))
@@ -7269,13 +7269,27 @@ app.get('/pagamentos/boleto/status/:contaReceberID', auth, requirePermissao(pool
 
     // Se Asaas confirma pagamento, baixa automaticamente a conta (requer permissão financeira)
     if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(boleto.status) && podeGerenciarFinanceiro(req)) {
-      await pool.query(
-        `UPDATE contas_receber
-         SET status = 'pago', data_pagamento = COALESCE($1::date, (NOW() AT TIME ZONE 'America/Fortaleza')::DATE),
-             atualizado_em = NOW()
-         WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) AND LOWER(COALESCE(status,'pendente')) != 'pago'`,
-        [boleto.dataPagamento, crId, empresaResolvida.id, empresaResolvida.nome]
-      );
+      const clientBol = await pool.connect();
+      try {
+        await clientBol.query('BEGIN');
+        const updBol = await clientBol.query(
+          `UPDATE contas_receber
+           SET status = 'pago', data_pagamento = COALESCE($1::date, (NOW() AT TIME ZONE 'America/Fortaleza')::DATE),
+               atualizado_em = NOW()
+           WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) AND LOWER(COALESCE(status,'pendente')) != 'pago'
+           RETURNING id`,
+          [boleto.dataPagamento, crId, empresaResolvida.id, empresaResolvida.nome]
+        );
+        await clientBol.query('COMMIT');
+        if (updBol.rowCount > 0) {
+          console.log(`[boleto] Baixa automática conta_receber id=${crId} empresa=${empresaResolvida.nome}`);
+        }
+      } catch (bolErr) {
+        await clientBol.query('ROLLBACK').catch(() => {});
+        console.error('[boleto] Erro na baixa automática:', bolErr.message);
+      } finally {
+        clientBol.release();
+      }
     }
 
     res.json({ sucesso: true, boleto: { ...boleto, ...cr } });
@@ -7556,10 +7570,14 @@ app.post('/conciliacao/itens/:id/ignorar', auth, writeRateLimiter, requirePermis
     const client7 = await pool.connect();
     try {
       await client7.query('BEGIN');
-      await client7.query(
-        `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+      const updIgn = await client7.query(
+        `UPDATE conciliacao_itens SET status = 'ignorado' WHERE id = $1 AND status = 'pendente' AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) RETURNING id`,
         [id, empresaResolvida.id, empresaResolvida.nome]
       );
+      if (updIgn.rowCount === 0) {
+        await client7.query('ROLLBACK');
+        return jsonErro(res, 409, 'Item já processado por outra solicitação');
+      }
       await client7.query(
         `UPDATE conciliacoes SET itens_ignorados = itens_ignorados + 1
          WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
@@ -7618,10 +7636,14 @@ app.post('/conciliacao/itens/:id/criar-lancamento', auth, writeRateLimiter, requ
         ]
       );
       lancamentoId = lanc.rows[0].id;
-      await client8.query(
-        `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
+      const updConc = await client8.query(
+        `UPDATE conciliacao_itens SET status = 'conciliado', lancamento_id = $1 WHERE id = $2 AND status != 'conciliado' AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4)) RETURNING id`,
         [lancamentoId, id, empresaResolvida.id, empresaResolvida.nome]
       );
+      if (updConc.rowCount === 0) {
+        await client8.query('ROLLBACK');
+        return jsonErro(res, 409, 'Item já conciliado por outra solicitação');
+      }
       await client8.query(
         `UPDATE conciliacoes SET itens_conciliados = itens_conciliados + 1
          WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,

@@ -21,7 +21,7 @@ function normalizarDecimal(valor) {
 function normalizarInt(valor) {
   if (valor === null || valor === undefined || valor === '') return null;
   const numero = parseInt(valor, 10);
-  return Number.isFinite(numero) ? numero + 0 : null; // +0 normaliza -0 → 0
+  return (Number.isFinite(numero) && numero <= Number.MAX_SAFE_INTEGER) ? numero + 0 : null;
 }
 
 const _fmtDiasFortaleza = new Intl.DateTimeFormat('en-CA', {
@@ -48,8 +48,9 @@ function normalizarDataISO(valor) {
   if (typeof valor === 'string') {
     const s = valor.trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-      const d = new Date(s + 'T12:00:00');
-      if (isNaN(d.getTime())) return null;
+      const [ano, mes, dia] = s.split('-').map(Number);
+      const d = new Date(`${s}T12:00:00`);
+      if (isNaN(d.getTime()) || d.getFullYear() !== ano || d.getMonth() + 1 !== mes || d.getDate() !== dia) return null;
       return s;
     }
     // Suporte a DD/MM/YYYY (formato BR)

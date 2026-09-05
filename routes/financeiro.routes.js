@@ -285,7 +285,7 @@ module.exports = function ({
 
   // ── Cashflow futuro ───────────────────────────────────────────────────────────
   // GET /financeiro/cashflow-futuro?dias=30|60|90
-  router.get('/cashflow-futuro', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
+  router.get('/cashflow-futuro', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, req.query.empresa);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');

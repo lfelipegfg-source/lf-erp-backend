@@ -375,7 +375,11 @@ module.exports = function ({
           const custoAtual    = normalizarDecimal(prod.custo_medio || prod.custo || 0);
           const qtdOriginal   = normalizarInt(item.quantidade);
           const custoOriginal = normalizarDecimal(item.custo_unitario);
-          const estoqueRevertido = Math.max(0, estoqueAtual - qtdOriginal);
+          if (estoqueAtual !== null && qtdOriginal !== null && estoqueAtual < qtdOriginal) {
+            await client.query('ROLLBACK');
+            return erro(res, 400, `Produto ${item.produto_id}: ${qtdOriginal - estoqueAtual} unidade(s) desta compra já foram utilizadas. Reverta as movimentações antes de editar.`);
+          }
+          const estoqueRevertido = (estoqueAtual || 0) - (qtdOriginal || 0);
           const custoRevertido = (() => {
             if (estoqueRevertido <= 0) return custoAtual;
             const calc = (estoqueAtual * custoAtual - qtdOriginal * custoOriginal) / estoqueRevertido;

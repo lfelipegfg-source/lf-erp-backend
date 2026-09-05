@@ -578,9 +578,9 @@ module.exports = function ({
           valor: Number(row.valor || 0)
         }))
         .sort((a, b) => {
-          const da = a.data_movimento || '1970-01-01';
-          const db = b.data_movimento || '1970-01-01';
-          return db < da ? -1 : db > da ? 1 : 0;
+          const da = a.data_movimento ? new Date(a.data_movimento).getTime() : 0;
+          const db = b.data_movimento ? new Date(b.data_movimento).getTime() : 0;
+          return db - da;
         });
 
       return res.json({ sucesso: true, dados: movimentos });
@@ -890,13 +890,13 @@ MAX(v.data) AS ultima_venda
         ultima_venda: row.ultima_venda || null
       }));
 
-      const totalLucroGeral = linhas.reduce((acc, item) => acc + Number(item.lucro_total || 0), 0);
+      const totalLucroPositivo = linhas.reduce((acc, item) => acc + Math.max(0, Number(item.lucro_total || 0)), 0);
 
       let acumulado = 0;
 
       const linhasComAbc = linhas.map((item) => {
         const participacao =
-          totalLucroGeral > 0 ? (Number(item.lucro_total || 0) / totalLucroGeral) * 100 : 0;
+          totalLucroPositivo > 0 ? (Math.max(0, Number(item.lucro_total || 0)) / totalLucroPositivo) * 100 : 0;
 
         acumulado += participacao;
 
@@ -1037,11 +1037,14 @@ MAX(v.data) AS ultima_venda
           COALESCE(SUM(vi_cmv.cmv), 0)            AS cmv
         FROM vendas v
         LEFT JOIN (
-          SELECT venda_id,
-                 SUM(quantidade * COALESCE(custo_unitario, 0)) AS cmv
-          FROM venda_itens
-          WHERE empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)
-          GROUP BY venda_id
+          SELECT vi2.venda_id,
+                 SUM(vi2.quantidade * COALESCE(vi2.custo_unitario, p2.custo_medio, 0)) AS cmv
+          FROM venda_itens vi2
+          LEFT JOIN produtos p2 ON p2.id = vi2.produto_id
+            AND (p2.empresa_id = $1 OR (p2.empresa_id IS NULL AND p2.empresa = $2))
+            AND p2.deletado_em IS NULL
+          WHERE vi2.empresa_id = $1 OR (vi2.empresa_id IS NULL AND vi2.empresa = $2)
+          GROUP BY vi2.venda_id
         ) vi_cmv ON vi_cmv.venda_id = v.id
         ${vendaWhere}
         GROUP BY TO_CHAR(v.data::date, 'YYYY-MM')
@@ -1050,7 +1053,7 @@ MAX(v.data) AS ultima_venda
 
       // ── 2. Despesas de lançamentos por mês ───────────────────────────────
       const lancParams = [eId, eNome];
-      let lancWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'despesa'`;
+      let lancWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'despesa' AND LOWER(COALESCE(status, 'pendente')) = 'pago'`;
       lancWhere += adicionarFiltroPeriodo({
         campo: `COALESCE(pagamento_data, vencimento)`,
         params: lancParams, dataInicial, dataFinal, castDate: false
@@ -1083,19 +1086,38 @@ MAX(v.data) AS ultima_venda
         ORDER BY 1
       `, cpParams);
 
+      // ── 4. Receitas de lançamentos financeiros por mês ───────────────────
+      const lancReceitaParams = [eId, eNome];
+      let lancReceitaWhere = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND LOWER(tipo) = 'receita' AND LOWER(COALESCE(status, 'pendente')) = 'pago'`;
+      lancReceitaWhere += adicionarFiltroPeriodo({
+        campo: `COALESCE(pagamento_data, vencimento)`,
+        params: lancReceitaParams, dataInicial, dataFinal, castDate: false
+      });
+      const lancReceitaResult = await pool.query(`
+        SELECT
+          TO_CHAR(COALESCE(pagamento_data, vencimento)::date, 'YYYY-MM') AS periodo,
+          COALESCE(SUM(valor), 0) AS receitas
+        FROM lancamentos_financeiros
+        ${lancReceitaWhere}
+        GROUP BY 1
+        ORDER BY 1
+      `, lancReceitaParams);
+
       // ── Merge mensal ─────────────────────────────────────────────────────
       const periodos = new Set([
         ...vendasResult.rows.map(r => r.periodo),
         ...lancResult.rows.map(r => r.periodo),
-        ...cpResult.rows.map(r => r.periodo)
+        ...cpResult.rows.map(r => r.periodo),
+        ...lancReceitaResult.rows.map(r => r.periodo)
       ]);
 
-      const lancMap = Object.fromEntries(lancResult.rows.map(r => [r.periodo, Number(r.despesas)]));
-      const cpMap   = Object.fromEntries(cpResult.rows.map(r => [r.periodo, Number(r.despesas)]));
+      const lancMap        = Object.fromEntries(lancResult.rows.map(r => [r.periodo, Number(r.despesas)]));
+      const cpMap          = Object.fromEntries(cpResult.rows.map(r => [r.periodo, Number(r.despesas)]));
+      const lancReceitaMap = Object.fromEntries(lancReceitaResult.rows.map(r => [r.periodo, Number(r.receitas)]));
 
       const mensal = Array.from(periodos).sort().map(p => {
         const vRow = vendasResult.rows.find(r => r.periodo === p) || { receita: 0, cmv: 0 };
-        const receita   = Number(vRow.receita || 0);
+        const receita   = Number(vRow.receita || 0) + Number(lancReceitaMap[p] || 0);
         const cmv       = Number(vRow.cmv     || 0);
         const despesas  = Number(lancMap[p] || 0) + Number(cpMap[p] || 0);
         const lucro_bruto     = receita - cmv;
@@ -1137,6 +1159,7 @@ MAX(v.data) AS ultima_venda
   // ── VENDAS POR VARIAÇÃO DE GRADE ─────────────────────────────────────────
   router.get('/vendas/por-grade/:empresa', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
     try {
+      if (!checkFinanceiro(req, res)) return;
       const empresa = req.params.empresa;
       const empresaResolvida = await validarAcessoEmpresa(req, empresa, req.empresa_id);
 

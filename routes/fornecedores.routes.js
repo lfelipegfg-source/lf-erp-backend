@@ -277,37 +277,48 @@ module.exports = function ({
         return erro(res, 403, 'Sem acesso');
       }
 
-      const atualResult = await pool.query(
-        `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL`,
-        [id, empresaResolvida.id, empresaResolvida.nome]
-      );
-
-      if (atualResult.rowCount === 0) {
-        return erro(res, 404, 'Fornecedor não encontrado');
+      const client = await pool.connect();
+      let dadosAnteriores;
+      try {
+        await client.query('BEGIN');
+        const atualResult = await client.query(
+          `SELECT * FROM fornecedores WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) AND deletado_em IS NULL FOR UPDATE`,
+          [id, empresaResolvida.id, empresaResolvida.nome]
+        );
+        if (atualResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 404, 'Fornecedor não encontrado');
+        }
+        dadosAnteriores = atualResult.rows[0];
+        await client.query(
+          `UPDATE fornecedores
+          SET nome = $1,
+              cnpj = $2,
+              telefone = $3,
+              email = $4,
+              endereco = $5,
+              observacao = $6,
+              atualizado_em = NOW()
+          WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9)) AND deletado_em IS NULL`,
+          [
+            nome,
+            cnpj || null,
+            (telefone || '').trim() || null,
+            (email || '').trim() || null,
+            (endereco || '').trim() || null,
+            (observacao || '').trim() || null,
+            id,
+            empresaResolvida.id,
+            empresaResolvida.nome
+          ]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
       }
-
-      await pool.query(
-        `UPDATE fornecedores
-        SET nome = $1,
-            cnpj = $2,
-            telefone = $3,
-            email = $4,
-            endereco = $5,
-            observacao = $6,
-            atualizado_em = NOW()
-        WHERE id = $7 AND (empresa_id = $8 OR (empresa_id IS NULL AND empresa = $9)) AND deletado_em IS NULL`,
-        [
-          nome,
-          cnpj || null,
-          (telefone || '').trim() || null,
-          (email || '').trim() || null,
-          (endereco || '').trim() || null,
-          (observacao || '').trim() || null,
-          id,
-          empresaResolvida.id,
-          empresaResolvida.nome
-        ]
-      );
 
       await registrarAuditoria({
         empresa: empresaResolvida.nome,
@@ -317,7 +328,7 @@ module.exports = function ({
         modulo: 'fornecedores',
         acao: 'edicao',
         referencia_id: id,
-        dados_anteriores: atualResult.rows[0],
+        dados_anteriores: dadosAnteriores,
         dados_novos: {
           nome,
           cnpj,
