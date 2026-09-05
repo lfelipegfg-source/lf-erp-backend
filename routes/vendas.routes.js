@@ -52,6 +52,12 @@ module.exports = ({
 
   // Normaliza array de pagamentos do split.
   // Retorna { pagamentosArray, pagamentoPrincipal, totalPromissoria, statusPagamento }
+  const FORMAS_PAGAMENTO_VALIDAS = new Set(['dinheiro','pix','cartao','cartao_credito','cartao_debito','boleto','promissoria','transferencia','cheque','crediario','outros','dinheiro_troco']);
+  function sanitizarFormaPagamento(f) {
+    const s = String(f || '').trim().toLowerCase();
+    return FORMAS_PAGAMENTO_VALIDAS.has(s) ? String(f).trim() : 'Dinheiro';
+  }
+
   function normalizarPagamentosSplit({ pagamentos, pagamento, total, status_pagamento, parcelas }) {
     const FORMAS_PENDENTES = ['promissoria', 'boleto'];
 
@@ -59,14 +65,14 @@ module.exports = ({
 
     if (Array.isArray(pagamentos) && pagamentos.length > 0) {
       pagamentosArray = pagamentos.map((p) => ({
-        forma: String(p.forma || 'Dinheiro'),
+        forma: sanitizarFormaPagamento(p.forma),
         valor: normalizarDecimal(p.valor),
         parcelas: normalizarInt(p.parcelas) || 1,
         vencimento: p.vencimento || null
       }));
     } else {
       // Retrocompatibilidade: pagamento único
-      pagamentosArray = [{ forma: pagamento || 'Dinheiro', valor: normalizarDecimal(total), parcelas: normalizarInt(parcelas) || 1, vencimento: null }];
+      pagamentosArray = [{ forma: sanitizarFormaPagamento(pagamento), valor: normalizarDecimal(total), parcelas: normalizarInt(parcelas) || 1, vencimento: null }];
     }
 
     const pagamentoPrincipal = pagamentosArray[0]?.forma || 'Dinheiro';
@@ -863,7 +869,7 @@ module.exports = ({
           descontoFinal,
           acrescimoFinal,
           totalFinal,
-          pagamento || 'Dinheiro',
+          sanitizarFormaPagamento(pagamento),
           parcelasFinal,
           (['pendente','atrasado','pago','parcial','parcial_atrasado'].includes(status_pagamento) ? status_pagamento : 'pago'),
           dataFinal,

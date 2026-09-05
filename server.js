@@ -760,7 +760,10 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
     };
   }
 
-  if (plano.assinatura_status === 'trial' && plano.trial_fim && String(plano.trial_fim) < hoje()) {
+  const _planoTrialFimStr = plano.trial_fim instanceof Date
+    ? plano.trial_fim.toISOString().slice(0, 10)
+    : String(plano.trial_fim || '').slice(0, 10);
+  if (plano.assinatura_status === 'trial' && plano.trial_fim && _planoTrialFimStr < hoje()) {
     return {
       permitido: false,
       mensagem: 'Período de teste expirado. Escolha um plano para continuar.'
@@ -2226,6 +2229,8 @@ app.post('/login', loginRateLimiter, async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      // Dummy bcrypt para equalizar tempo de resposta — evita timing oracle (enumeração de usuários)
+      await bcrypt.compare(senha, '$2b$10$invalidhashusedfortimingequalize0000000000000000000000');
       registrarAuditoria({
         empresa: null, empresa_id: null, usuario_id: null,
         usuario_nome: usuario, modulo: 'acesso', acao: 'login_falha',
@@ -2247,7 +2252,10 @@ app.post('/login', loginRateLimiter, async (req, res) => {
       }
 
       if (user.assinatura_status === 'trial' && user.trial_fim) {
-        if (String(user.trial_fim) < hoje()) {
+        const _trialFimStr = user.trial_fim instanceof Date
+          ? user.trial_fim.toISOString().slice(0, 10)
+          : String(user.trial_fim || '').slice(0, 10);
+        if (_trialFimStr < hoje()) {
           return jsonErro(res, 403, 'Período de teste expirado. Escolha um plano para continuar.', 'TRIAL_EXPIRADO');
         }
       }
@@ -3213,6 +3221,7 @@ app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), asy
       }))
     );
   } catch (error) {
+    console.error('Erro ao buscar compras:', error);
     jsonErro(res, 500, 'Erro ao buscar compras');
   }
 });
@@ -3412,6 +3421,7 @@ app.get('/estoque/resumo/:empresa', auth, requirePermissao(pool, 'estoque', 'ver
       produtos_alerta: Number(result.rows[0].produtos_alerta || 0)
     });
   } catch (error) {
+    console.error('Erro ao buscar resumo de estoque:', error);
     jsonErro(res, 500, 'Erro ao buscar resumo de estoque');
   }
 });
@@ -3448,6 +3458,7 @@ app.get('/compras-fornecedores/:empresa', auth, requirePermissao(pool, 'financei
       }))
     );
   } catch (error) {
+    console.error('Erro ao buscar resumo de compras por fornecedor:', error);
     jsonErro(res, 500, 'Erro ao buscar resumo de compras por fornecedor');
   }
 });
@@ -3482,6 +3493,7 @@ app.get('/vendas-clientes/:empresa', auth, requirePermissao(pool, 'financeiro', 
       }))
     );
   } catch (error) {
+    console.error('Erro ao buscar resumo de vendas por cliente:', error);
     jsonErro(res, 500, 'Erro ao buscar resumo de vendas por cliente');
   }
 });
@@ -4886,10 +4898,10 @@ app.get('/contas-pagar/:empresa', auth, requirePermissao(pool, 'financeiro', 've
 app.get('/contas-pagar/detalhe/:id', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const _cpEmpresaId = req.user?.is_saas_owner ? null : (req.empresa_id || null);
-    const _cpEmpresaNome = req.user?.is_saas_owner ? '' : (req.empresa_nome || req.user?.empresa || '');
-    const _cpEmpresaWhere = _cpEmpresaId !== null ? 'AND (cp.empresa_id = $3 OR (cp.empresa_id IS NULL AND cp.empresa = $4))' : '';
-    const _cpParams = _cpEmpresaId !== null ? [id, hoje(), _cpEmpresaId, _cpEmpresaNome] : [id, hoje()];
+    const _cpEmpresaId = req.user?.is_saas_owner ? null : (req.user?.empresa_id ?? 0);
+    const _cpEmpresaNome = req.user?.is_saas_owner ? '' : (req.user?.empresa || '');
+    const _cpEmpresaWhere = !req.user?.is_saas_owner ? 'AND (cp.empresa_id = $3 OR (cp.empresa_id IS NULL AND cp.empresa = $4))' : '';
+    const _cpParams = !req.user?.is_saas_owner ? [id, hoje(), _cpEmpresaId, _cpEmpresaNome] : [id, hoje()];
 
     const contaResult = await pool.query(
       `
@@ -5778,6 +5790,7 @@ app.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'finan
       }
     });
   } catch (error) {
+    console.error('Erro ao cadastrar investimento:', error);
     jsonErro(res, 500, 'Erro ao cadastrar investimento');
   }
 });
@@ -5840,6 +5853,7 @@ app.get('/investimentos/:empresa', auth, requirePermissao(pool, 'financeiro', 'v
       }))
     );
   } catch (error) {
+    console.error('Erro ao buscar investimentos:', error);
     jsonErro(res, 500, 'Erro ao buscar investimentos');
   }
 });
