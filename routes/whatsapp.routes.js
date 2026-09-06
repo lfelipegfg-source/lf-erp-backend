@@ -277,7 +277,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
              WHERE we.empresa_id = $1 AND we.cliente_id = cr.cliente_id
                AND we.evento = 'cobranca.atrasada'
                AND we.status IN ('enviado','link')
-               AND we.criado_em > NOW() - ($4 || ' hours')::interval
+               AND we.criado_em > NOW() - ($4::text || ' hours')::interval
            )`,
         [e.id, hojeStr, diasAtraso, cooldownH]
       );
@@ -318,7 +318,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
              WHERE we.empresa_id = $1 AND we.cliente_id = cr.cliente_id
                AND we.evento = 'cobranca.vencendo'
                AND we.status IN ('enviado','link')
-               AND we.criado_em > NOW() - ($4 || ' hours')::interval
+               AND we.criado_em > NOW() - ($4::text || ' hours')::interval
            )`,
         [e.id, hojeStr, diasAviso, cooldownH]
       );

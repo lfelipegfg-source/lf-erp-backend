@@ -65,9 +65,10 @@ module.exports = ({
         where += ` AND p.cliente_id = $${idx++}`; params.push(Number(cliente_id));
       }
       if (periodo) {
-        const { dataInicio, dataFim } = obterPeriodo(periodo, req.query.data_inicio, req.query.data_fim);
-        where += ` AND p.criado_em >= $${idx++} AND p.criado_em <= $${idx++}`;
-        params.push(dataInicio, dataFim);
+        const dataInicio = req.query.data_inicio || '';
+        const dataFim    = req.query.data_fim    || '';
+        if (dataInicio) { where += ` AND p.criado_em::date >= $${idx++}`; params.push(dataInicio); }
+        if (dataFim)    { where += ` AND p.criado_em::date <= $${idx++}`; params.push(dataFim); }
       }
 
       const result = await pool.query(

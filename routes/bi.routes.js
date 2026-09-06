@@ -42,6 +42,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
            FROM venda_itens GROUP BY venda_id
          ) vi_cmv ON vi_cmv.venda_id = v.id
          WHERE (v.empresa_id = $1 OR (v.empresa_id IS NULL AND v.empresa = $2))
+           AND v.status != 'cancelada'
            AND v.data::date >= (CURRENT_DATE - ($3 || ' months')::interval)::date
          GROUP BY 1
          ORDER BY 1`,
@@ -81,6 +82,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
              COALESCE(COUNT(DISTINCT cliente_id) FILTER (WHERE cliente_id IS NOT NULL), 0) AS clientes_unicos
            FROM vendas
            WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+             AND status != 'cancelada'
              AND data::date BETWEEN $3 AND $4`,
           [e.id, e.nome, ini, fim]
         );
@@ -166,7 +168,8 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
                 COALESCE(SUM(vi.quantidade * COALESCE(vi.custo_unitario,0)), 0) AS custo
          FROM venda_itens vi
          JOIN vendas v ON v.id = vi.venda_id
-         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2)) ${dataCond}
+         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2))
+           AND v.status != 'cancelada' ${dataCond}
          GROUP BY vi.produto_nome
          ORDER BY receita DESC
          LIMIT ${limit}`,
@@ -210,7 +213,8 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
                 COALESCE(SUM(total), 0)                    AS total_gasto,
                 COALESCE(AVG(total), 0)                    AS ticket_medio
          FROM vendas
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+           AND status != 'cancelada' ${dataCond}
          GROUP BY cliente
          ORDER BY total_gasto DESC
          LIMIT ${limit}`,
@@ -249,7 +253,8 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
                 COUNT(*)                             AS qtd,
                 COALESCE(SUM(total), 0)              AS total
          FROM vendas
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}
+         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
+           AND status != 'cancelada' ${dataCond}
          GROUP BY metodo
          ORDER BY total DESC`,
         params
@@ -293,7 +298,8 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
          FROM venda_itens vi
          JOIN vendas v ON v.id = vi.venda_id
          LEFT JOIN produtos p ON p.id = vi.produto_id
-         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2)) ${dataCond}
+         WHERE (vi.empresa_id = $1 OR (vi.empresa_id IS NULL AND vi.empresa = $2))
+           AND v.status != 'cancelada' ${dataCond}
          GROUP BY categoria
          ORDER BY receita DESC`,
         params
@@ -335,7 +341,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       const [orcRes, pedRes, vendasRes] = await Promise.all([
         pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM orcamentos WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] })),
         pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM pedidos WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] })),
-        pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM vendas WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] }))
+        pool.query(`SELECT COUNT(*) AS total, COALESCE(SUM(total),0) AS valor FROM vendas WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND status != 'cancelada' ${dataCond}`, params).catch(() => ({ rows: [{ total: 0, valor: 0 }] }))
       ]);
 
       const etapas = [

@@ -166,8 +166,8 @@ module.exports = ({
         `SELECT pg.*, p.empresa, p.empresa_id AS prod_empresa_id
          FROM produto_grades pg
          JOIN produtos p ON p.id = pg.produto_id
-         WHERE pg.id = $1`,
-        [gradeId]
+         WHERE pg.id = $1 AND (pg.empresa_id = $2 OR p.empresa_id = $2)`,
+        [gradeId, req.empresa_id]
       );
       if (gradeResult.rowCount === 0) return erro(res, 404, 'Grade não encontrada');
 
@@ -245,8 +245,8 @@ module.exports = ({
         `SELECT pg.*, p.empresa, p.empresa_id AS prod_empresa_id
          FROM produto_grades pg
          JOIN produtos p ON p.id = pg.produto_id
-         WHERE pg.id = $1`,
-        [gradeId]
+         WHERE pg.id = $1 AND (pg.empresa_id = $2 OR p.empresa_id = $2)`,
+        [gradeId, req.empresa_id]
       );
       if (gradeResult.rowCount === 0) return erro(res, 404, 'Grade não encontrada');
 

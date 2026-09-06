@@ -93,14 +93,14 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
              COUNT(*) FILTER (WHERE pontos_fidelidade > 0)          AS clientes_com_pontos,
              COALESCE(SUM(pontos_fidelidade), 0)                    AS total_pontos_circulacao,
              COUNT(*) FILTER (WHERE pontos_fidelidade >= 100)       AS clientes_prontos_resgatar
-           FROM clientes WHERE empresa_id = $1 AND deletado_em IS NULL`,
-          [e.id]
+           FROM clientes WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND deletado_em IS NULL`,
+          [e.id, e.nome]
         ),
         pool.query(
           `SELECT nome, pontos_fidelidade FROM clientes
-           WHERE empresa_id = $1 AND pontos_fidelidade > 0 AND deletado_em IS NULL
+           WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND pontos_fidelidade > 0 AND deletado_em IS NULL
            ORDER BY pontos_fidelidade DESC LIMIT 5`,
-          [e.id]
+          [e.id, e.nome]
         ),
         pool.query(
           `SELECT tipo, COUNT(*) AS total, COALESCE(SUM(ABS(pontos)),0) AS pontos_total
@@ -135,8 +135,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!e) return erro(res, 403, 'Sem acesso');
 
       const { busca } = req.query;
-      const params = [e.id];
-      let where = `WHERE empresa_id = $1 AND pontos_fidelidade > 0 AND deletado_em IS NULL`;
+      const params = [e.id, e.nome];
+      let where = `WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2)) AND pontos_fidelidade > 0 AND deletado_em IS NULL`;
       if (busca) { params.push(`%${busca.replace(/[%_]/g, '\\$&')}%`); where += ` AND nome ILIKE $${params.length} ESCAPE '\\'`; }
 
       const result = await pool.query(
@@ -160,8 +160,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
 
       const [cliResult, movResult, cfgResult] = await Promise.all([
         pool.query(
-          `SELECT id, nome, telefone, email, pontos_fidelidade FROM clientes WHERE id = $1 AND empresa_id = $2`,
-          [clienteId, e.id]
+          `SELECT id, nome, telefone, email, pontos_fidelidade FROM clientes WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [clienteId, e.id, e.nome]
         ),
         pool.query(
           `SELECT * FROM fidelidade_movimentos WHERE empresa_id = $1 AND cliente_id = $2 ORDER BY criado_em DESC LIMIT 100`,

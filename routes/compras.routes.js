@@ -55,8 +55,8 @@ module.exports = function ({
     if (idempotency_key) {
       const keyStr = String(idempotency_key).slice(0, 128);
       const existente = await pool.query(
-        `SELECT id FROM compras WHERE empresa_id = $1 AND idempotency_key = $2 LIMIT 1`,
-        [empresaResolvida.id, keyStr]
+        `SELECT id FROM compras WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3)) AND idempotency_key = $2 LIMIT 1`,
+        [empresaResolvida.id, keyStr, empresaResolvida.nome]
       );
       if (existente.rowCount > 0) {
         return ok(res, { compra_id: existente.rows[0].id, dados: { compra_id: existente.rows[0].id }, idempotente: true });
