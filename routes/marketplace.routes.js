@@ -103,7 +103,8 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     return {
       ...row,
       access_token:  safeDecrypt(row.access_token),
-      refresh_token: safeDecrypt(row.refresh_token)
+      refresh_token: safeDecrypt(row.refresh_token),
+      client_secret: safeDecrypt(row.client_secret)
     };
   }
 
@@ -359,13 +360,16 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!plataforma || !app_id) return erro(res, 400, 'plataforma e app_id são obrigatórios');
       if (!PLATAFORMAS_VALIDAS.includes(plataforma)) return erro(res, 400, 'Plataforma inválida');
 
+      const clientSecretFinal = !client_secret || client_secret === '***'
+        ? null
+        : encryptField(client_secret);
       await pool.query(
         `INSERT INTO marketplace_config (empresa_id, plataforma, app_id, client_secret)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (empresa_id, plataforma) DO UPDATE
-         SET app_id = $3, client_secret = COALESCE(NULLIF($4,'***'), marketplace_config.client_secret),
+         SET app_id = $3, client_secret = COALESCE($4, marketplace_config.client_secret),
              atualizado_em = NOW()`,
-        [empresaResolvida.id, plataforma, app_id, client_secret || null]
+        [empresaResolvida.id, plataforma, app_id, clientSecretFinal]
       );
 
       return ok(res, { mensagem: 'Configuração salva. Agora faça a autorização OAuth.' });

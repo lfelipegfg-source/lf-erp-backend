@@ -20,6 +20,22 @@ const TIPOS_ACEITOS = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'im
 const LIMITE_BYTES  = 5 * 1024 * 1024; // 5 MB
 const MAX_IMAGENS   = 10;
 
+// Valida magic bytes do buffer para prevenir MIME spoofing
+function validarMagicBytes(buf) {
+  if (!buf || buf.length < 4) return false;
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true;
+  // PNG: 89 50 4E 47
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true;
+  // GIF: 47 49 46 38
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true;
+  // WebP: RIFF????WEBP (bytes 0-3=RIFF, 8-11=WEBP)
+  if (buf.length >= 12 &&
+      buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
+  return false;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: LIMITE_BYTES },
@@ -122,6 +138,10 @@ module.exports = ({
         }
 
         if (!req.file) return erro(res, 400, 'Envie uma imagem no campo "imagem"');
+
+        if (!validarMagicBytes(req.file.buffer)) {
+          return erro(res, 400, 'Arquivo inválido: o conteúdo não corresponde a uma imagem real (JPG, PNG, WebP ou GIF).');
+        }
 
         const produtoId = Number(req.params.produtoId);
         if (!produtoId) return erro(res, 400, 'ID de produto inválido');

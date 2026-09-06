@@ -140,7 +140,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
                 CASE WHEN l.data_validade IS NOT NULL AND l.data_validade < $${params.length + 1}::date THEN true ELSE false END AS vencido,
                 CASE WHEN l.data_validade IS NOT NULL AND l.data_validade BETWEEN $${params.length + 1}::date AND $${params.length + 1}::date + INTERVAL '30 days' THEN true ELSE false END AS vencendo
          FROM lotes l
-         LEFT JOIN produtos p ON p.id = l.produto_id
+         LEFT JOIN produtos p ON p.id = l.produto_id AND p.empresa_id = l.empresa_id
          ${where}
          ORDER BY l.data_validade NULLS LAST, l.criado_em DESC`,
         [...params, hojeStr]
@@ -226,7 +226,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const [loteResult, movResult] = await Promise.all([
         pool.query(
           `SELECT l.*, p.nome AS produto_nome_atual
-           FROM lotes l LEFT JOIN produtos p ON p.id = l.produto_id
+           FROM lotes l LEFT JOIN produtos p ON p.id = l.produto_id AND p.empresa_id = l.empresa_id
            WHERE l.id = $1 AND l.empresa_id = $2`,
           [Number(req.params.id), e.id]
         ),
@@ -434,7 +434,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       // Busca em lotes
       const lotesResult = await pool.query(
         `SELECT l.*, p.nome AS produto_nome_atual
-         FROM lotes l LEFT JOIN produtos p ON p.id = l.produto_id
+         FROM lotes l LEFT JOIN produtos p ON p.id = l.produto_id AND p.empresa_id = l.empresa_id
          WHERE l.empresa_id = $1 AND (l.numero ILIKE $2 OR l.produto_nome ILIKE $2)`,
         [e.id, `%${q}%`]
       );
@@ -445,9 +445,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
                 v.data AS venda_data, v.cliente_nome,
                 c.data AS compra_data
          FROM numeros_serie s
-         LEFT JOIN produtos p ON p.id = s.produto_id
-         LEFT JOIN vendas v ON v.id = s.venda_id
-         LEFT JOIN compras c ON c.id = s.compra_id
+         LEFT JOIN produtos p ON p.id = s.produto_id AND p.empresa_id = s.empresa_id
+         LEFT JOIN vendas v ON v.id = s.venda_id AND v.empresa_id = s.empresa_id
+         LEFT JOIN compras c ON c.id = s.compra_id AND c.empresa_id = s.empresa_id
          WHERE s.empresa_id = $1 AND s.numero ILIKE $2`,
         [e.id, `%${q}%`]
       );
