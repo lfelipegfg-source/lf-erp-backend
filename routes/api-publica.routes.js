@@ -286,7 +286,8 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('[api-publica] POST vendas:', err.message);
-      return erro(res, err.message.includes('não encontrado') ? 400 : 500, err.message);
+      if (err.message.includes('não encontrado')) return erro(res, 400, err.message);
+      return erro(res, 500, 'Erro ao processar venda');
     } finally {
       client.release();
     }
