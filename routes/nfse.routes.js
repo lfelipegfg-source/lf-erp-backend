@@ -140,6 +140,9 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const cfg = await getConfig(empresaResolvida.id);
       if (!cfg?.token_focus) return erro(res, 400, 'Configure o token FocusNFe em NFS-e → Configuração');
       if (!cfg?.codigo_municipio) return erro(res, 400, 'Configure o código IBGE do município em NFS-e → Configuração');
+      if (cfg.ambiente === 1 && process.env.LF_ERP_FISCAL_PRODUCTION_ENABLED !== 'true') {
+        return erro(res, 403, 'Emissão fiscal em produção bloqueada. Configure LF_ERP_FISCAL_PRODUCTION_ENABLED=true no servidor.');
+      }
 
       const {
         tomador_nome, tomador_cpf_cnpj, tomador_email,

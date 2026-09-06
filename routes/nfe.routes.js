@@ -311,6 +311,7 @@ module.exports = ({
         ambiente: config.ambiente === 1 ? 'producao' : 'homologacao'
       });
     } catch (err) {
+      if (err.code === 'FISCAL_PROD_BLOCKED') return erro(res, 403, err.message);
       console.error('[nfe] POST emitir:', err.message);
       return erro(res, 500, 'Erro ao emitir NF-e');
     }

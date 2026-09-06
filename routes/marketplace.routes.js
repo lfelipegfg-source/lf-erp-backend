@@ -54,6 +54,25 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
   const ML_AUTH = 'https://auth.mercadolivre.com.br/authorization';
   const ML_TOKEN_URL = 'https://api.mercadolibre.com/oauth/token';
   const PLATAFORMAS_VALIDAS = ['mercadolivre', 'shopee'];
+  const ML_TIMEOUT_MS = 15000;
+
+  async function mlTokenFetch(url, opts) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ML_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { ...opts, signal: controller.signal });
+      return res;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        const e = new Error(`ML token: timeout (${ML_TIMEOUT_MS}ms)`);
+        e.code = 'ML_TOKEN_TIMEOUT';
+        throw e;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async function apiGet(url, token) {
     return new Promise((resolve, reject) => {
@@ -66,9 +85,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const req = https.request(opts, (res) => {
         let data = '';
         res.on('data', (c) => { data += c; });
-        res.on('end', () => { try { resolve({ ok: res.statusCode < 400, status: res.statusCode, data: JSON.parse(data) }); } catch { resolve({ ok: false, status: res.statusCode, data }); } });
+        res.on('end', () => { clearTimeout(timer); try { resolve({ ok: res.statusCode < 400, status: res.statusCode, data: JSON.parse(data) }); } catch { resolve({ ok: false, status: res.statusCode, data }); } });
       });
-      req.on('error', reject);
+      const timer = setTimeout(() => req.destroy(new Error(`ML API: timeout ${ML_TIMEOUT_MS}ms`)), ML_TIMEOUT_MS);
+      req.on('error', (e) => { clearTimeout(timer); reject(e); });
       req.end();
     });
   }
@@ -85,9 +105,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const req = https.request(opts, (res) => {
         let data = '';
         res.on('data', (c) => { data += c; });
-        res.on('end', () => { try { resolve({ ok: res.statusCode < 400, status: res.statusCode, data: JSON.parse(data) }); } catch { resolve({ ok: false, status: res.statusCode, data }); } });
+        res.on('end', () => { clearTimeout(timer); try { resolve({ ok: res.statusCode < 400, status: res.statusCode, data: JSON.parse(data) }); } catch { resolve({ ok: false, status: res.statusCode, data }); } });
       });
-      req.on('error', reject);
+      const timer = setTimeout(() => req.destroy(new Error(`ML API: timeout ${ML_TIMEOUT_MS}ms`)), ML_TIMEOUT_MS);
+      req.on('error', (e) => { clearTimeout(timer); reject(e); });
       req.write(bodyStr);
       req.end();
     });
@@ -117,7 +138,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         client_secret: cfg.client_secret,
         refresh_token: cfg.refresh_token
       });
-      const res = await fetch(ML_TOKEN_URL, {
+      const res = await mlTokenFetch(ML_TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body
@@ -453,7 +474,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
           code,
           redirect_uri: redirectUri
         });
-        const tokenRes = await fetch(ML_TOKEN_URL, {
+        const tokenRes = await mlTokenFetch(ML_TOKEN_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body
@@ -619,6 +640,13 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     if (!PLATAFORMAS_VALIDAS.includes(plataforma)) return res.status(400).json({ ok: false });
 
     const payload = req.body;
+
+    // Shopee: integração não implementada — nenhuma assinatura oficial configurada.
+    // Fail-closed: rejeitar todo payload até que a validação HMAC da Shopee seja implementada.
+    if (plataforma === 'shopee') {
+      console.warn('[marketplace] webhook Shopee recebido mas integração não está habilitada');
+      return res.status(501).json({ ok: false, erro: 'Integração Shopee não habilitada' });
+    }
 
     // Mercado Livre: verificar x-signature antes de responder 200
     if (plataforma === 'mercadolivre') {

@@ -16,6 +16,41 @@ function authHeader(token) {
   return 'Basic ' + Buffer.from(token + ':').toString('base64');
 }
 
+// ── Proteção de ambiente fiscal ───────────────────────────────────────────────
+// Lê process.env a cada chamada para facilitar testes e hot-reload de config.
+function assertAmbienteEmissaoPermitido(ambiente) {
+  if (ambiente === 1 && process.env.LF_ERP_FISCAL_PRODUCTION_ENABLED !== 'true') {
+    const err = new Error(
+      'Emissão fiscal em produção bloqueada. Configure LF_ERP_FISCAL_PRODUCTION_ENABLED=true no servidor.'
+    );
+    err.code = 'FISCAL_PROD_BLOCKED';
+    throw err;
+  }
+}
+
+// ── fetch com timeout e tratamento de erro de rede ───────────────────────────
+async function focusFetch(url, opts) {
+  const timeoutMs = Number(process.env.FOCUS_TIMEOUT_MS) || 15000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    return res;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const e = new Error(`Focus NFe: timeout (${timeoutMs}ms) ao chamar ${url.split('?')[0]}`);
+      e.code = 'FOCUS_TIMEOUT';
+      throw e;
+    }
+    const e = new Error(`Focus NFe: falha de rede — ${err.message}`);
+    e.code = 'FOCUS_NETWORK_ERROR';
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function focusRequest(token, ambiente, method, path, body = null) {
   const url = `${baseUrl(ambiente)}${path}`;
   const opts = {
@@ -28,7 +63,7 @@ async function focusRequest(token, ambiente, method, path, body = null) {
 
   if (body) opts.body = JSON.stringify(body);
 
-  const res = await fetch(url, opts);
+  const res = await focusFetch(url, opts);
   const text = await res.text();
 
   let data;
@@ -49,6 +84,7 @@ async function focusRequest(token, ambiente, method, path, body = null) {
  * @param {object} payload  Payload completo da NF-e
  */
 async function emitirNfe(token, ambiente, ref, payload) {
+  assertAmbienteEmissaoPermitido(ambiente);
   return focusRequest(token, ambiente, 'POST', `/nfe?ref=${encodeURIComponent(ref)}`, payload);
 }
 
@@ -86,7 +122,7 @@ function urlXml(ambiente, ref) {
  */
 async function downloadDanfe(token, ambiente, ref) {
   const url = urlDanfe(ambiente, ref);
-  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  const res = await focusFetch(url, { headers: { Authorization: authHeader(token) } });
   if (!res.ok) return null;
   return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
 }
@@ -96,7 +132,7 @@ async function downloadDanfe(token, ambiente, ref) {
  */
 async function downloadXml(token, ambiente, ref) {
   const url = urlXml(ambiente, ref);
-  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  const res = await focusFetch(url, { headers: { Authorization: authHeader(token) } });
   if (!res.ok) return null;
   const text = await res.text();
   return { text, contentType: 'application/xml' };
@@ -107,6 +143,7 @@ async function downloadXml(token, ambiente, ref) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function emitirNfce(token, ambiente, ref, payload) {
+  assertAmbienteEmissaoPermitido(ambiente);
   return focusRequest(token, ambiente, 'POST', `/nfce?ref=${encodeURIComponent(ref)}`, payload);
 }
 
@@ -120,7 +157,7 @@ async function cancelarNfce(token, ambiente, ref, justificativa) {
 
 async function downloadDanfce(token, ambiente, ref) {
   const url = `${baseUrl(ambiente)}/nfce/${ref}/pdf`;
-  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  const res = await focusFetch(url, { headers: { Authorization: authHeader(token) } });
   if (!res.ok) return null;
   return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
 }
@@ -128,6 +165,10 @@ async function downloadDanfce(token, ambiente, ref) {
 // ──────────────────────────────────────────────────────────────────────────────
 // NFS-e (Nota Fiscal de Serviço Eletrônica)
 // FocusNFe suporta NFS-e para múltiplos municípios via API unificada.
+//
+// Nota: a proteção de ambiente é verificada diretamente na rota de emissão
+// (nfse.routes.js), pois emitirNfse é chamada como fire-and-forget; um erro
+// lançado aqui seria absorvido pelo .catch() do chamador sem retornar 403.
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function emitirNfse(token, ambiente, ref, payload) {
@@ -144,7 +185,7 @@ async function cancelarNfse(token, ambiente, ref) {
 
 async function downloadNfsePdf(token, ambiente, ref) {
   const url = `${baseUrl(ambiente)}/nfse/${ref}/pdf`;
-  const res = await fetch(url, { headers: { Authorization: authHeader(token) } });
+  const res = await focusFetch(url, { headers: { Authorization: authHeader(token) } });
   if (!res.ok) return null;
   return { buffer: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get('content-type') };
 }
@@ -157,5 +198,6 @@ async function listarNfse(token, ambiente, params = {}) {
 module.exports = {
   emitirNfe, consultarNfe, cancelarNfe, downloadDanfe, downloadXml, urlDanfe, urlXml,
   emitirNfce, consultarNfce, cancelarNfce, downloadDanfce,
-  emitirNfse, consultarNfse, cancelarNfse, downloadNfsePdf, listarNfse
+  emitirNfse, consultarNfse, cancelarNfse, downloadNfsePdf, listarNfse,
+  assertAmbienteEmissaoPermitido
 };

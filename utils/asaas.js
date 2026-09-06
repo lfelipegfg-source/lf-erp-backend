@@ -9,6 +9,8 @@ const http  = require('http');
 const ASAAS_PROD    = 'https://api.asaas.com';
 const ASAAS_SANDBOX = 'https://sandbox.asaas.com';
 
+const ASAAS_TIMEOUT_MS = Number(process.env.ASAAS_TIMEOUT_MS) || 30000;
+
 function baseUrl(sandbox) {
   return sandbox ? ASAAS_SANDBOX : ASAAS_PROD;
 }
@@ -33,6 +35,7 @@ async function asaasRequest(apiKey, sandbox, method, path, body = null) {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        clearTimeout(timer);
         try {
           const parsed = JSON.parse(data);
           if (res.statusCode >= 400) {
@@ -51,7 +54,14 @@ async function asaasRequest(apiKey, sandbox, method, path, body = null) {
       });
     });
 
-    req.on('error', (e) => reject(new Error(`Asaas: ${e.message}`)));
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`Asaas: timeout após ${ASAAS_TIMEOUT_MS}ms`));
+    }, ASAAS_TIMEOUT_MS);
+
+    req.on('error', (e) => {
+      clearTimeout(timer);
+      reject(new Error(`Asaas: ${e.message}`));
+    });
 
     if (body) req.write(JSON.stringify(body));
     req.end();
