@@ -206,6 +206,7 @@ module.exports = function ({
         castDate: false
       });
 
+      const tag = q => n => { throw Object.assign(n, { _resumoQuery: q }); };
       const [
         receberResult,
         pagarResult,
@@ -233,7 +234,7 @@ module.exports = function ({
           ${whereReceber}
         `,
           paramsReceber
-        ),
+        ).catch(tag('contas_receber')),
 
         pool.query(
           `
@@ -252,7 +253,7 @@ module.exports = function ({
           ${wherePagar}
         `,
           paramsPagar
-        ),
+        ).catch(tag('contas_pagar')),
 
         pool.query(
           `
@@ -265,28 +266,28 @@ module.exports = function ({
           ${whereLanc}
         `,
           paramsLanc
-        ),
+        ).catch(tag('lancamentos_financeiros')),
 
         pool.query(
           `SELECT COALESCE(SUM(valor),0) AS total FROM contas_receber ${whereFluxoReceber}`,
           paramsFluxoReceber
-        ),
+        ).catch(tag('fluxo_receber')),
         pool.query(
           `SELECT COALESCE(SUM(valor),0) AS total FROM contas_pagar ${whereFluxoPagar}`,
           paramsFluxoPagar
-        ),
+        ).catch(tag('fluxo_pagar')),
         pool.query(
           `SELECT COALESCE(SUM(valor),0) AS total FROM investimentos ${whereInvest}`,
           paramsInvest
-        ),
+        ).catch(tag('investimentos')),
         pool.query(
           `SELECT COALESCE(SUM(v.total),0) AS total FROM vendas v ${whereVendas}`,
           paramsVendas
-        ),
+        ).catch(tag('vendas_diretas')),
         pool.query(
           `SELECT COALESCE(SUM(c.total),0) AS total FROM compras c ${whereCompras}`,
           paramsCompras
-        )
+        ).catch(tag('compras_diretas'))
       ]);
 
       const receber = receberResult.rows[0];
@@ -329,7 +330,7 @@ module.exports = function ({
         }
       });
     } catch (error) {
-      console.error('Erro real ao gerar resumo financeiro:', error);
+      console.error('Erro real ao gerar resumo financeiro [query=%s]:', error._resumoQuery || 'desconhecida', error);
       return erro(res, 500, 'Erro ao gerar resumo financeiro');
     }
   });
