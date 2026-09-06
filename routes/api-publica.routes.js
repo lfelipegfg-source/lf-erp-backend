@@ -18,7 +18,7 @@ const crypto = require('crypto');
 const { dispatchWebhook } = require('../utils/webhooks');
 const { erro } = require('../utils/routeHelpers');
 
-module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje }) {
+module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje, registrarMovimentacaoEstoque }) {
   const router = require('express').Router();
 
   const VERSAO = '1.0.0';
@@ -224,69 +224,203 @@ module.exports = function ({ pool, writeRateLimiter, normalizarDecimal, normaliz
 
   // ── POST /api/v1/vendas ───────────────────────────────────────────────────
 
+  const RE_IDEM_KEY = /^[A-Za-z0-9\-_.]+$/;
+
+  // Garante que val é um inteiro estritamente positivo (sem truncamento silencioso de "1.5" ou "2abc")
+  function ehInteiroPositivoEstrito(val) {
+    const s = String(val === null || val === undefined ? '' : val).trim();
+    return /^\d+$/.test(s) && Number(s) > 0;
+  }
+
   router.post('/vendas', authApiKey, apiRateLimiter, writeRateLimiter, async (req, res) => {
+    // Hoisted fora do try para acessar no catch (recuperação 23505)
+    const eId   = req.apiEmpresaId;
+    const eNome = req.apiEmpresaNome;
+
+    // Idempotency-Key obrigatória, apenas do header
+    const rawKey = req.headers['idempotency-key'];
+    if (!rawKey || typeof rawKey !== 'string') return erro(res, 400, 'Idempotency-Key é obrigatório');
+    const idempotencyKey = rawKey.trim();
+    if (idempotencyKey.length === 0 || idempotencyKey.length > 128)
+      return erro(res, 400, 'Idempotency-Key deve ter entre 1 e 128 caracteres');
+    if (!RE_IDEM_KEY.test(idempotencyKey))
+      return erro(res, 400, 'Idempotency-Key contém caracteres inválidos (use letras, números, hífen, sublinhado ou ponto)');
+
+    // Verificação antecipada de idempotência (fora de transação, antes de qualquer validação de negócio).
+    // Uma venda já concluída é devolvida imediatamente mesmo que produto/estoque/cliente tenham mudado.
+    // Pré-requisito: migration 041 aplicada (coluna idempotency_key em vendas).
+    try {
+      const earlyCheck = await pool.query(
+        `SELECT id, total FROM vendas WHERE idempotency_key = $1 AND empresa_id = $2 LIMIT 1`,
+        [idempotencyKey, eId]
+      );
+      if (earlyCheck.rows.length > 0) {
+        return res.status(200).json({ sucesso: true, versao: VERSAO, venda: { id: earlyCheck.rows[0].id, total: earlyCheck.rows[0].total }, deduplicated: true });
+      }
+    } catch (earlyErr) {
+      console.error('[api-publica] POST vendas early-check:', earlyErr.message);
+      return erro(res, 500, 'Erro interno ao verificar idempotência');
+    }
+
+    const { cliente_id, cliente_nome, itens, pagamento, observacao } = req.body;
+    if (!Array.isArray(itens) || itens.length === 0) return erro(res, 400, 'itens é obrigatório e não pode estar vazio');
+
+    // Validação de cliente_id: se enviado, deve ser inteiro positivo
+    if (cliente_id !== undefined && cliente_id !== null && cliente_id !== '') {
+      if (!ehInteiroPositivoEstrito(cliente_id)) return erro(res, 400, 'cliente_id deve ser um inteiro positivo válido');
+    }
+
     const client = await pool.connect();
     try {
-      const eId   = req.apiEmpresaId;
-      const eNome = req.apiEmpresaNome;
-      const { cliente_id, cliente_nome, itens, pagamento, total, observacao } = req.body;
-
-      if (!Array.isArray(itens) || itens.length === 0) return erro(res, 400, 'itens é obrigatório e não pode estar vazio');
-      if (!total) return erro(res, 400, 'total é obrigatório');
-
       await client.query('BEGIN');
 
+      // Validar cliente_id pertence à empresa
+      let clienteNomeFinal = cliente_nome || null;
+      let clienteIdFinal   = (cliente_id !== undefined && cliente_id !== null && cliente_id !== '') ? Number(cliente_id) : null;
+      if (clienteIdFinal) {
+        const cRes = await client.query(
+          `SELECT nome FROM clientes WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
+          [clienteIdFinal, eId]
+        );
+        if (cRes.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, 'cliente_id não encontrado ou não pertence à empresa');
+        }
+        clienteNomeFinal = cRes.rows[0].nome;
+      }
+
+      // Pre-fetch produtos com todos os campos necessários
+      const produtoIds = [...new Set(itens.map(i => Number(i.produto_id)).filter(id => id > 0))];
+      if (produtoIds.length === 0) {
+        await client.query('ROLLBACK');
+        return erro(res, 400, 'produto_id inválido em um ou mais itens');
+      }
+      const prodRows = await client.query(
+        `SELECT id, nome, preco, custo, estoque, ativo, tem_grade, e_kit
+         FROM produtos WHERE id = ANY($1) AND empresa_id = $2 AND deletado_em IS NULL`,
+        [produtoIds, eId]
+      );
+      const prodMap = Object.fromEntries(prodRows.rows.map(p => [p.id, p]));
+
+      let totalCalculado = 0;
+      const itensNormalizados = [];
+      for (const item of itens) {
+        const produtoId = Number(item.produto_id);
+        // Quantidade deve ser inteiro estritamente positivo — sem truncamento silencioso
+        if (!ehInteiroPositivoEstrito(item.quantidade)) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `quantidade deve ser um inteiro positivo para produto_id ${produtoId}`);
+        }
+        const qtd = Number(String(item.quantidade).trim());
+        const produto = prodMap[produtoId];
+        if (!produto) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Produto ${produtoId} não encontrado`);
+        }
+        if (!produto.ativo) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Produto "${produto.nome}" está inativo`);
+        }
+        if (produto.tem_grade) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Produto "${produto.nome}" possui grades e não é suportado pela API pública. Use o fluxo de venda interno.`);
+        }
+        if (produto.e_kit) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Produto "${produto.nome}" é um kit e não é suportado pela API pública. Use o fluxo de venda interno.`);
+        }
+        const preco = normalizarDecimal(produto.preco);
+        if (preco <= 0) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Produto "${produto.nome}" não possui preço cadastrado`);
+        }
+        if (normalizarInt(produto.estoque) < qtd) {
+          await client.query('ROLLBACK');
+          return erro(res, 400, `Estoque insuficiente para "${produto.nome}". Disponível: ${produto.estoque}`);
+        }
+        const totalItem = Number((qtd * preco).toFixed(2));
+        totalCalculado += totalItem;
+        itensNormalizados.push({ produto, qtd, preco, totalItem });
+      }
+      totalCalculado = Number(totalCalculado.toFixed(2));
+      const pagamentoFinal = pagamento || 'API';
+
+      // INSERT tenta gravar; se (empresa_id, idempotency_key) já existir, PostgreSQL lança 23505
       const vendaResult = await client.query(
         `INSERT INTO vendas
            (empresa, empresa_id, cliente_id, cliente_nome, subtotal, desconto, acrescimo, total,
-            pagamento, pagamentos, parcelas, status_pagamento, data, observacao, criado_em, atualizado_em)
-         VALUES ($1,$2,$3,$4,$5,0,0,$5,$6,$7,1,'pago',$8,$9,NOW(),NOW()) RETURNING *`,
+            pagamento, pagamentos, parcelas, status_pagamento, data, observacao, idempotency_key, criado_em, atualizado_em)
+         VALUES ($1,$2,$3,$4,$5,0,0,$5,$6,$7,1,'pago',$8,$9,$10,NOW(),NOW()) RETURNING *`,
         [
           eNome, eId,
-          cliente_id   ? Number(cliente_id)   : null,
-          cliente_nome || null,
-          normalizarDecimal(total),
-          pagamento || 'API',
-          JSON.stringify([{ forma: pagamento || 'API', valor: normalizarDecimal(total), parcelas: 1 }]),
+          clienteIdFinal,
+          clienteNomeFinal,
+          totalCalculado,
+          pagamentoFinal,
+          JSON.stringify([{ forma: pagamentoFinal, valor: totalCalculado, parcelas: 1 }]),
           hoje(),
-          observacao || 'Venda criada via API'
+          observacao || 'Venda criada via API',
+          idempotencyKey
         ]
       );
       const venda = vendaResult.rows[0];
 
-      for (const item of itens) {
-        const prodResult = await client.query(
-          `SELECT * FROM produtos WHERE id = $1 AND empresa_id = $2 AND deletado_em IS NULL`,
-          [Number(item.produto_id), eId]
-        );
-        if (prodResult.rowCount === 0) throw new Error(`Produto ${item.produto_id} não encontrado`);
-
-        const p   = prodResult.rows[0];
-        const qtd = normalizarInt(item.quantidade) || 1;
-        const preco = normalizarDecimal(item.preco_unitario || p.preco);
-
+      for (const { produto, qtd, preco, totalItem } of itensNormalizados) {
         await client.query(
           `INSERT INTO venda_itens (venda_id, empresa, empresa_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, total)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [venda.id, eNome, eId, p.id, p.nome, qtd, preco, p.custo || 0, Number((qtd * preco).toFixed(2))]
+          [venda.id, eNome, eId, produto.id, produto.nome, qtd, preco, produto.custo || 0, totalItem]
         );
 
-        await client.query(
-          `UPDATE produtos SET estoque = GREATEST(0, estoque - $1), atualizado_em = NOW() WHERE id = $2 AND empresa_id = $3`,
-          [qtd, p.id, eId]
+        // Debita estoque atomicamente; falha explícita em corrida simultânea
+        const upd = await client.query(
+          `UPDATE produtos SET estoque = estoque - $1, atualizado_em = NOW()
+           WHERE id = $2 AND empresa_id = $3 AND estoque >= $1`,
+          [qtd, produto.id, eId]
         );
+        if (upd.rowCount === 0) {
+          throw new Error(`Estoque insuficiente para "${produto.nome}" (corrida simultânea)`);
+        }
+
+        await registrarMovimentacaoEstoque({
+          empresa: eNome,
+          empresa_id: eId,
+          produto_id: produto.id,
+          grade_id: null,
+          tipo: 'saida_venda',
+          quantidade: qtd,
+          observacao: `Saída por venda #${venda.id} via API`,
+          referencia_tipo: 'venda',
+          referencia_id: venda.id,
+          usuario_id: null,
+          client
+        });
       }
 
       await client.query('COMMIT');
 
-      // Dispara webhook assincronamente
       dispatchWebhook({ pool, empresaId: eId, evento: 'venda.criada', payload: { id: venda.id, total: venda.total, cliente_nome: venda.cliente_nome, data: venda.data } }).catch(() => {});
 
       return res.status(201).json({ sucesso: true, versao: VERSAO, venda: { id: venda.id, total: venda.total } });
     } catch (err) {
       await client.query('ROLLBACK');
+
+      // Conflito de idempotência por concorrência: outra requisição criou a venda simultaneamente.
+      // A transação atual foi revertida — nenhuma baixa dupla de estoque ocorre.
+      if (err.code === '23505' && String(err.constraint || err.detail || '').toLowerCase().includes('idempotency')) {
+        try {
+          const existing = await pool.query(
+            `SELECT id, total FROM vendas WHERE idempotency_key = $1 AND empresa_id = $2 LIMIT 1`,
+            [idempotencyKey, eId]
+          );
+          if (existing.rows.length > 0) {
+            return res.status(200).json({ sucesso: true, versao: VERSAO, venda: { id: existing.rows[0].id, total: existing.rows[0].total }, deduplicated: true });
+          }
+        } catch (_e) { /* fall through to 500 */ }
+      }
+
       console.error('[api-publica] POST vendas:', err.message);
-      if (err.message.includes('não encontrado')) return erro(res, 400, err.message);
+      if (err.message.includes('não encontrado') || err.message.includes('insuficiente') || err.message.includes('inválid') || err.message.includes('não possui preço') || err.message.includes('inativo')) return erro(res, 400, err.message);
       return erro(res, 500, 'Erro ao processar venda');
     } finally {
       client.release();

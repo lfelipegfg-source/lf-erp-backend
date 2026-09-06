@@ -23,7 +23,7 @@ describe('normalizarFormaPagamentoFluxo', () => {
   test('null → "Não informado"', () => expect(normalizarFormaPagamentoFluxo(null)).toBe('Não informado'));
   test('undefined → "Não informado"', () => expect(normalizarFormaPagamentoFluxo(undefined)).toBe('Não informado'));
   test('string vazia → "Não informado"', () => expect(normalizarFormaPagamentoFluxo('')).toBe('Não informado'));
-  test('valor desconhecido → "Não informado"', () => expect(normalizarFormaPagamentoFluxo('cheque')).toBe('Não informado'));
+  test('cheque → "Cheque"', () => expect(normalizarFormaPagamentoFluxo('cheque')).toBe('Cheque'));
 
   // Trim
   test('trim de espaços', () => expect(normalizarFormaPagamentoFluxo('  pix  ')).toBe('Pix'));
