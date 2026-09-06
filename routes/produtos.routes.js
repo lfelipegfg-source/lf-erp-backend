@@ -397,8 +397,8 @@ ${adicionarFiltroEmpresaSaaS({
           return erro(res, 403, 'Sem acesso');
         }
 
-        params.push(empresaResolvida.id);
-        where += ` AND empresa_id = $${params.length}`;
+        params.push(empresaResolvida.id, empresaResolvida.nome);
+        where += ` AND (empresa_id = $${params.length - 1} OR (empresa_id IS NULL AND empresa = $${params.length}))`;
       }
 
       if (busca) {

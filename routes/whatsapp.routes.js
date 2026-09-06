@@ -150,7 +150,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       if (!resultado.sucesso) return erro(res, 400, resultado.erro || 'Falha no envio');
       return ok(res, { mensagem: 'Mensagem de teste enviada com sucesso!' });
     } catch (err) {
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -231,7 +231,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return ok(res, { ...resultado });
     } catch (err) {
       console.error('[whatsapp] POST enviar:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -352,7 +352,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       });
     } catch (err) {
       console.error('[whatsapp] processar/cobrancas:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 

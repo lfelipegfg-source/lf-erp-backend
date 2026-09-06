@@ -193,7 +193,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     } catch (err) {
       await client.query('ROLLBACK');
       if (err.code === '23505') return erro(res, 409, 'Já existe uma filial com este nome');
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     } finally {
       client.release();
     }
@@ -236,7 +236,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return ok(res, { filial: r.rows[0] });
     } catch (err) {
       await client.query('ROLLBACK');
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     } finally {
       client.release();
     }
@@ -253,7 +253,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       );
       if (r.rowCount === 0) return erro(res, 404, 'Filial não encontrada');
       return ok(res, { filial: r.rows[0] });
-    } catch (err) { return erro(res, 500, err.message); }
+    } catch (err) { return erro(res, 500, 'Erro interno'); }
   });
 
   router.delete('/:id', auth, requirePermissao(pool, 'filiais', 'deletar'), writeRateLimiter, async (req, res) => {
@@ -275,7 +275,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       const r = await pool.query(`DELETE FROM filiais WHERE id = $1 AND empresa_id = $2`, [id, e.id]);
       if (r.rowCount === 0) return erro(res, 404, 'Filial não encontrada');
       return ok(res, { mensagem: 'Filial excluída' });
-    } catch (err) { return erro(res, 500, err.message); }
+    } catch (err) { return erro(res, 500, 'Erro interno'); }
   });
 
   // ── Vendas da filial ──────────────────────────────────────────────────────

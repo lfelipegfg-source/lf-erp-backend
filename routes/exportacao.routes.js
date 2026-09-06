@@ -96,7 +96,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `vendas_${ini}.csv`, [header, ...linhas]);
     } catch (err) {
       console.error('[exportacao] vendas:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -136,7 +136,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `compras_${ini}.csv`, [header, ...linhas]);
     } catch (err) {
       console.error('[exportacao] compras:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -174,7 +174,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `contas_receber_${ini}.csv`, [header, ...linhas]);
     } catch (err) {
       console.error('[exportacao] contas-receber:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -212,7 +212,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `contas_pagar_${ini}.csv`, [header, ...linhas]);
     } catch (err) {
       console.error('[exportacao] contas-pagar:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -251,7 +251,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `lancamentos_${ini}.csv`, [header, ...linhas]);
     } catch (err) {
       console.error('[exportacao] lancamentos:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -324,7 +324,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendCSV(res, `dre_${ini}.csv`, linhas);
     } catch (err) {
       console.error('[exportacao] dre:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -419,7 +419,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       sendTXT(res, `efd_${ini}.txt`, linhas.join('\r\n'));
     } catch (err) {
       console.error('[exportacao] efd:', err.message);
-      res.status(500).json({ sucesso: false, erro: err.message });
+      res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -517,7 +517,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       });
     } catch (err) {
       console.error('[exportacao] painel:', err.message);
-      return res.status(500).json({ sucesso: false, erro: err.message });
+      return res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -546,7 +546,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       });
     } catch (err) {
       console.error('[exportacao] integracao GET:', err.message);
-      return res.status(500).json({ sucesso: false, erro: err.message });
+      return res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 
@@ -587,7 +587,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPe
       return res.json({ sucesso: true, mensagem: 'Configuração salva com sucesso.' });
     } catch (err) {
       console.error('[exportacao] integracao PUT:', err.message);
-      return res.status(500).json({ sucesso: false, erro: err.message });
+      return res.status(500).json({ sucesso: false, erro: "Erro interno" });
     }
   });
 

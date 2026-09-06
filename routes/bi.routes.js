@@ -62,7 +62,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] tendencia:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -141,7 +141,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] comparativo:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -188,7 +188,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] top-produtos:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -231,7 +231,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] top-clientes:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -273,7 +273,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] mix-pagamentos:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -321,7 +321,7 @@ module.exports = function ({ auth, pool, validarAcessoEmpresa, hoje, requirePerm
       });
     } catch (err) {
       console.error('[bi] margem-categorias:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -497,7 +497,7 @@ Máximo 200 palavras. Use os números reais fornecidos acima.`;
 
     } catch (err) {
       console.error('[bi] insights-ia:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 

@@ -285,7 +285,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       }
     } catch (err) {
       console.error('[fidelidade] POST resgatar:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -399,7 +399,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return ok(res, { clientes_processados: expirados, mensagem: `${expirados} cliente(s) com pontos expirados processados` });
     } catch (err) {
       console.error('[fidelidade] POST expirar:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 

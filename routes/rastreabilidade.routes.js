@@ -214,7 +214,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       }
     } catch (err) {
       console.error('[rastreabilidade] POST lote:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -292,7 +292,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       }
     } catch (err) {
       console.error('[rastreabilidade] POST saida lote:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
@@ -378,7 +378,7 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
       return res.status(201).json({ sucesso: true, inseridos, duplicados, total: numerosValidos.length });
     } catch (err) {
       console.error('[rastreabilidade] POST series:', err.message);
-      return erro(res, 500, err.message);
+      return erro(res, 500, 'Erro interno');
     }
   });
 
