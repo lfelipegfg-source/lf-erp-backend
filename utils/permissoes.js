@@ -11,7 +11,7 @@
  */
 
 const ACOES_VALIDAS = new Set([
-  'ver', 'criar', 'editar', 'deletar',
+  'ver', 'criar', 'editar', 'deletar', 'excluir',
   // ações de domínio específico
   'configurar', 'emitir', 'cancelar',
   'acumular', 'resgatar', 'ajustar'
@@ -24,7 +24,11 @@ const MODULOS_VALIDOS = new Set([
   'usuarios', 'configuracoes',
   'caixa', 'comissoes',
   'fidelidade', 'marketplace', 'nfe', 'nfse', 'filiais',
-  'dashboard'
+  'dashboard',
+  'rastreabilidade', 'whatsapp', 'orcamentos', 'pedidos',
+  'bi', 'alertas', 'crm', 'checkout', 'portal',
+  'nfce', 'devolucoes', 'exportacao', 'imagens',
+  'grades', 'kits', 'tabelasPreco', 'comissoes'
 ]);
 
 // requirePermissao recebe pool explicitamente — o pool não é acessível via req.app.locals neste projeto

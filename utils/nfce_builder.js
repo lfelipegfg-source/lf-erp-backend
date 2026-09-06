@@ -58,20 +58,21 @@ function icmsRegimeNormal(produto, valorTotal) {
 }
 
 function pisCofins(produto, valorTotal) {
-  const pisCst = produto.pis_cst    || '07';
-  const cofCst = produto.cofins_cst || '07';
+  const pisCst  = produto.pis_cst    || '07';
+  const cofCst  = produto.cofins_cst || '07';
   const pisAliq = Number(produto.pis_aliquota    || 0);
   const cofAliq = Number(produto.cofins_aliquota || 0);
-  const isento = pisCst === '07';
+  const isentoPis = pisCst === '07';
+  const isentoCof = cofCst === '07';
   return {
     pis_situacao_tributaria:    pisCst,
-    pis_base_calculo:           isento ? 0 : Number(valorTotal.toFixed(2)),
-    pis_aliquota_porcentual:    isento ? 0 : pisAliq,
-    pis_valor:                  isento ? 0 : Number((valorTotal * pisAliq / 100).toFixed(2)),
+    pis_base_calculo:           isentoPis ? 0 : Number(valorTotal.toFixed(2)),
+    pis_aliquota_porcentual:    isentoPis ? 0 : pisAliq,
+    pis_valor:                  isentoPis ? 0 : Number((valorTotal * pisAliq / 100).toFixed(2)),
     cofins_situacao_tributaria: cofCst,
-    cofins_base_calculo:        isento ? 0 : Number(valorTotal.toFixed(2)),
-    cofins_aliquota_porcentual: isento ? 0 : cofAliq,
-    cofins_valor:               isento ? 0 : Number((valorTotal * cofAliq / 100).toFixed(2))
+    cofins_base_calculo:        isentoCof ? 0 : Number(valorTotal.toFixed(2)),
+    cofins_aliquota_porcentual: isentoCof ? 0 : cofAliq,
+    cofins_valor:               isentoCof ? 0 : Number((valorTotal * cofAliq / 100).toFixed(2))
   };
 }
 

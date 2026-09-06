@@ -588,6 +588,13 @@ function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDat
   return sql;
 }
 
+const CAMPOS_PERIODO_RANGE_PERMITIDOS = new Set([
+  'data', 'data_inicio', 'data_fim', 'data_vencimento', 'data_pagamento',
+  'data_emissao', 'data_competencia', 'data_entrada', 'data_saida',
+  'criado_em', 'atualizado_em', 'vencimento', 'pagamento_data',
+  'data_movimentacao', 'lancamento_data'
+]);
+
 function adicionarFiltroPeriodoRange({
   campoInicial,
   campoFinal,
@@ -596,6 +603,9 @@ function adicionarFiltroPeriodoRange({
   dataFinal,
   castDate = true
 }) {
+  if (!CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoInicial) || !CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoFinal)) {
+    throw new Error(`Campo não permitido em adicionarFiltroPeriodoRange: ${campoInicial} / ${campoFinal}`);
+  }
   let sql = '';
   const inicioSql = castDate ? `DATE(${campoInicial})` : campoInicial;
   const fimSql = castDate ? `DATE(${campoFinal})` : campoFinal;
@@ -7136,10 +7146,11 @@ app.get('/pagamentos/pix/status/:txid', auth, requirePermissao(pool, 'financeiro
           const crUpd = await pixClient.query(
             `UPDATE contas_receber
                SET status='pago', data_pagamento=(NOW() AT TIME ZONE 'America/Fortaleza')::date,
-                   valor_pago=valor, atualizado_em=NOW() AT TIME ZONE 'America/Fortaleza'
+                   atualizado_em=NOW() AT TIME ZONE 'America/Fortaleza'
              WHERE id=$1 AND status != 'pago'
+               AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
              RETURNING id, descricao, valor, data_vencimento`,
-            [cobr.conta_receber_id]
+            [cobr.conta_receber_id, empresaResolvida.id, empresaResolvida.nome]
           );
 
           if (crUpd.rowCount > 0) {

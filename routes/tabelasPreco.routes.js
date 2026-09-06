@@ -22,6 +22,7 @@
 
 const { resolverPreco } = require('../utils/resolverPreco');
 const { erro, ok } = require('../utils/routeHelpers');
+const { requirePermissao } = require('../utils/permissoes');
 
 module.exports = ({
   auth,
@@ -65,7 +66,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /tabelas-preco/resolver  (antes das rotas /:id para não colidir)
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/resolver', auth, async (req, res) => {
+  router.get('/resolver', auth, requirePermissao(pool, 'tabelasPreco', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -98,7 +99,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /tabelas-preco/dashboard — resumo para o painel gerencial
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/dashboard', auth, async (req, res) => {
+  router.get('/dashboard', auth, requirePermissao(pool, 'tabelasPreco', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -152,7 +153,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /tabelas-preco
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/', auth, async (req, res) => {
+  router.get('/', auth, requirePermissao(pool, 'tabelasPreco', 'ver'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -180,7 +181,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // POST /tabelas-preco
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/', auth, writeRateLimiter, async (req, res) => {
+  router.post('/', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'criar'), async (req, res) => {
     try {
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
       if (!empresaResolvida) return erro(res, 403, 'Sem acesso');
@@ -216,7 +217,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // GET /tabelas-preco/:id  — detalhe com itens
   // ─────────────────────────────────────────────────────────────────────────
-  router.get('/:id', auth, async (req, res) => {
+  router.get('/:id', auth, requirePermissao(pool, 'tabelasPreco', 'ver'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -255,7 +256,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /tabelas-preco/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'editar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -298,7 +299,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /tabelas-preco/:id
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/:id', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'deletar'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -326,7 +327,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // ITENS — POST /tabelas-preco/:id/itens
   // ─────────────────────────────────────────────────────────────────────────
-  router.post('/:id/itens', auth, writeRateLimiter, async (req, res) => {
+  router.post('/:id/itens', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'editar'), async (req, res) => {
     try {
       const tabelaId = Number(req.params.id);
       const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
@@ -371,7 +372,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /tabelas-preco/:id/itens/:itemId
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/:id/itens/:itemId', auth, writeRateLimiter, async (req, res) => {
+  router.put('/:id/itens/:itemId', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'editar'), async (req, res) => {
     try {
       const tabelaId = Number(req.params.id);
       const itemId   = Number(req.params.itemId);
@@ -405,7 +406,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // DELETE /tabelas-preco/:id/itens/:itemId
   // ─────────────────────────────────────────────────────────────────────────
-  router.delete('/:id/itens/:itemId', auth, writeRateLimiter, async (req, res) => {
+  router.delete('/:id/itens/:itemId', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'deletar'), async (req, res) => {
     try {
       const tabelaId = Number(req.params.id);
       const itemId   = Number(req.params.itemId);
@@ -428,7 +429,7 @@ module.exports = ({
   // ─────────────────────────────────────────────────────────────────────────
   // PUT /tabelas-preco/clientes/:clienteId/tabela — vincula/desvincula cliente
   // ─────────────────────────────────────────────────────────────────────────
-  router.put('/clientes/:clienteId/tabela', auth, writeRateLimiter, async (req, res) => {
+  router.put('/clientes/:clienteId/tabela', auth, writeRateLimiter, requirePermissao(pool, 'tabelasPreco', 'editar'), async (req, res) => {
     try {
       const clienteId = Number(req.params.clienteId);
       const { tabela_preco_id } = req.body; // null para desvincular

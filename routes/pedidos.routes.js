@@ -375,14 +375,15 @@ module.exports = ({
         }
       }
 
-      // Gera contas a receber se solicitado
+      // Gera contas a receber se solicitado (dentro da transação via client)
       if (conta_receber !== false && parcelasFinal > 0) {
         await criarParcelasContasReceber({
+          client,
           empresa: empresaResolvida.nome, empresa_id: empresaResolvida.id,
           venda_id: venda.id, cliente_id: pedido.cliente_id, cliente_nome: pedido.cliente_nome,
-          parcelas: parcelasFinal, valor_total: Number(pedido.total),
+          quantidade_parcelas: parcelasFinal, total: Number(pedido.total),
           forma_pagamento: formaFinal,
-          data_base: data || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date()),
+          data_primeiro_vencimento: data || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(new Date()),
           criado_por: req.user.id
         });
       }
