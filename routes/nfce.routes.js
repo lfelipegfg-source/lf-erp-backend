@@ -66,22 +66,29 @@ module.exports = ({
         return erro(res, 400, 'Configure o token Focus NFe em Configurações → NF-e antes de emitir NFC-e.');
       }
 
-      // Advisory lock para evitar emissão duplicada concorrente (mesmo padrão do NF-e)
-      await pool.query(`SELECT pg_advisory_lock($1)`, [vendaId]);
+      // Advisory lock via conexão dedicada + xact lock (liberado automaticamente no COMMIT/ROLLBACK)
+      const nfceClient = await pool.connect();
       try {
+        await nfceClient.query('BEGIN');
+        await nfceClient.query('SELECT pg_advisory_xact_lock($1)', [vendaId]);
 
-      // Verifica emissão duplicada
-      const jaEmitida = await pool.query(
+      // Verifica emissão duplicada (dentro da transação com lock)
+      const jaEmitida = await nfceClient.query(
         `SELECT * FROM nfce_emissoes WHERE venda_id = $1 AND empresa_id = $2 AND status = 'autorizado'`,
         [vendaId, empresaResolvida.id]
       );
       if (jaEmitida.rowCount > 0) {
+        await nfceClient.query('ROLLBACK');
+        nfceClient.release();
         return erro(res, 400, `Esta venda já possui NFC-e autorizada. Chave: ${jaEmitida.rows[0].chave_nfe}`);
       }
 
       // Busca venda + itens + dados fiscais do produto
       const [vendaResult, itensResult] = await Promise.all([
-        pool.query(`SELECT * FROM vendas WHERE id = $1 AND empresa_id = $2`, [vendaId, empresaResolvida.id]),
+        nfceClient.query(
+          `SELECT * FROM vendas WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))`,
+          [vendaId, empresaResolvida.id, empresaResolvida.nome]
+        ),
         pool.query(
           `SELECT vi.*, p.ncm, p.cfop_padrao, p.origem, p.unidade,
                   p.icms_cst, p.icms_aliquota, p.icms_base_calculo,
@@ -153,17 +160,22 @@ module.exports = ({
         chave_nfe: chave, numero, serie, mensagem
       });
 
+      await nfceClient.query('COMMIT');
+      nfceClient.release();
+
       return ok(res, {
         ref, status: statusFinal, chave_nfe: chave, numero, serie, mensagem,
         ambiente: config.ambiente === 1 ? 'producao' : 'homologacao'
       });
 
-      } finally {
-        pool.query(`SELECT pg_advisory_unlock($1)`, [vendaId]).catch(() => {});
+      } catch (lockErr) {
+        await nfceClient.query('ROLLBACK').catch(() => {});
+        nfceClient.release();
+        throw lockErr;
       }
     } catch (err) {
       console.error('[nfce] POST emitir:', err.message);
-      return erro(res, 500, 'Erro ao emitir NFC-e: ' + err.message);
+      return erro(res, 500, 'Erro ao emitir NFC-e');
     }
   });
 

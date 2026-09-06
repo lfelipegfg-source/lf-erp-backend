@@ -39,6 +39,12 @@ function gerarLinkWhatsApp(telefone, mensagem) {
 
 const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
+const { encryptField, decryptField } = require('../utils/pixCrypto');
+
+function safeDecryptSMTP(v) {
+  if (!v) return v;
+  try { return decryptField(v); } catch { return v; }
+}
 
 module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
   const router = require('express').Router();
@@ -51,7 +57,10 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
 
   async function getConfig(empresaId) {
     const r = await pool.query(`SELECT * FROM alertas_config WHERE empresa_id = $1`, [empresaId]);
-    return r.rows[0] || null;
+    if (!r.rows[0]) return null;
+    const row = r.rows[0];
+    // Descriptografa smtp_pass para uso interno (nodemailer)
+    return { ...row, smtp_pass: safeDecryptSMTP(row.smtp_pass) };
   }
 
   // ── GET /alertas/config ───────────────────────────────────────────────────
@@ -114,7 +123,7 @@ module.exports = ({ auth, writeRateLimiter, pool, validarAcessoEmpresa }) => {
           smtp_host || null,
           smtp_port ? Number(smtp_port) : null,
           smtp_user || null,
-          smtp_pass || null,   // só atualiza se informado
+          smtp_pass ? encryptField(smtp_pass) : null,   // criptografado; só atualiza se informado
           smtp_from || null,
           email_assunto || null,
           email_corpo || null,

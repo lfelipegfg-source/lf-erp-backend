@@ -346,9 +346,10 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
     }
   });
 
-  // ── POST /checkout/p/:token/webhook — Asaas confirma pagamento ────────────
+  // ── POST /checkout/webhook — Asaas confirma pagamento (rota global, usa externalReference) ────
+  // O Asaas envia para um único URL configurado na conta; identifica o checkout via payment.externalReference
 
-  router.post('/p/:token/webhook', async (req, res) => {
+  router.post('/webhook', async (req, res) => {
     try {
       const _webhookToken = process.env.ASAAS_WEBHOOK_TOKEN;
       if (!_webhookToken) {
@@ -356,20 +357,25 @@ module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa,
         return res.status(503).json({ erro: 'Webhook não configurado no servidor' });
       }
       const _headerToken = req.headers['asaas-access-token'] || '';
-      const _bufA = Buffer.from(_webhookToken);
-      const _bufB = Buffer.from(_headerToken);
-      if (_bufA.length !== _bufB.length || !crypto.timingSafeEqual(_bufA, _bufB)) {
+      const lenA = Buffer.byteLength(_webhookToken);
+      const lenB = Buffer.byteLength(_headerToken);
+      const maxLen = Math.max(lenA, lenB);
+      const _bufA = Buffer.concat([Buffer.from(_webhookToken), Buffer.alloc(Math.max(0, maxLen - lenA))]);
+      const _bufB = Buffer.concat([Buffer.from(_headerToken),  Buffer.alloc(Math.max(0, maxLen - lenB))]);
+      if (lenA !== lenB || !crypto.timingSafeEqual(_bufA, _bufB)) {
         console.warn('[checkout-webhook] Token Asaas invalido — rejeitado IP:', req.ip);
         return res.status(401).json({ erro: 'Unauthorized' });
       }
 
       const { event, payment } = req.body;
+      const token = payment?.externalReference;
 
-      if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
+      if (token && (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED')) {
         await pool.query(
-          `UPDATE checkout_links SET status = 'pago', pago_em = NOW() AT TIME ZONE 'America/Fortaleza', metodo_pago = 'boleto', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
+          `UPDATE checkout_links SET status = 'pago', pago_em = NOW() AT TIME ZONE 'America/Fortaleza',
+           metodo_pago = 'boleto', atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
            WHERE token = $1 AND status = 'pendente'`,
-          [req.params.token]
+          [token]
         );
       }
 
