@@ -30,15 +30,16 @@ function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDat
   _validarCampoPeriodo(campo);
   let sql = '';
   const campoSql = castDate ? `DATE(${campo})` : campo;
+  const paramCast = castDate ? '' : '::text';
 
   if (dataInicial) {
     params.push(dataInicial);
-    sql += ` AND ${campoSql} >= $${params.length}`;
+    sql += ` AND ${campoSql} >= $${params.length}${paramCast}`;
   }
 
   if (dataFinal) {
     params.push(dataFinal);
-    sql += ` AND ${campoSql} <= $${params.length}`;
+    sql += ` AND ${campoSql} <= $${params.length}${paramCast}`;
   }
 
   return sql;
@@ -57,15 +58,16 @@ function adicionarFiltroPeriodoRange({
   let sql = '';
   const inicioSql = castDate ? `DATE(${campoInicial})` : campoInicial;
   const fimSql = castDate ? `DATE(${campoFinal})` : campoFinal;
+  const paramCast = castDate ? '' : '::text';
 
   if (dataInicial) {
     params.push(dataInicial);
-    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) >= $${params.length}`;
+    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) >= $${params.length}${paramCast}`;
   }
 
   if (dataFinal) {
     params.push(dataFinal);
-    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) <= $${params.length}`;
+    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) <= $${params.length}${paramCast}`;
   }
 
   return sql;
