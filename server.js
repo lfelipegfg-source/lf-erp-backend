@@ -1,22 +1,20 @@
 require('dotenv').config();
 
-// Sentry â€” monitoramento de erros em produÃ§Ã£o (C5.3)
+// Sentry — monitoramento de erros em produção (C5.3)
 const Sentry = require('@sentry/node');
 const _sentryDsn = process.env.SENTRY_DSN;
 if (_sentryDsn) {
   Sentry.init({
     dsn: _sentryDsn,
     environment: process.env.NODE_ENV || 'production',
-    tracesSampleRate: 0.05, // 5% das requisiÃ§Ãµes para performance
+    tracesSampleRate: 0.05,
   });
 }
 
 const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const cors    = require('cors');
+const bcrypt  = require('bcrypt');
 const { Pool } = require('pg');
-const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
 const { requirePermissao } = require('./utils/permissoes');
 const {
@@ -28,103 +26,20 @@ const {
   validarItensVenda
 } = require('./utils/normalizadores');
 
-// Rate limiter em memÃ³ria para o endpoint /login
-const loginAttempts     = new Map(); // por IP
-const loginUserAttempts = new Map(); // por username
-const LOGIN_MAP_MAX = 10000;
-const LOGIN_MAX_TENTATIVAS      = 10; // tentativas por IP / 15 min
-const LOGIN_USER_MAX_TENTATIVAS = 15; // tentativas por username / 15 min
-const LOGIN_JANELA_MS = 15 * 60 * 1000; // 15 minutos
+const { loginRateLimiter, writeRateLimiter } = require('./middleware/rateLimiter');
+const {
+  SECRET,
+  JWT_EXPIRY_MS,
+  tokenBlacklist,
+  _tokenHash,
+  _sseNonces,
+  loadBlacklistFromDb,
+  auth,
+  apenasAdmin,
+  createAuthHelpers,
+  validarForcaSenha
+} = require('./middleware/auth');
 
-// Rate limiter geral para endpoints de escrita (por userId + rota)
-const writeAttempts = new Map();
-const WRITE_MAX = 30;
-const WRITE_JANELA_MS = 60 * 1000; // 1 minuto
-
-const WRITE_MAP_MAX = 5000;
-
-function writeRateLimiter(req, res, next) {
-  if (!req.user) return next();
-  const chave = `${req.user.id}:${req.method}:${req.route?.path || req.path}`;
-  const agora = Date.now();
-  const entrada = writeAttempts.get(chave) || { count: 0, inicio: agora };
-
-  if (agora - entrada.inicio > WRITE_JANELA_MS) {
-    entrada.count = 0;
-    entrada.inicio = agora;
-  }
-
-  entrada.count += 1;
-
-  if (writeAttempts.size >= WRITE_MAP_MAX && !writeAttempts.has(chave)) {
-    // Map cheio: descarta entrada mais antiga para evitar crescimento unbounded
-    writeAttempts.delete(writeAttempts.keys().next().value);
-  }
-
-  writeAttempts.set(chave, entrada);
-
-  if (entrada.count > WRITE_MAX) {
-    return res.status(429).json({
-      sucesso: false,
-      erro: 'Muitas requisiÃ§Ãµes. Aguarde um momento e tente novamente.'
-    });
-  }
-
-  next();
-}
-
-setInterval(() => {
-  const agora = Date.now();
-  for (const [chave, entrada] of writeAttempts) {
-    if (agora - entrada.inicio > WRITE_JANELA_MS) writeAttempts.delete(chave);
-  }
-}, WRITE_JANELA_MS).unref();
-
-function loginRateLimiter(req, res, next) {
-  const ip       = req.ip || req.connection?.remoteAddress || 'unknown';
-  const username = (req.body?.usuario || '').toLowerCase().trim();
-  const agora    = Date.now();
-
-  // Limite por IP (protege contra password spray)
-  const entradaIp = loginAttempts.get(ip) || { count: 0, inicio: agora };
-  if (agora - entradaIp.inicio > LOGIN_JANELA_MS) { entradaIp.count = 0; entradaIp.inicio = agora; }
-  entradaIp.count += 1;
-  if (loginAttempts.size >= LOGIN_MAP_MAX && !loginAttempts.has(ip)) {
-    loginAttempts.delete(loginAttempts.keys().next().value);
-  }
-  loginAttempts.set(ip, entradaIp);
-  if (entradaIp.count > LOGIN_MAX_TENTATIVAS) {
-    const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaIp.inicio)) / 60000);
-    return res.status(429).json({ sucesso: false, erro: `Muitas tentativas de login. Tente novamente em ${restante} minuto(s).` });
-  }
-
-  // Limite por username (protege contra ataques em redes corporativas / NAT compartilhado)
-  if (username) {
-    const entradaUser = loginUserAttempts.get(username) || { count: 0, inicio: agora };
-    if (agora - entradaUser.inicio > LOGIN_JANELA_MS) { entradaUser.count = 0; entradaUser.inicio = agora; }
-    entradaUser.count += 1;
-    if (loginUserAttempts.size >= LOGIN_MAP_MAX && !loginUserAttempts.has(username)) {
-      loginUserAttempts.delete(loginUserAttempts.keys().next().value);
-    }
-    loginUserAttempts.set(username, entradaUser);
-    if (entradaUser.count > LOGIN_USER_MAX_TENTATIVAS) {
-      const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaUser.inicio)) / 60000);
-      return res.status(429).json({ sucesso: false, erro: `Muitas tentativas para este usuÃ¡rio. Tente novamente em ${restante} minuto(s).` });
-    }
-  }
-
-  next();
-}
-
-setInterval(() => {
-  const agora = Date.now();
-  for (const [ip, entrada] of loginAttempts) {
-    if (agora - entrada.inicio > LOGIN_JANELA_MS) loginAttempts.delete(ip);
-  }
-  for (const [user, entrada] of loginUserAttempts) {
-    if (agora - entrada.inicio > LOGIN_JANELA_MS) loginUserAttempts.delete(user);
-  }
-}, LOGIN_JANELA_MS).unref();
 
 const financeiroRoutes = require('./routes/financeiro.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
@@ -214,9 +129,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const SECRET = process.env.JWT_SECRET;
-
-// Helper global de resposta de erro JSON â€” substitui res.status(x).send('texto')
+// Helper global de resposta de erro JSON — substitui res.status(x).send('texto')
 function jsonErro(res, status, mensagem, codigo = null) {
   const body = { sucesso: false, erro: mensagem };
   if (codigo) body.codigo = codigo;
@@ -249,10 +162,12 @@ const pool = new Pool({
   query_timeout: 35_000      // FIX 4: timeout do driver (superior ao statement_timeout)
 });
 
-// Neon derruba conexÃµes idle â€” sem este handler o processo encerra com uncaughtException
+// Neon derruba conexões idle — sem este handler o processo encerra com uncaughtException
 pool.on('error', (err) => {
-  console.error('[pool] erro em conexÃ£o idle (Neon dropped connection):', err.message);
+  console.error('[pool] erro em conexão idle (Neon dropped connection):', err.message);
 });
+
+const { validarSenhaUsuario } = createAuthHelpers(pool);
 
 // Disponibiliza pool para middlewares via app.locals
 app.locals.pool = pool;
@@ -899,159 +814,6 @@ async function validarLimiteVendasMes(empresaResolvida) {
   return { permitido: true, plano };
 }
 
-async function validarSenhaUsuario(senhaInformada, user) {
-  const senhaSalva = String(user?.senha || '');
-
-  if (!senhaSalva) return false;
-
-  const pareceHashBcrypt =
-    senhaSalva.startsWith('$2a$') || senhaSalva.startsWith('$2b$') || senhaSalva.startsWith('$2y$');
-
-  if (pareceHashBcrypt) {
-    return bcrypt.compare(senhaInformada, senhaSalva);
-  }
-
-  const bufA = Buffer.from(senhaInformada);
-  const bufB = Buffer.from(senhaSalva);
-  const iguais =
-    bufA.length === bufB.length &&
-    crypto.timingSafeEqual(bufA, bufB);
-
-  if (iguais) {
-    const novaHash = await bcrypt.hash(senhaInformada, 10);
-
-    try {
-      await pool.query(
-        `UPDATE usuarios
-          SET senha = $1,
-              atualizado_em = NOW() AT TIME ZONE 'America/Fortaleza'
-          WHERE id = $2`,
-        [novaHash, user.id]
-      );
-    } catch (e) { console.error('[validarSenhaUsuario] erro ao migrar hash:', e.message); }
-
-    return true;
-  }
-
-  return false;
-}
-
-// Valida forÃ§a mÃ­nima: 8+ chars, 1 maiÃºscula, 1 nÃºmero
-function validarForcaSenha(senha) {
-  if (!senha || senha.length < 8) {
-    return { valido: false, mensagem: 'A senha deve ter pelo menos 8 caracteres.' };
-  }
-  if (senha.length > 72) {
-    return { valido: false, mensagem: 'A senha deve ter no mÃ¡ximo 72 caracteres.' };
-  }
-  if (!/[A-Z]/.test(senha)) {
-    return { valido: false, mensagem: 'A senha deve conter pelo menos uma letra maiÃºscula.' };
-  }
-  if (!/[0-9]/.test(senha)) {
-    return { valido: false, mensagem: 'A senha deve conter pelo menos um nÃºmero.' };
-  }
-  return { valido: true };
-}
-
-const tokenBlacklist = new Map(); // hash â†’ timestamp de revogaÃ§Ã£o (L1 cache)
-const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
-
-function _tokenHash(tok) {
-  return crypto.createHash('sha256').update(tok).digest('hex');
-}
-
-setInterval(() => {
-  const limite = Date.now() - JWT_EXPIRY_MS;
-  for (const [hash, ts] of tokenBlacklist) {
-    if (ts < limite) tokenBlacklist.delete(hash);
-  }
-  pool.query('DELETE FROM jwt_blacklist WHERE expires_at < NOW()').catch(() => {});
-}, 60 * 60 * 1000).unref();
-
-async function loadBlacklistFromDb() {
-  try {
-    const result = await pool.query(
-      `SELECT token_hash, revoked_at FROM jwt_blacklist WHERE expires_at > NOW()`
-    );
-    for (const row of result.rows) {
-      tokenBlacklist.set(row.token_hash, new Date(row.revoked_at).getTime());
-    }
-    if (result.rowCount > 0) {
-      console.log(`[blacklist] ${result.rowCount} tokens carregados do banco`);
-    }
-  } catch (e) {
-    console.warn('[blacklist] Falha ao carregar do banco:', e.message);
-  }
-}
-
-// Nonces de curta duraÃ§Ã£o para SSE â€” evita JWT na URL de logs
-const _sseNonces = new Map(); // nonce â†’ { token, expiry }
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of _sseNonces) { if (v.expiry < now) _sseNonces.delete(k); }
-}, 30_000).unref();
-
-function auth(req, res, next) {
-  let authHeader = req.headers.authorization;
-
-  // EventSource nÃ£o suporta headers â€” aceita nonce de uso Ãºnico SOMENTE para SSE
-  if (!authHeader && req.method === 'GET' && req.path === '/sse-notificacoes') {
-    const nonce = req.query.nonce;
-    if (nonce && _sseNonces.has(nonce)) {
-      const entry = _sseNonces.get(nonce);
-      if (entry.expiry >= Date.now()) {
-        authHeader = `Bearer ${entry.token}`;
-      }
-      _sseNonces.delete(nonce); // uso Ãºnico
-    }
-  }
-
-  if (!authHeader) {
-    return res.status(403).json({ sucesso: false, erro: 'Sem acesso', codigo: 'SEM_TOKEN' });
-  }
-
-  let token = authHeader;
-
-  if (authHeader.startsWith('Bearer ')) {
-    token = authHeader.split(' ')[1];
-  }
-
-  if (!token) {
-    return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido', codigo: 'TOKEN_INVALIDO' });
-  }
-
-  if (tokenBlacklist.has(_tokenHash(token))) {
-    return res.status(403).json({ sucesso: false, erro: 'Token revogado', codigo: 'TOKEN_REVOGADO' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, SECRET);
-
-    req.user = decoded;
-
-    req.empresa_id = decoded.empresa_id != null ? Number(decoded.empresa_id) : null;
-    req.empresa_nome = decoded.empresa_nome || decoded.empresa || null;
-
-    if (!req.user?.id || !req.user?.tipo) {
-      return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido', codigo: 'TOKEN_INVALIDO' });
-    }
-
-    if (!req.user.is_saas_owner && req.empresa_id == null) {
-      return res.status(403).json({ sucesso: false, erro: 'Empresa nÃ£o identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
-    }
-
-    next();
-  } catch (error) {
-    return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido ou expirado', codigo: 'TOKEN_EXPIRADO' });
-  }
-}
-
-function apenasAdmin(req, res, next) {
-  if (!req.user.is_saas_owner) {
-    return res.status(403).json({ sucesso: false, erro: 'Acesso restrito ao SaaS Owner', codigo: 'SEM_PERMISSAO' });
-  }
-  next();
-}
 
 async function registrarMovimentacaoEstoque({
   empresa,
@@ -2384,7 +2146,7 @@ async function start() {
   try {
     await initDb();
     await runMigrations(pool);
-    await loadBlacklistFromDb();
+    await loadBlacklistFromDb(pool);
     if (_sentryDsn) Sentry.setupExpressErrorHandler(app);
     app.listen(PORT, () => {
       console.log(`LF ERP Backend Online ðŸš€ porta ${PORT}`);
