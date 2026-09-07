@@ -330,8 +330,9 @@ module.exports = function ({
         }
       });
     } catch (error) {
-      console.error('Erro real ao gerar resumo financeiro [query=%s]:', error._resumoQuery || 'desconhecida', error);
-      return erro(res, 500, 'Erro ao gerar resumo financeiro');
+      const qname = error._resumoQuery || 'desconhecida';
+      console.error('Erro real ao gerar resumo financeiro [query=%s]:', qname, error);
+      return erro(res, 500, `Erro ao gerar resumo financeiro [query=${qname}]: ${error.message}`);
     }
   });
 
