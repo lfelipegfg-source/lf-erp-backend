@@ -7,7 +7,8 @@ const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils'
 module.exports = function miscRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, adicionarFiltroEmpresaSaaS,
-  podeGerenciarFinanceiro, atualizarStatusContasPagarPorEmpresa,
+  podeGerenciarFinanceiro, podeGerenciarCompras,
+  atualizarStatusContasPagarPorEmpresa,
   jsonErro
 }) {
   const router = express.Router();

@@ -2365,7 +2365,8 @@ app.use('/', adminRoutes({
 app.use('/', miscRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, adicionarFiltroEmpresaSaaS,
-  podeGerenciarFinanceiro, atualizarStatusContasPagarPorEmpresa,
+  podeGerenciarFinanceiro, podeGerenciarCompras,
+  atualizarStatusContasPagarPorEmpresa,
   jsonErro
 }));
 
