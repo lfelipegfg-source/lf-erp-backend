@@ -271,9 +271,7 @@ app.use(
     registrarMovimentacaoEstoque,
     criarParcelasContasReceber,
     atualizarStatusContasReceberPorEmpresa,
-    obterPeriodo,
     adicionarFiltroEmpresaSaaS,
-    adicionarFiltroPeriodo,
     registrarAuditoria,
     validarItensVenda
   })
@@ -292,9 +290,7 @@ app.use(
     normalizarDecimal,
     registrarAuditoria,
     normalizarInt,
-    registrarMovimentacaoEstoque,
-    obterPeriodo,
-    adicionarFiltroPeriodo
+    registrarMovimentacaoEstoque
   })
 );
 
@@ -307,8 +303,6 @@ app.use(
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     normalizarInt,
-    obterPeriodo,
-    adicionarFiltroPeriodo,
     registrarMovimentacaoEstoque
   })
 );
@@ -323,9 +317,7 @@ app.use(
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     registrarAuditoria,
-    validarLimitePlano,
-    obterPeriodo,
-    adicionarFiltroPeriodo
+    validarLimitePlano
   })
 );
 
@@ -339,9 +331,7 @@ app.use(
     validarAcessoEmpresa,
     adicionarFiltroEmpresaSaaS,
     registrarAuditoria,
-    validarLimitePlano,
-    obterPeriodo,
-    adicionarFiltroPeriodo
+    validarLimitePlano
   })
 );
 
@@ -364,14 +354,14 @@ app.use('/caixa',      caixaRoutes({ auth, writeRateLimiter, pool, validarAcesso
 app.use('/alertas',    alertasRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/marketplace', marketplaceRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje, registrarMovimentacaoEstoque, criarParcelasContasReceber }));
 app.use('/crm', crmRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, normalizarDataISO, hoje }));
-app.use('/exportacao', exportacaoRoutes({ auth, pool, validarAcessoEmpresa, adicionarFiltroPeriodo, obterPeriodo, normalizarDecimal, hoje }));
+app.use('/exportacao', exportacaoRoutes({ auth, pool, validarAcessoEmpresa, normalizarDecimal, hoje }));
 app.use('/api/v1',    apiPublicaRoutes({ pool, writeRateLimiter, normalizarDecimal, normalizarInt, hoje, registrarMovimentacaoEstoque }));
 app.use('/webhooks',         webhooksRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa }));
 app.use('/rastreabilidade', rastreabilidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarInt, normalizarDataISO, hoje, requirePermissao }));
 app.use('/whatsapp',       whatsappRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, hoje, requirePermissao }));
 app.use('/fidelidade',    fidelidadeRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje, requirePermissao }));
 app.use('/checkout',     checkoutRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, hoje }));
-app.use('/filiais',     filiaisRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, obterPeriodo, adicionarFiltroPeriodo, hoje }));
+app.use('/filiais',     filiaisRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, hoje }));
 app.use('/bi',         biRoutes({ auth, pool, validarAcessoEmpresa, hoje, requirePermissao }));
 app.use('/devolucoes', devolucoesRoutes({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, normalizarInt, registrarMovimentacaoEstoque }));
 
@@ -423,8 +413,6 @@ app.use(
     normalizarDecimal,
     normalizarInt,
     normalizarDataISO,
-    obterPeriodo,
-    adicionarFiltroPeriodo,
     requirePermissao
   })
 );
@@ -439,7 +427,6 @@ app.use(
     normalizarDecimal,
     normalizarInt,
     normalizarDataISO,
-    obterPeriodo,
     registrarMovimentacaoEstoque,
     criarParcelasContasReceber,
     atualizarStatusContasReceberPorEmpresa,
@@ -457,8 +444,7 @@ app.use(
     pool,
     validarAcessoEmpresa,
     normalizarDecimal,
-    normalizarDataISO,
-    obterPeriodo
+    normalizarDataISO
   })
 );
 
@@ -473,85 +459,6 @@ app.use(
     normalizarInt
   })
 );
-
-
-function obterPeriodo(req) {
-  return {
-    dataInicial: normalizarDataISO(req.query.data_inicial || req.query.inicio || ''),
-    dataFinal: normalizarDataISO(req.query.data_final || req.query.fim || '')
-  };
-}
-
-const CAMPOS_PERIODO_PERMITIDOS = new Set([
-  // simples
-  'data', 'data_pagamento', 'data_vencimento', 'data_emissao', 'data_entrada', 'data_saida',
-  'criado_em', 'atualizado_em', 'pagamento_data', 'vencimento', 'competencia',
-  'data_movimento', 'lancamento_data',
-  // aliases de tabela
-  'c.data', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
-  'cr.data_vencimento', 'cp.data_vencimento', 'fl.criado_em',
-  'm.data_movimentacao',
-  // expressÃƒÂµes compostas (hardcoded no cÃƒÂ³digo)
-  'COALESCE(pagamento_data, vencimento)',
-  'COALESCE(pagamento_data,vencimento)'
-]);
-
-function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {
-  if (!CAMPOS_PERIODO_PERMITIDOS.has(campo)) {
-    console.error(`[adicionarFiltroPeriodo] campo nÃƒÂ£o permitido: ${campo}`);
-    return '';
-  }
-  let sql = '';
-  const campoSql = castDate ? `DATE(${campo})` : campo;
-
-  if (dataInicial) {
-    params.push(dataInicial);
-    sql += ` AND ${campoSql} >= $${params.length}`;
-  }
-
-  if (dataFinal) {
-    params.push(dataFinal);
-    sql += ` AND ${campoSql} <= $${params.length}`;
-  }
-
-  return sql;
-}
-
-const CAMPOS_PERIODO_RANGE_PERMITIDOS = new Set([
-  'data', 'data_inicio', 'data_fim', 'data_vencimento', 'data_pagamento',
-  'data_emissao', 'data_competencia', 'data_entrada', 'data_saida',
-  'criado_em', 'atualizado_em', 'vencimento', 'pagamento_data',
-  'data_movimentacao', 'lancamento_data'
-]);
-
-function adicionarFiltroPeriodoRange({
-  campoInicial,
-  campoFinal,
-  params,
-  dataInicial,
-  dataFinal,
-  castDate = true
-}) {
-  if (!CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoInicial) || !CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoFinal)) {
-    throw new Error(`Campo nÃƒÂ£o permitido em adicionarFiltroPeriodoRange: ${campoInicial} / ${campoFinal}`);
-  }
-  let sql = '';
-  const inicioSql = castDate ? `DATE(${campoInicial})` : campoInicial;
-  const fimSql = castDate ? `DATE(${campoFinal})` : campoFinal;
-
-  if (dataInicial) {
-    params.push(dataInicial);
-    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) >= $${params.length}`;
-  }
-
-  if (dataFinal) {
-    params.push(dataFinal);
-    sql += ` AND COALESCE(${fimSql}, ${inicioSql}) <= $${params.length}`;
-  }
-
-  return sql;
-}
-
 
 
 

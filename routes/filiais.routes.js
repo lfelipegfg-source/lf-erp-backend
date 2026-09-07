@@ -17,7 +17,9 @@
 const { erro, ok } = require('../utils/routeHelpers');
 const { requirePermissao } = require('../utils/permissoes');
 
-module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, obterPeriodo, adicionarFiltroPeriodo, hoje }) {
+const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
+
+module.exports = function ({ auth, writeRateLimiter, pool, validarAcessoEmpresa, normalizarDecimal, hoje }) {
   const router = require('express').Router();
 
 

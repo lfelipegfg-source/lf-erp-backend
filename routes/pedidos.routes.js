@@ -17,6 +17,8 @@
 const { resolverPreco } = require('../utils/resolverPreco');
 const { erro, ok } = require('../utils/routeHelpers');
 
+const { obterPeriodo } = require('../utils/periodoUtils');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -25,7 +27,6 @@ module.exports = ({
   normalizarDecimal,
   normalizarInt,
   normalizarDataISO,
-  obterPeriodo,
   registrarMovimentacaoEstoque,
   criarParcelasContasReceber,
   atualizarStatusContasReceberPorEmpresa,

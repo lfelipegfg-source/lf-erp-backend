@@ -1,5 +1,6 @@
 const { requirePermissao } = require('../utils/permissoes');
 const { resolverPreco } = require('../utils/resolverPreco');
+const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
 const { calcularComissaoVenda } = require('../utils/comissoes');
 const { acumularPontosFidelidade } = require('../utils/fidelidade');
@@ -20,9 +21,7 @@ module.exports = ({
   registrarMovimentacaoEstoque,
   criarParcelasContasReceber,
   atualizarStatusContasReceberPorEmpresa,
-  obterPeriodo,
   adicionarFiltroEmpresaSaaS,
-  adicionarFiltroPeriodo,
   registrarAuditoria,
   validarItensVenda
 }) => {

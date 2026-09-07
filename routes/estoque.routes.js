@@ -1,5 +1,6 @@
 const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
+const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 
 module.exports = ({
   auth,
@@ -8,8 +9,6 @@ module.exports = ({
   validarAcessoEmpresa,
   adicionarFiltroEmpresaSaaS,
   normalizarInt,
-  obterPeriodo,
-  adicionarFiltroPeriodo,
   registrarMovimentacaoEstoque
 }) => {
   const router = require('express').Router();

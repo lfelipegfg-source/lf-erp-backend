@@ -19,6 +19,8 @@
 const { resolverPreco } = require('../utils/resolverPreco');
 const { erro, ok } = require('../utils/routeHelpers');
 
+const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
+
 module.exports = ({
   auth,
   writeRateLimiter,
@@ -27,8 +29,6 @@ module.exports = ({
   normalizarDecimal,
   normalizarInt,
   normalizarDataISO,
-  obterPeriodo,
-  adicionarFiltroPeriodo,
   requirePermissao
 }) => {
   const router = require('express').Router();

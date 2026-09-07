@@ -21,6 +21,7 @@
 const { calcularComissaoVenda } = require('../utils/comissoes');
 const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
+const { obterPeriodo } = require('../utils/periodoUtils');
 
 module.exports = ({
   auth,
@@ -28,8 +29,7 @@ module.exports = ({
   pool,
   validarAcessoEmpresa,
   normalizarDecimal,
-  normalizarDataISO,
-  obterPeriodo
+  normalizarDataISO
 }) => {
   const router = require('express').Router();
 

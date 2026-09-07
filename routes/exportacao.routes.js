@@ -14,7 +14,9 @@
  * Parâmetros comuns: ?inicio=YYYY-MM-DD&fim=YYYY-MM-DD
  */
 
-module.exports = function ({ auth, pool, validarAcessoEmpresa, adicionarFiltroPeriodo, obterPeriodo, normalizarDecimal, hoje }) {
+const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
+
+module.exports = function ({ auth, pool, validarAcessoEmpresa, normalizarDecimal, hoje }) {
   const router = require('express').Router();
   const { requirePermissao } = require('../utils/permissoes');
 
