@@ -18,9 +18,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const { runMigrations } = require('./migrations/runner');
-const { requirePermissao, obterPermissoes } = require('./utils/permissoes');
-const { encryptField, decryptField } = require('./utils/pixCrypto');
-const { normalizarFormaPagamentoFluxo } = require('./utils/financeiroUtils');
+const { requirePermissao } = require('./utils/permissoes');
 const {
   hoje,
   normalizarDecimal,
@@ -2374,7 +2372,7 @@ app.use('/', miscRoutes({
 // -- Admin SaaS Owner (SMTP + Dashboard + Empresas) -> routes/admin-saas.routes.js
 app.use('/', adminSaasRoutes({
   auth, writeRateLimiter, pool,
-  apenasAdmin, _planoCache,
+  apenasAdmin, _planoCache, _configCache,
   jsonErro
 }));
 

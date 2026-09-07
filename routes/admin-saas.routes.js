@@ -6,7 +6,7 @@ const { getSaasSmtp, criarTransporter, enviarEmailBoasVindas } = require('../uti
 
 module.exports = function adminSaasRoutes({
   auth, writeRateLimiter, pool,
-  apenasAdmin, _planoCache,
+  apenasAdmin, _planoCache, _configCache,
   jsonErro
 }) {
   const router = express.Router();
