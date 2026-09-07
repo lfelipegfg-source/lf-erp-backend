@@ -1,13 +1,13 @@
 require('dotenv').config();
 
-// Sentry — monitoramento de erros em produção (C5.3)
+// Sentry â€” monitoramento de erros em produÃ§Ã£o (C5.3)
 const Sentry = require('@sentry/node');
 const _sentryDsn = process.env.SENTRY_DSN;
 if (_sentryDsn) {
   Sentry.init({
     dsn: _sentryDsn,
     environment: process.env.NODE_ENV || 'production',
-    tracesSampleRate: 0.05, // 5% das requisições para performance
+    tracesSampleRate: 0.05, // 5% das requisiÃ§Ãµes para performance
   });
 }
 
@@ -30,7 +30,7 @@ const {
   validarItensVenda
 } = require('./utils/normalizadores');
 
-// Rate limiter em memória para o endpoint /login
+// Rate limiter em memÃ³ria para o endpoint /login
 const loginAttempts     = new Map(); // por IP
 const loginUserAttempts = new Map(); // por username
 const LOGIN_MAP_MAX = 10000;
@@ -68,7 +68,7 @@ function writeRateLimiter(req, res, next) {
   if (entrada.count > WRITE_MAX) {
     return res.status(429).json({
       sucesso: false,
-      erro: 'Muitas requisições. Aguarde um momento e tente novamente.'
+      erro: 'Muitas requisiÃ§Ãµes. Aguarde um momento e tente novamente.'
     });
   }
 
@@ -111,7 +111,7 @@ function loginRateLimiter(req, res, next) {
     loginUserAttempts.set(username, entradaUser);
     if (entradaUser.count > LOGIN_USER_MAX_TENTATIVAS) {
       const restante = Math.ceil((LOGIN_JANELA_MS - (agora - entradaUser.inicio)) / 60000);
-      return res.status(429).json({ sucesso: false, erro: `Muitas tentativas para este usuário. Tente novamente em ${restante} minuto(s).` });
+      return res.status(429).json({ sucesso: false, erro: `Muitas tentativas para este usuÃ¡rio. Tente novamente em ${restante} minuto(s).` });
     }
   }
 
@@ -171,21 +171,23 @@ const dashboardRoutes        = require('./routes/dashboard.routes');
 const pagamentosRoutes        = require('./routes/pagamentos.routes');
 const conciliacaoRoutes        = require('./routes/conciliacao.routes');
 const adminRoutes              = require('./routes/admin.routes');
+const miscRoutes               = require('./routes/misc.routes');
+const adminSaasRoutes          = require('./routes/admin-saas.routes');
 
 const app = express();
-app.set('trust proxy', 1); // S-0: Render usa proxy reverso — necessário para req.ip correto no rate limiter
+app.set('trust proxy', 1); // S-0: Render usa proxy reverso â€” necessÃ¡rio para req.ip correto no rate limiter
 
-// S-1: CORS — default seguro; sem ALLOWED_ORIGINS usa o domínio Vercel conhecido
+// S-1: CORS â€” default seguro; sem ALLOWED_ORIGINS usa o domÃ­nio Vercel conhecido
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : ['https://lf-erp-frontend.vercel.app'];
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
-const jsonUpload = express.json({ limit: '50mb' }); // usado só em rotas de importação
+const jsonUpload = express.json({ limit: '50mb' }); // usado sÃ³ em rotas de importaÃ§Ã£o
 
 app.disable('x-powered-by');
 
-// S-2: Headers de segurança HTTP + redirect HTTPS em produção
+// S-2: Headers de seguranÃ§a HTTP + redirect HTTPS em produÃ§Ã£o
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -216,7 +218,7 @@ app.use((req, res, next) => {
 
 const SECRET = process.env.JWT_SECRET;
 
-// Helper global de resposta de erro JSON — substitui res.status(x).send('texto')
+// Helper global de resposta de erro JSON â€” substitui res.status(x).send('texto')
 function jsonErro(res, status, mensagem, codigo = null) {
   const body = { sucesso: false, erro: mensagem };
   if (codigo) body.codigo = codigo;
@@ -225,16 +227,16 @@ function jsonErro(res, status, mensagem, codigo = null) {
 const PORT = process.env.PORT || 3001;
 
 if (!SECRET) {
-  console.error('JWT_SECRET não definida.');
+  console.error('JWT_SECRET nÃ£o definida.');
   process.exit(1);
 }
 if (SECRET.length < 32) {
-  console.error('JWT_SECRET muito curta (mínimo 32 caracteres). Configure uma chave segura em produção.');
+  console.error('JWT_SECRET muito curta (mÃ­nimo 32 caracteres). Configure uma chave segura em produÃ§Ã£o.');
   process.exit(1);
 }
 
 if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL não definida.');
+  console.error('DATABASE_URL nÃ£o definida.');
   process.exit(1);
 }
 
@@ -249,9 +251,9 @@ const pool = new Pool({
   query_timeout: 35_000      // FIX 4: timeout do driver (superior ao statement_timeout)
 });
 
-// Neon derruba conexões idle — sem este handler o processo encerra com uncaughtException
+// Neon derruba conexÃµes idle â€” sem este handler o processo encerra com uncaughtException
 pool.on('error', (err) => {
-  console.error('[pool] erro em conexão idle (Neon dropped connection):', err.message);
+  console.error('[pool] erro em conexÃ£o idle (Neon dropped connection):', err.message);
 });
 
 // Disponibiliza pool para middlewares via app.locals
@@ -572,14 +574,14 @@ const CAMPOS_PERIODO_PERMITIDOS = new Set([
   'c.data', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
   'cr.data_vencimento', 'cp.data_vencimento', 'fl.criado_em',
   'm.data_movimentacao',
-  // expressões compostas (hardcoded no código)
+  // expressÃµes compostas (hardcoded no cÃ³digo)
   'COALESCE(pagamento_data, vencimento)',
   'COALESCE(pagamento_data,vencimento)'
 ]);
 
 function adicionarFiltroPeriodo({ campo, params, dataInicial, dataFinal, castDate = true }) {
   if (!CAMPOS_PERIODO_PERMITIDOS.has(campo)) {
-    console.error(`[adicionarFiltroPeriodo] campo não permitido: ${campo}`);
+    console.error(`[adicionarFiltroPeriodo] campo nÃ£o permitido: ${campo}`);
     return '';
   }
   let sql = '';
@@ -614,7 +616,7 @@ function adicionarFiltroPeriodoRange({
   castDate = true
 }) {
   if (!CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoInicial) || !CAMPOS_PERIODO_RANGE_PERMITIDOS.has(campoFinal)) {
-    throw new Error(`Campo não permitido em adicionarFiltroPeriodoRange: ${campoInicial} / ${campoFinal}`);
+    throw new Error(`Campo nÃ£o permitido em adicionarFiltroPeriodoRange: ${campoInicial} / ${campoFinal}`);
   }
   let sql = '';
   const inicioSql = castDate ? `DATE(${campoInicial})` : campoInicial;
@@ -786,7 +788,7 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
   const plano = await obterPlanoEmpresa(empresaResolvida.id, empresaResolvida.nome);
 
   if (!plano) {
-    return { permitido: false, mensagem: 'Plano da empresa não encontrado.' };
+    return { permitido: false, mensagem: 'Plano da empresa nÃ£o encontrado.' };
   }
 
   if (plano.bloqueada) {
@@ -806,7 +808,7 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
   if (plano.assinatura_status === 'trial' && plano.trial_fim && _planoTrialFimStr < hoje()) {
     return {
       permitido: false,
-      mensagem: 'Período de teste expirado. Escolha um plano para continuar.'
+      mensagem: 'PerÃ­odo de teste expirado. Escolha um plano para continuar.'
     };
   }
 
@@ -853,7 +855,7 @@ async function validarLimitePlano({ empresaResolvida, recurso }) {
   if (totalAtual >= limite) {
     return {
       permitido: false,
-      mensagem: `Limite do plano atingido para ${recurso}. Plano atual permite até ${limite}.`
+      mensagem: `Limite do plano atingido para ${recurso}. Plano atual permite atÃ© ${limite}.`
     };
   }
 
@@ -864,7 +866,7 @@ async function validarLimiteVendasMes(empresaResolvida) {
   const plano = await obterPlanoEmpresa(empresaResolvida.id, empresaResolvida.nome);
 
   if (!plano) {
-    return { permitido: false, mensagem: 'Plano da empresa não encontrado.' };
+    return { permitido: false, mensagem: 'Plano da empresa nÃ£o encontrado.' };
   }
 
   const limite = Number(plano.limite_vendas_mes || 0);
@@ -892,7 +894,7 @@ async function validarLimiteVendasMes(empresaResolvida) {
   if (totalAtual >= limite) {
     return {
       permitido: false,
-      mensagem: `Limite mensal de vendas atingido. Plano atual permite até ${limite} vendas por mês.`
+      mensagem: `Limite mensal de vendas atingido. Plano atual permite atÃ© ${limite} vendas por mÃªs.`
     };
   }
 
@@ -936,24 +938,24 @@ async function validarSenhaUsuario(senhaInformada, user) {
   return false;
 }
 
-// Valida força mínima: 8+ chars, 1 maiúscula, 1 número
+// Valida forÃ§a mÃ­nima: 8+ chars, 1 maiÃºscula, 1 nÃºmero
 function validarForcaSenha(senha) {
   if (!senha || senha.length < 8) {
     return { valido: false, mensagem: 'A senha deve ter pelo menos 8 caracteres.' };
   }
   if (senha.length > 72) {
-    return { valido: false, mensagem: 'A senha deve ter no máximo 72 caracteres.' };
+    return { valido: false, mensagem: 'A senha deve ter no mÃ¡ximo 72 caracteres.' };
   }
   if (!/[A-Z]/.test(senha)) {
-    return { valido: false, mensagem: 'A senha deve conter pelo menos uma letra maiúscula.' };
+    return { valido: false, mensagem: 'A senha deve conter pelo menos uma letra maiÃºscula.' };
   }
   if (!/[0-9]/.test(senha)) {
-    return { valido: false, mensagem: 'A senha deve conter pelo menos um número.' };
+    return { valido: false, mensagem: 'A senha deve conter pelo menos um nÃºmero.' };
   }
   return { valido: true };
 }
 
-const tokenBlacklist = new Map(); // hash → timestamp de revogação (L1 cache)
+const tokenBlacklist = new Map(); // hash â†’ timestamp de revogaÃ§Ã£o (L1 cache)
 const JWT_EXPIRY_MS = 12 * 60 * 60 * 1000;
 
 function _tokenHash(tok) {
@@ -984,8 +986,8 @@ async function loadBlacklistFromDb() {
   }
 }
 
-// Nonces de curta duração para SSE — evita JWT na URL de logs
-const _sseNonces = new Map(); // nonce → { token, expiry }
+// Nonces de curta duraÃ§Ã£o para SSE â€” evita JWT na URL de logs
+const _sseNonces = new Map(); // nonce â†’ { token, expiry }
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _sseNonces) { if (v.expiry < now) _sseNonces.delete(k); }
@@ -994,7 +996,7 @@ setInterval(() => {
 function auth(req, res, next) {
   let authHeader = req.headers.authorization;
 
-  // EventSource não suporta headers — aceita nonce de uso único SOMENTE para SSE
+  // EventSource nÃ£o suporta headers â€” aceita nonce de uso Ãºnico SOMENTE para SSE
   if (!authHeader && req.method === 'GET' && req.path === '/sse-notificacoes') {
     const nonce = req.query.nonce;
     if (nonce && _sseNonces.has(nonce)) {
@@ -1002,7 +1004,7 @@ function auth(req, res, next) {
       if (entry.expiry >= Date.now()) {
         authHeader = `Bearer ${entry.token}`;
       }
-      _sseNonces.delete(nonce); // uso único
+      _sseNonces.delete(nonce); // uso Ãºnico
     }
   }
 
@@ -1017,7 +1019,7 @@ function auth(req, res, next) {
   }
 
   if (!token) {
-    return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
+    return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido', codigo: 'TOKEN_INVALIDO' });
   }
 
   if (tokenBlacklist.has(_tokenHash(token))) {
@@ -1033,16 +1035,16 @@ function auth(req, res, next) {
     req.empresa_nome = decoded.empresa_nome || decoded.empresa || null;
 
     if (!req.user?.id || !req.user?.tipo) {
-      return res.status(403).json({ sucesso: false, erro: 'Token inválido', codigo: 'TOKEN_INVALIDO' });
+      return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido', codigo: 'TOKEN_INVALIDO' });
     }
 
     if (!req.user.is_saas_owner && req.empresa_id == null) {
-      return res.status(403).json({ sucesso: false, erro: 'Empresa não identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
+      return res.status(403).json({ sucesso: false, erro: 'Empresa nÃ£o identificada no token', codigo: 'EMPRESA_NAO_IDENTIFICADA' });
     }
 
     next();
   } catch (error) {
-    return res.status(403).json({ sucesso: false, erro: 'Token inválido ou expirado', codigo: 'TOKEN_EXPIRADO' });
+    return res.status(403).json({ sucesso: false, erro: 'Token invÃ¡lido ou expirado', codigo: 'TOKEN_EXPIRADO' });
   }
 }
 
@@ -1190,7 +1192,7 @@ async function atualizarStatusContasReceberPorEmpresa(empresa, empresaId = null)
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // pg_try_advisory_xact_lock garante exclusão entre instâncias; libera no COMMIT/ROLLBACK
+    // pg_try_advisory_xact_lock garante exclusÃ£o entre instÃ¢ncias; libera no COMMIT/ROLLBACK
     const lockKey = Number(empresaId || 0);
     const lock = await client.query(`SELECT pg_try_advisory_xact_lock($1, 1)`, [lockKey]);
     if (!lock.rows[0].pg_try_advisory_xact_lock) {
@@ -1347,7 +1349,7 @@ function agendarAtualizacaoNoturna() {
     const meia = new Date(agora);
     meia.setDate(meia.getDate() + 1);
     meia.setHours(0, 0, 0, 0);
-    return Math.max(60000, meia - agora); // mínimo 1 min para evitar loop imediato
+    return Math.max(60000, meia - agora); // mÃ­nimo 1 min para evitar loop imediato
   }
 
   async function rodar() {
@@ -1367,14 +1369,14 @@ function agendarAtualizacaoNoturna() {
       }
       console.log(`[scheduler] Status financeiro atualizado para ${empresas.length} empresa(s) (meia-noite Fortaleza)`);
     } catch (err) {
-      console.error('[scheduler] Erro na atualização noturna:', err.message);
+      console.error('[scheduler] Erro na atualizaÃ§Ã£o noturna:', err.message);
     }
-    setTimeout(rodar, msAteMeianoite()).unref(); // recalcula meia-noite a cada execução
+    setTimeout(rodar, msAteMeianoite()).unref(); // recalcula meia-noite a cada execuÃ§Ã£o
   }
 
   const delay = msAteMeianoite();
   setTimeout(rodar, delay).unref();
-  console.log(`[scheduler] Próxima atualização noturna em ${Math.round(delay / 60000)} min`);
+  console.log(`[scheduler] PrÃ³xima atualizaÃ§Ã£o noturna em ${Math.round(delay / 60000)} min`);
 }
 
 async function criarParcelasContasReceber({
@@ -1449,7 +1451,7 @@ async function criarParcelasContasReceber({
         parcelas,
         valorParcela,
         vencimento,
-        forma_pagamento || 'Promissória',
+        forma_pagamento || 'PromissÃ³ria',
         observacao || '',
         criado_por || null
       ]
@@ -1462,14 +1464,14 @@ async function criarParcelasContasReceber({
 }
 
 async function initDb() {
-  // Fast-path: banco já inicializado → pula as ~168 queries DDL (cold start 8–15s → <1s)
-  // Novas colunas/tabelas devem ir em backend/migrations/, não aqui
+  // Fast-path: banco jÃ¡ inicializado â†’ pula as ~168 queries DDL (cold start 8â€“15s â†’ <1s)
+  // Novas colunas/tabelas devem ir em backend/migrations/, nÃ£o aqui
   const { rows: _chk } = await pool.query(
     "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='empresas' LIMIT 1"
   );
   if (_chk.length > 0) return;
 
-  // ================= EMPRESAS / PLANOS / CONFIGURAÇÕES =================
+  // ================= EMPRESAS / PLANOS / CONFIGURAÃ‡Ã•ES =================
   await pool.query(`
     CREATE TABLE IF NOT EXISTS empresas (
       id SERIAL PRIMARY KEY,
@@ -1536,9 +1538,9 @@ async function initDb() {
       permite_suporte_prioritario
     )
     VALUES
-    ('starter', 'Starter', 'Plano inicial para pequenos negócios', 49.90, 2, 300, 500, 100, 500, 1, TRUE, FALSE, FALSE),
+    ('starter', 'Starter', 'Plano inicial para pequenos negÃ³cios', 49.90, 2, 300, 500, 100, 500, 1, TRUE, FALSE, FALSE),
     ('pro', 'Pro', 'Plano profissional para empresas em crescimento', 99.90, 5, 2000, 3000, 500, 3000, 1, TRUE, TRUE, FALSE),
-    ('premium', 'Premium', 'Plano completo para operação avançada', 199.90, 15, 10000, 20000, 2000, 15000, 3, TRUE, TRUE, TRUE)
+    ('premium', 'Premium', 'Plano completo para operaÃ§Ã£o avanÃ§ada', 199.90, 15, 10000, 20000, 2000, 15000, 3, TRUE, TRUE, TRUE)
     ON CONFLICT (codigo) DO NOTHING;
   `);
 
@@ -1870,7 +1872,7 @@ async function initDb() {
     );
   `);
 
-  // ================= ALTERAÇÕES / COLUNAS =================
+  // ================= ALTERAÃ‡Ã•ES / COLUNAS =================
   await pool.query(`
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
     ALTER TABLE clientes ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
@@ -1971,7 +1973,7 @@ async function initDb() {
     ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS pix_sandbox BOOLEAN DEFAULT TRUE;
   `);
 
-  // ================= EMPRESA PADRÃO =================
+  // ================= EMPRESA PADRÃƒO =================
   const empresaSaaSResult = await pool.query(`SELECT id FROM empresas WHERE nome = $1 LIMIT 1`, [
     'LF ERP'
   ]);
@@ -2028,7 +2030,7 @@ async function initDb() {
     ['LF ERP', empresaSaaSId, 'LF ERP']
   );
 
-  // ================= MIGRAÇÃO EMPRESA_ID =================
+  // ================= MIGRAÃ‡ÃƒO EMPRESA_ID =================
   await pool.query(`UPDATE usuarios SET empresa_id = $1 WHERE empresa_id IS NULL`, [empresaSaaSId]);
   await pool.query(`UPDATE clientes SET empresa_id = $1 WHERE empresa_id IS NULL`, [empresaSaaSId]);
   await pool.query(`UPDATE fornecedores SET empresa_id = $1 WHERE empresa_id IS NULL`, [
@@ -2047,7 +2049,7 @@ async function initDb() {
     empresaSaaSId
   ]);
 
-  // ================= ÍNDICES =================
+  // ================= ÃNDICES =================
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_empresas_plano_id ON empresas (plano_id);
     CREATE INDEX IF NOT EXISTS idx_empresas_status ON empresas (assinatura_status);
@@ -2101,7 +2103,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_logs_auditoria_criado_em ON logs_auditoria (criado_em DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_auditoria_modulo_acao ON logs_auditoria (modulo, acao);
 
-    -- Índices faltantes adicionados em 2026-06-06
+    -- Ãndices faltantes adicionados em 2026-06-06
     CREATE INDEX IF NOT EXISTS idx_clientes_empresa_id ON clientes (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_fornecedores_empresa_id ON fornecedores (empresa_id);
     CREATE INDEX IF NOT EXISTS idx_produtos_codigo_barras ON produtos (codigo_barras) WHERE codigo_barras IS NOT NULL;
@@ -2120,7 +2122,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_financeiro_logs_tipo ON financeiro_logs (tipo);
   `);
 
-  // ── Permissões granulares ─────────────────────────────────────────────────
+  // â”€â”€ PermissÃµes granulares â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await pool.query(`
     CREATE TABLE IF NOT EXISTS permissoes_padrao (
       id          SERIAL PRIMARY KEY,
@@ -2149,7 +2151,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_perm_padrao_tipo ON permissoes_padrao (tipo_usuario);
   `);
 
-  // Defaults por tipo — INSERT OR IGNORE (ON CONFLICT DO NOTHING)
+  // Defaults por tipo â€” INSERT OR IGNORE (ON CONFLICT DO NOTHING)
   const defaultsGerente = [
     ['gerente', 'produtos',      true,  true,  true,  false],
     ['gerente', 'clientes',      true,  true,  true,  false],
@@ -2187,15 +2189,15 @@ async function initDb() {
     );
   }
 
-  // ================= USUÁRIO SAAS OWNER =================
+  // ================= USUÃRIO SAAS OWNER =================
   const ownerSenhaEnv = process.env.SAAS_OWNER_SENHA;
   if (!ownerSenhaEnv) {
-    console.warn('[init] SAAS_OWNER_SENHA não definida — senha do owner não será alterada');
+    console.warn('[init] SAAS_OWNER_SENHA nÃ£o definida â€” senha do owner nÃ£o serÃ¡ alterada');
     return;
   }
   const ownerHash = await bcrypt.hash(ownerSenhaEnv, 10);
 
-  // Migra nome antigo 'Lfelipeg' → 'lfelipeg' se existir
+  // Migra nome antigo 'Lfelipeg' â†’ 'lfelipeg' se existir
   await pool.query(
     `UPDATE usuarios SET usuario = 'lfelipeg', atualizado_em = NOW()
      WHERE LOWER(usuario) = 'lfelipeg' AND usuario != 'lfelipeg'`
@@ -2245,11 +2247,11 @@ async function initDb() {
 }
 
 app.get('/', (req, res) => {
-  res.send('LF ERP backend online 🚀');
+  res.send('LF ERP backend online ðŸš€');
 });
 
 
-// ── Auth (login/logout/me/registro) → routes/auth.routes.js
+// â”€â”€ Auth (login/logout/me/registro) â†’ routes/auth.routes.js
 app.use('/', authRoutes({
   auth,
   writeRateLimiter,
@@ -2267,7 +2269,7 @@ app.use('/', authRoutes({
   jsonErro
 }));
 
-// ── Usuários, permissões e lixeira → routes/usuarios.routes.js
+// â”€â”€ UsuÃ¡rios, permissÃµes e lixeira â†’ routes/usuarios.routes.js
 app.use('/', usuariosRoutes({
   auth,
   writeRateLimiter,
@@ -2280,7 +2282,7 @@ app.use('/', usuariosRoutes({
   jsonErro
 }));
 
-// ── Contas a Receber → routes/contas-receber.routes.js
+// â”€â”€ Contas a Receber â†’ routes/contas-receber.routes.js
 app.use('/', contasReceberRoutes({
   auth,
   writeRateLimiter,
@@ -2292,7 +2294,7 @@ app.use('/', contasReceberRoutes({
   jsonErro
 }));
 
-// ── Contas a Pagar → routes/contas-pagar.routes.js
+// â”€â”€ Contas a Pagar â†’ routes/contas-pagar.routes.js
 app.use('/', contasPagarRoutes({
   auth,
   writeRateLimiter,
@@ -2303,7 +2305,7 @@ app.use('/', contasPagarRoutes({
   jsonErro
 }));
 
-// ── Lançamentos Financeiros → routes/lancamentos.routes.js
+// â”€â”€ LanÃ§amentos Financeiros â†’ routes/lancamentos.routes.js
 app.use('/', lancamentosRoutes({
   auth,
   writeRateLimiter,
@@ -2315,7 +2317,7 @@ app.use('/', lancamentosRoutes({
   jsonErro
 }));
 
-// ── Fluxo de Caixa + Investimentos → routes/fluxo-caixa.routes.js
+// â”€â”€ Fluxo de Caixa + Investimentos â†’ routes/fluxo-caixa.routes.js
 app.use('/', fluxoCaixaRoutes({
   auth,
   writeRateLimiter,
@@ -2328,7 +2330,7 @@ app.use('/', fluxoCaixaRoutes({
   jsonErro
 }));
 
-// ── Dashboard → routes/dashboard.routes.js
+// â”€â”€ Dashboard â†’ routes/dashboard.routes.js
 app.use('/', dashboardRoutes({
   auth,
   pool,
@@ -2346,14 +2348,14 @@ app.use('/', pagamentosRoutes({
   jsonErro
 }));
 
-// -- Conciliação Bancária -> routes/conciliacao.routes.js
+// -- ConciliaÃ§Ã£o BancÃ¡ria -> routes/conciliacao.routes.js
 app.use('/', conciliacaoRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
   jsonUpload, jsonErro
 }));
 
-// -- Admin (Configurações + Alertas + Billing + Admin) -> routes/admin.routes.js
+// -- Admin (ConfiguraÃ§Ãµes + Alertas + Billing + Admin) -> routes/admin.routes.js
 app.use('/', adminRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
@@ -2361,359 +2363,20 @@ app.use('/', adminRoutes({
   jsonErro
 }));
 
-// ================= COMPRAS =================
+// -- Misc (Compras inline + Listagens + Metas + DepÃ³sitos + LGPD + Notif + SSE) -> routes/misc.routes.js
+app.use('/', miscRoutes({
+  auth, writeRateLimiter, pool,
+  validarAcessoEmpresa, adicionarFiltroEmpresaSaaS,
+  podeGerenciarFinanceiro, atualizarStatusContasPagarPorEmpresa,
+  jsonErro
+}));
 
-app.get('/compras/:empresa', auth, requirePermissao(pool, 'compras', 'ver'), async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    const busca = (req.query.busca || '').trim().toLowerCase();
-    const fornecedorId = normalizarInt(req.query.fornecedor_id || 0);
-    const { dataInicial, dataFinal } = obterPeriodo(req);
-
-    const params = [];
-    let sql = `
-        SELECT
-          c.*,
-          f.nome AS fornecedor_nome
-        FROM compras c
-        LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
-        WHERE 1=1
-      `;
-    sql += adicionarFiltroEmpresaSaaS({ alias: 'c', params, empresaResolvida });
-    let idx = params.length + 1;
-
-    if (fornecedorId > 0) {
-      sql += ` AND c.fornecedor_id = $${idx} `;
-      params.push(fornecedorId);
-      idx++;
-    }
-
-    if (busca) {
-      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
-      sql += `
-          AND (
-            LOWER(COALESCE(f.nome, '')) LIKE $${idx} ESCAPE '\\'
-            OR LOWER(COALESCE(c.observacao, '')) LIKE $${idx} ESCAPE '\\'
-            OR CAST(c.id AS TEXT) LIKE $${idx} ESCAPE '\\'
-          )
-        `;
-      params.push(`%${buscaEsc}%`);
-      idx++;
-    }
-
-    sql += adicionarFiltroPeriodo({
-      campo: 'c.data',
-      params,
-      dataInicial,
-      dataFinal,
-      castDate: false
-    });
-
-    const paginaC = Math.max(1, normalizarInt(req.query.page || 1));
-    const limiteC = Math.min(normalizarInt(req.query.limit || 100), 500);
-    const offsetC = (paginaC - 1) * limiteC;
-    sql += ` ORDER BY c.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limiteC, offsetC);
-
-    const result = await pool.query(sql, params);
-    res.json(
-      result.rows.map((row) => ({
-        ...row,
-        total: Number(row.total || 0)
-      }))
-    );
-  } catch (error) {
-    console.error('Erro ao buscar compras:', error);
-    jsonErro(res, 500, 'Erro ao buscar compras');
-  }
-});
-
-app.delete('/compras/:id', auth, writeRateLimiter, requirePermissao(pool, 'compras', 'deletar'), async (req, res) => {
-  if (!podeGerenciarCompras(req)) {
-    return jsonErro(res, 403, 'Sem permissão para excluir compras');
-  }
-
-  const id = Number(req.params.id);
-  if (!id) return jsonErro(res, 400, 'Compra inválida');
-
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN');
-
-    const empresa = req.query.empresa || req.body.empresa || null;
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-    if (!empresaResolvida) {
-      await client.query('ROLLBACK');
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    const compraResult = await client.query(
-      `SELECT * FROM compras
-       WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-       FOR UPDATE`,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    if (compraResult.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return jsonErro(res, 404, 'Compra não encontrada');
-    }
-
-    const itensResult = await client.query(
-      `
-      SELECT *
-      FROM compra_itens
-      WHERE compra_id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      ORDER BY id ASC
-      FOR UPDATE
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    for (const item of itensResult.rows) {
-      await client.query(
-        `UPDATE produtos SET estoque = GREATEST(0, estoque - $1), atualizado_em = NOW()
-         WHERE id = $2 AND (empresa_id = $3 OR (empresa_id IS NULL AND empresa = $4))`,
-        [normalizarInt(item.quantidade), item.produto_id, empresaResolvida.id, empresaResolvida.nome]
-      );
-    }
-
-    await client.query(
-      `
-      DELETE FROM movimentacoes_estoque
-      WHERE referencia_tipo = 'compra'
-        AND referencia_id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    await client.query(
-      `
-      DELETE FROM contas_pagar
-      WHERE compra_id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    await client.query(
-      `
-      DELETE FROM compra_itens
-      WHERE compra_id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    await client.query(
-      `
-      DELETE FROM compras
-      WHERE id = $1
-        AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3))
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    await client.query('COMMIT');
-    try { await atualizarStatusContasPagarPorEmpresa(empresaResolvida.nome, empresaResolvida.id); } catch (e) { console.error('[del-compra] status-cp:', e.message); }
-
-    res.json({ sucesso: true });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Erro real ao excluir compra:', error);
-    jsonErro(res, 500, 'Erro ao excluir compra');
-  } finally {
-    client.release();
-  }
-});
-
-app.get('/compras-detalhe/:id', auth, requirePermissao(pool, 'compras', 'ver'), async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-
-    const empresaResolvida = await validarAcessoEmpresa(req, req.user.empresa || null);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const compraResult = await pool.query(
-      `
-      SELECT
-        c.*,
-        f.nome AS fornecedor_nome
-      FROM compras c
-      LEFT JOIN fornecedores f ON f.id = c.fornecedor_id
-      WHERE c.id = $1
-        AND (c.empresa_id = $2 OR (c.empresa_id IS NULL AND c.empresa = $3))
-      `,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    if (compraResult.rowCount === 0) {
-      return jsonErro(res, 404, 'Compra não encontrada');
-    }
-
-    const compra = compraResult.rows[0];
-
-    const itensResult = await pool.query(
-      `SELECT * FROM compra_itens WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) ORDER BY id ASC`,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    const contasPagarResult = await pool.query(
-      `SELECT * FROM contas_pagar WHERE compra_id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) ORDER BY parcela ASC, id ASC`,
-      [id, empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    res.json({
-      ...compra,
-      total: Number(compra.total || 0),
-      parcelas: Number(contasPagarResult.rows[0]?.total_parcelas || 1),
-      itens: itensResult.rows.map((item) => ({
-        ...item,
-        quantidade: Number(item.quantidade || 0),
-        custo_unitario: Number(item.custo_unitario || 0),
-        subtotal: Number(item.subtotal || 0)
-      })),
-      contas_pagar: contasPagarResult.rows.map((cp) => ({
-        ...cp,
-        parcela: Number(cp.parcela || 1),
-        total_parcelas: Number(cp.total_parcelas || 1),
-        valor: Number(cp.valor || 0)
-      }))
-    });
-  } catch (error) {
-    console.error('Erro real ao buscar compra:', error);
-    jsonErro(res, 500, 'Erro ao buscar compra');
-  }
-});
-
-// ================= LISTAGENS OPERACIONAIS AUXILIARES =================
-app.get('/estoque/resumo/:empresa', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    const params = [];
-    const filtro = adicionarFiltroEmpresaSaaS({ params, empresaResolvida });
-
-    const result = await pool.query(
-      `
-        SELECT
-          COUNT(*) AS total_produtos,
-          COALESCE(SUM(estoque), 0) AS total_unidades,
-          COALESCE(SUM(estoque * custo), 0) AS valor_total_estoque,
-          COALESCE(SUM(CASE WHEN estoque <= estoque_minimo AND estoque_minimo > 0 THEN 1 ELSE 0 END), 0) AS produtos_alerta
-        FROM produtos
-        WHERE deletado_em IS NULL
-        ${filtro}
-        `,
-      params
-    );
-
-    res.json({
-      total_produtos: Number(result.rows[0].total_produtos || 0),
-      total_unidades: Number(result.rows[0].total_unidades || 0),
-      valor_total_estoque: Number(result.rows[0].valor_total_estoque || 0),
-      produtos_alerta: Number(result.rows[0].produtos_alerta || 0)
-    });
-  } catch (error) {
-    console.error('Erro ao buscar resumo de estoque:', error);
-    jsonErro(res, 500, 'Erro ao buscar resumo de estoque');
-  }
-});
-
-app.get('/compras-fornecedores/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    const result = await pool.query(
-      `
-        SELECT
-          f.id,
-          f.nome,
-          COUNT(c.id) AS total_compras,
-          COALESCE(SUM(c.total), 0) AS valor_total
-        FROM fornecedores f
-        LEFT JOIN compras c ON c.fornecedor_id = f.id AND (c.empresa_id = $1 OR (c.empresa_id IS NULL AND c.empresa = $2))
-        WHERE (f.empresa_id = $1 OR (f.empresa_id IS NULL AND f.empresa = $2))
-        GROUP BY f.id, f.nome
-        ORDER BY valor_total DESC, f.nome ASC
-        `,
-      [empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    res.json(
-      result.rows.map((row) => ({
-        ...row,
-        total_compras: Number(row.total_compras || 0),
-        valor_total: Number(row.valor_total || 0)
-      }))
-    );
-  } catch (error) {
-    console.error('Erro ao buscar resumo de compras por fornecedor:', error);
-    jsonErro(res, 500, 'Erro ao buscar resumo de compras por fornecedor');
-  }
-});
-
-app.get('/vendas-clientes/:empresa', auth, requirePermissao(pool, 'financeiro', 'ver'), async (req, res) => {
-  try {
-    const empresa = req.params.empresa;
-    const empresaResolvida = await validarAcessoEmpresa(req, empresa);
-    if (!empresaResolvida) {
-      return jsonErro(res, 403, 'Sem acesso');
-    }
-
-    const result = await pool.query(
-      `
-        SELECT
-          COALESCE(cliente_nome, 'Sem cliente') AS cliente,
-          COUNT(*) AS total_vendas,
-          COALESCE(SUM(total), 0) AS valor_total
-        FROM vendas
-        WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
-        GROUP BY COALESCE(cliente_nome, 'Sem cliente')
-        ORDER BY valor_total DESC, cliente ASC
-        `,
-      [empresaResolvida.id, empresaResolvida.nome]
-    );
-
-    res.json(
-      result.rows.map((row) => ({
-        ...row,
-        total_vendas: Number(row.total_vendas || 0),
-        valor_total: Number(row.valor_total || 0)
-      }))
-    );
-  } catch (error) {
-    console.error('Erro ao buscar resumo de vendas por cliente:', error);
-    jsonErro(res, 500, 'Erro ao buscar resumo de vendas por cliente');
-  }
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[unhandledRejection]', reason, promise);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err);
-  process.exit(1);
-});
+// -- Admin SaaS Owner (SMTP + Dashboard + Empresas) -> routes/admin-saas.routes.js
+app.use('/', adminSaasRoutes({
+  auth, writeRateLimiter, pool,
+  apenasAdmin, _planoCache,
+  jsonErro
+}));
 
 
 
@@ -2725,7 +2388,7 @@ async function start() {
     await loadBlacklistFromDb();
     if (_sentryDsn) Sentry.setupExpressErrorHandler(app);
     app.listen(PORT, () => {
-      console.log(`LF ERP Backend Online 🚀 porta ${PORT}`);
+      console.log(`LF ERP Backend Online ðŸš€ porta ${PORT}`);
       agendarAtualizacaoNoturna();
     });
   } catch (error) {
@@ -2744,1046 +2407,3 @@ if (require.main === module) {
 
 
 
-// ── Metas de vendas ───────────────────────────────────────────────────────────
-
-// GET /metas-vendas?periodo=YYYY-MM — lista metas com progresso real
-app.get('/metas-vendas', auth, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
-  try {
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const periodo = req.query.periodo || hoje().slice(0, 7); // default: mês atual
-
-    // Calcula intervalo de datas do período
-    let dataInicio, dataFim;
-    if (/^\d{4}-\d{2}$/.test(periodo)) {
-      // Mensal: YYYY-MM
-      dataInicio = `${periodo}-01`;
-      const [y, m] = periodo.split('-').map(Number);
-      const fim = new Date(y, m, 0); // último dia do mês
-      dataFim = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Fortaleza' }).format(fim);
-    } else {
-      dataInicio = hoje().slice(0, 8) + '01';
-      dataFim = hoje();
-    }
-
-    const metasResult = await pool.query(
-      `SELECT m.*, u.nome_completo AS vendedor_nome, u.usuario AS vendedor_usuario
-       FROM metas_vendas m
-       LEFT JOIN usuarios u ON u.id = m.usuario_id
-       WHERE m.empresa_id = $1 AND m.periodo = $2
-       ORDER BY m.usuario_id NULLS FIRST, m.id`,
-      [empresaResolvida.id, periodo]
-    );
-
-    // Calcula progresso real via vendas do período — query única com GROUP BY (evita N+1)
-    const realizadoResult = await pool.query(
-      `SELECT criado_por AS usuario_id, COALESCE(SUM(total), 0) AS realizado
-       FROM vendas
-       WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $4)) AND data >= $2 AND data <= $3
-       GROUP BY criado_por`,
-      [empresaResolvida.id, dataInicio, dataFim, empresaResolvida.nome || '']
-    );
-    const realizadoMap = {};
-    let realizadoTotal = 0;
-    for (const r of realizadoResult.rows) {
-      const v = Number(r.realizado || 0);
-      realizadoMap[r.usuario_id] = v;
-      realizadoTotal += v;
-    }
-    const metasComProgresso = metasResult.rows.map((meta) => {
-      // Meta por usuário → apenas vendas daquele usuário; meta geral → todas as vendas
-      const realizado = meta.usuario_id ? (realizadoMap[meta.usuario_id] || 0) : realizadoTotal;
-      const meta_valor = Number(meta.valor_meta || 0);
-      const percentual = meta_valor > 0 ? Math.min(100, Math.round((realizado / meta_valor) * 100)) : 0;
-      return { ...meta, realizado, percentual, faltando: Math.max(0, meta_valor - realizado) };
-    });
-
-    res.json({ sucesso: true, periodo, data_inicio: dataInicio, data_fim: dataFim, metas: metasComProgresso });
-  } catch (err) {
-    console.error('[metas] GET:', err.message);
-    jsonErro(res, 500, 'Erro ao carregar metas');
-  }
-});
-
-// POST /metas-vendas — criar ou atualizar meta
-app.post('/metas-vendas', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'criar'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const { usuario_id, periodo, valor_meta, descricao } = req.body;
-    if (!periodo || !valor_meta) return jsonErro(res, 400, 'periodo e valor_meta são obrigatórios');
-    if (!/^\d{4}-\d{2}$/.test(periodo)) return jsonErro(res, 400, 'periodo deve ser YYYY-MM');
-
-    if (usuario_id) {
-      const uCheck = await pool.query(
-        `SELECT 1 FROM usuarios WHERE id = $1 AND (empresa_id = $2 OR (empresa_id IS NULL AND empresa = $3)) LIMIT 1`,
-        [Number(usuario_id), empresaResolvida.id, empresaResolvida.nome || '']
-      );
-      if (uCheck.rowCount === 0) return jsonErro(res, 400, 'Usuário não pertence à empresa');
-    }
-
-    const result = await pool.query(
-      `INSERT INTO metas_vendas (empresa_id, usuario_id, periodo, valor_meta, descricao)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (empresa_id, usuario_id, periodo) DO UPDATE
-       SET valor_meta = $4, descricao = $5, atualizado_em = NOW()
-       RETURNING *`,
-      [empresaResolvida.id, usuario_id || null, periodo,
-       normalizarDecimal(valor_meta), descricao || null]
-    );
-
-    res.status(201).json({ sucesso: true, meta: result.rows[0] });
-  } catch (err) {
-    console.error('[metas] POST:', err.message);
-    jsonErro(res, 500, 'Erro ao salvar meta');
-  }
-});
-
-// DELETE /metas-vendas/:id
-app.delete('/metas-vendas/:id', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'deletar'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const r = await pool.query(
-      `DELETE FROM metas_vendas WHERE id = $1 AND empresa_id = $2`,
-      [Number(req.params.id), empresaResolvida.id]
-    );
-    if (r.rowCount === 0) return jsonErro(res, 404, 'Meta não encontrada');
-    res.json({ sucesso: true });
-  } catch (err) {
-    console.error('[metas] DELETE:', err.message);
-    jsonErro(res, 500, 'Erro ao excluir meta');
-  }
-});
-
-// ── Multi-depósito ────────────────────────────────────────────────────────────
-
-// GET /depositos — lista depósitos da empresa
-app.get('/depositos', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
-  try {
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const result = await pool.query(
-      `SELECT d.*,
-              COUNT(ped.produto_id) AS total_produtos,
-              COALESCE(SUM(ped.estoque), 0) AS total_unidades
-       FROM depositos d
-       LEFT JOIN produto_estoque_deposito ped ON ped.deposito_id = d.id
-       WHERE d.empresa_id = $1
-       GROUP BY d.id
-       ORDER BY d.principal DESC, d.nome`,
-      [empresaResolvida.id]
-    );
-
-    res.json({ sucesso: true, depositos: result.rows });
-  } catch (err) {
-    console.error('[depositos] GET lista:', err.message);
-    jsonErro(res, 500, 'Erro ao listar depósitos');
-  }
-});
-
-// POST /depositos — criar depósito
-app.post('/depositos', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'criar'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const { nome, descricao } = req.body;
-    if (!nome) return jsonErro(res, 400, 'Nome do depósito é obrigatório');
-
-    const result = await pool.query(
-      `INSERT INTO depositos (empresa_id, nome, descricao, ativo, principal)
-       VALUES ($1, $2, $3, true, false)
-       RETURNING *`,
-      [empresaResolvida.id, nome.trim(), descricao || null]
-    );
-
-    res.status(201).json({ sucesso: true, deposito: result.rows[0] });
-  } catch (err) {
-    if (err.code === '23505') return jsonErro(res, 409, 'Já existe um depósito com esse nome');
-    console.error('[depositos] POST:', err.message);
-    jsonErro(res, 500, 'Erro ao criar depósito');
-  }
-});
-
-// PUT /depositos/:id — editar depósito
-app.put('/depositos/:id', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const id = Number(req.params.id);
-    const { nome, descricao, ativo } = req.body;
-
-    const result = await pool.query(
-      `UPDATE depositos
-       SET nome = COALESCE($1, nome),
-           descricao = COALESCE($2, descricao),
-           ativo = COALESCE($3, ativo),
-           atualizado_em = NOW()
-       WHERE id = $4 AND empresa_id = $5
-       RETURNING *`,
-      [nome?.trim() || null, descricao !== undefined ? descricao : null,
-       ativo != null ? Boolean(ativo) : null, id, empresaResolvida.id]
-    );
-
-    if (result.rowCount === 0) return jsonErro(res, 404, 'Depósito não encontrado');
-    res.json({ sucesso: true, deposito: result.rows[0] });
-  } catch (err) {
-    console.error('[depositos] PUT:', err.message);
-    jsonErro(res, 500, 'Erro ao editar depósito');
-  }
-});
-
-// DELETE /depositos/:id — remover depósito (só se sem estoque)
-app.delete('/depositos/:id', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'deletar'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const id = Number(req.params.id);
-
-    // Verifica ownership antes de qualquer outra check (evita info leak)
-    const deposito = await pool.query(
-      `SELECT principal FROM depositos WHERE id = $1 AND empresa_id = $2`,
-      [id, empresaResolvida.id]
-    );
-    if (deposito.rowCount === 0) return jsonErro(res, 404, 'Depósito não encontrado');
-    if (deposito.rows[0].principal) return jsonErro(res, 400, 'O depósito principal não pode ser excluído');
-
-    // Verifica se tem estoque (apenas após confirmar ownership)
-    const temEstoque = await pool.query(
-      `SELECT 1 FROM produto_estoque_deposito WHERE deposito_id = $1 AND estoque > 0 LIMIT 1`,
-      [id]
-    );
-    if (temEstoque.rowCount > 0) {
-      return jsonErro(res, 400, 'Não é possível excluir um depósito com estoque. Transfira ou zere o estoque primeiro.');
-    }
-
-    await pool.query(`DELETE FROM depositos WHERE id = $1 AND empresa_id = $2`, [id, empresaResolvida.id]);
-    res.json({ sucesso: true, mensagem: 'Depósito excluído' });
-  } catch (err) {
-    console.error('[depositos] DELETE:', err.message);
-    jsonErro(res, 500, 'Erro ao excluir depósito');
-  }
-});
-
-// GET /depositos/:id/estoque — estoque de um depósito
-app.get('/depositos/:id/estoque', auth, requirePermissao(pool, 'estoque', 'ver'), async (req, res) => {
-  try {
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const id = Number(req.params.id);
-
-    // Verifica que o depósito pertence à empresa antes de expor o estoque
-    const ownerCheck = await pool.query(
-      `SELECT 1 FROM depositos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-      [id, empresaResolvida.id]
-    );
-    if (ownerCheck.rowCount === 0) return jsonErro(res, 404, 'Depósito não encontrado');
-
-    const busca = (req.query.busca || '').trim().toLowerCase();
-
-    let sql = `
-      SELECT ped.produto_id, p.nome AS produto_nome, p.categoria,
-             p.codigo_barras, ped.grade_id,
-             pg.atributo1, pg.atributo2,
-             ped.estoque, ped.atualizado_em
-      FROM produto_estoque_deposito ped
-      JOIN produtos p ON p.id = ped.produto_id AND p.empresa_id = $1
-      LEFT JOIN produto_grades pg ON pg.id = ped.grade_id
-      WHERE ped.deposito_id = $2`;
-
-    const params = [empresaResolvida.id, id];
-
-    if (busca) {
-      const buscaEsc = busca.replace(/[%_\\]/g, '\\$&');
-      sql += ` AND (LOWER(p.nome) LIKE $3 OR LOWER(COALESCE(p.categoria,'')) LIKE $3)`;
-      params.push(`%${buscaEsc}%`);
-    }
-
-    sql += ` ORDER BY p.nome, pg.atributo1`;
-
-    const result = await pool.query(sql, params);
-    res.json({ sucesso: true, itens: result.rows });
-  } catch (err) {
-    console.error('[depositos] GET estoque:', err.message);
-    jsonErro(res, 500, 'Erro ao buscar estoque do depósito');
-  }
-});
-
-// POST /depositos/transferir — mover estoque entre depósitos
-app.post('/depositos/transferir', auth, writeRateLimiter, requirePermissao(pool, 'estoque', 'editar'), async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const { deposito_origem_id, deposito_destino_id, produto_id, grade_id, quantidade } = req.body;
-    const qtd = normalizarInt(quantidade);
-
-    if (!deposito_origem_id || !deposito_destino_id || !produto_id || qtd <= 0) {
-      return jsonErro(res, 400, 'Campos obrigatórios: deposito_origem_id, deposito_destino_id, produto_id, quantidade > 0');
-    }
-    if (deposito_origem_id === deposito_destino_id) {
-      return jsonErro(res, 400, 'Depósito de origem e destino devem ser diferentes');
-    }
-
-    await client.query('BEGIN');
-
-    // Verifica que ambos os depósitos pertencem à empresa (anti-cross-tenant)
-    const depositosCheck = await client.query(
-      `SELECT id FROM depositos WHERE id = ANY($1::integer[]) AND empresa_id = $2`,
-      [[Number(deposito_origem_id), Number(deposito_destino_id)], empresaResolvida.id]
-    );
-    if (depositosCheck.rowCount !== 2) {
-      await client.query('ROLLBACK');
-      return jsonErro(res, 403, 'Depósitos não pertencem à empresa');
-    }
-
-    // Verifica estoque na origem com FOR UPDATE
-    const origem = await client.query(
-      `SELECT estoque FROM produto_estoque_deposito
-       WHERE deposito_id = $1 AND produto_id = $2 AND (grade_id = $3 OR ($3::INTEGER IS NULL AND grade_id IS NULL))
-       FOR UPDATE`,
-      [deposito_origem_id, produto_id, grade_id || null]
-    );
-
-    if (origem.rowCount === 0 || Number(origem.rows[0].estoque) < qtd) {
-      await client.query('ROLLBACK');
-      return jsonErro(res, 400, `Estoque insuficiente no depósito de origem. Disponível: ${origem.rows[0]?.estoque || 0}`);
-    }
-
-    // Debita na origem
-    await client.query(
-      `UPDATE produto_estoque_deposito
-       SET estoque = estoque - $1, atualizado_em = NOW()
-       WHERE deposito_id = $2 AND produto_id = $3
-         AND (grade_id = $4 OR ($4::INTEGER IS NULL AND grade_id IS NULL))`,
-      [qtd, deposito_origem_id, produto_id, grade_id || null]
-    );
-
-    // Credita no destino (upsert)
-    await client.query(
-      `INSERT INTO produto_estoque_deposito (empresa_id, produto_id, grade_id, deposito_id, estoque)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (produto_id, grade_id, deposito_id) DO UPDATE
-       SET estoque = produto_estoque_deposito.estoque + $5, atualizado_em = NOW()`,
-      [empresaResolvida.id, produto_id, grade_id || null, deposito_destino_id, qtd]
-    );
-
-    await client.query('COMMIT');
-
-    res.json({ sucesso: true, mensagem: `${qtd} unidade(s) transferida(s) com sucesso` });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('[depositos] transferir:', err.message);
-    jsonErro(res, 500, 'Erro ao transferir estoque');
-  } finally {
-    client.release();
-  }
-});
-
-// Inicializa depósito principal para empresas sem depósito
-async function garantirDepositoPrincipal(empresaId, empresaNome, client) {
-  const executor = client || pool;
-  const existente = await executor.query(
-    `SELECT id FROM depositos WHERE empresa_id = $1 LIMIT 1`,
-    [empresaId]
-  );
-  if (existente.rowCount === 0) {
-    await executor.query(
-      `INSERT INTO depositos (empresa_id, nome, principal, ativo)
-       VALUES ($1, 'Depósito Principal', true, true)
-       ON CONFLICT (empresa_id, nome) DO NOTHING`,
-      [empresaId]
-    );
-  }
-}
-
-// ── LGPD — exportação de dados da própria empresa ─────────────────────────────
-app.get('/empresa/exportar-dados', auth, writeRateLimiter, requirePermissao(pool, 'relatorios', 'ver'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return jsonErro(res, 403, 'Acesso restrito a administradores e gerentes');
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const id = empresaResolvida.id;
-    const nome = empresaResolvida.nome;
-
-    const [
-      clientesResult, produtosResult, vendasResult,
-      venda_itensResult, comprasResult, compra_itensResult,
-      crResult, cpResult, movimResult, lancamentosResult
-    ] = await Promise.all([
-      pool.query(`SELECT id,nome,telefone,email,cpf,cpf_cnpj,endereco,criado_em FROM clientes WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, nome]),
-      pool.query(`SELECT id,nome,categoria,preco,custo_medio,estoque,estoque_minimo,codigo_barras,criado_em FROM produtos WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, nome]),
-      pool.query(`SELECT id,cliente_nome,subtotal,desconto,acrescimo,total,pagamento,status_pagamento,data,criado_em FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
-      pool.query(`SELECT vi.venda_id,vi.produto_nome,vi.quantidade,vi.preco_unitario,vi.total FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE (v.empresa_id=$1 OR (v.empresa_id IS NULL AND v.empresa=$2)) ORDER BY vi.venda_id,vi.id`, [id, nome]),
-      pool.query(`SELECT id,fornecedor_id,data,total,pagamento,status,criado_em FROM compras WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
-      pool.query(`SELECT ci.compra_id,ci.produto_nome,ci.quantidade,ci.custo_unitario FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE (c.empresa_id=$1 OR (c.empresa_id IS NULL AND c.empresa=$2)) ORDER BY ci.compra_id`, [id, nome]),
-      pool.query(`SELECT id,cliente_nome,parcela,total_parcelas,valor,data_vencimento,data_pagamento,status,forma_pagamento FROM contas_receber WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
-      pool.query(`SELECT id,fornecedor_id,descricao,valor,data_vencimento,data_pagamento,status FROM contas_pagar WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, nome]),
-      pool.query(`SELECT produto_id,tipo,quantidade,data_movimentacao FROM movimentacoes_estoque WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY data_movimentacao`, [id, nome]),
-      pool.query(`SELECT id,tipo,descricao,valor,vencimento AS data,categoria FROM lancamentos_financeiros WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY vencimento`, [id, nome])
-    ]);
-
-    const payload = {
-      exportacao: {
-        empresa:      { id: empresaResolvida.id, nome: empresaResolvida.nome },
-        gerado_em:    new Date().toISOString(),
-        aviso_lgpd:   'Exportação de dados pessoais conforme LGPD (Lei 13.709/2018).'
-      },
-      clientes:              clientesResult.rows,
-      produtos:              produtosResult.rows,
-      vendas:                vendasResult.rows,
-      venda_itens:           venda_itensResult.rows,
-      compras:               comprasResult.rows,
-      compra_itens:          compra_itensResult.rows,
-      contas_receber:        crResult.rows,
-      contas_pagar:          cpResult.rows,
-      movimentacoes_estoque: movimResult.rows,
-      lancamentos_financeiros: lancamentosResult.rows
-    };
-
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const _nomeExport = empresaResolvida.nome.replace(/\s+/g,'_').replace(/[;="\\]/g,'_').replace(/[\r\n]/g,'');
-    res.setHeader('Content-Disposition',
-      `attachment; filename="lferp-dados-${_nomeExport}-${hoje()}.json"`
-    );
-    res.send(JSON.stringify(payload, null, 2));
-  } catch (err) {
-    console.error('[lgpd] exportar-dados:', err.message);
-    jsonErro(res, 500, 'Erro ao exportar dados');
-  }
-});
-
-// ── Notificações in-app ───────────────────────────────────────────────────────
-// GET /notificacoes — retorna notificações relevantes para a empresa logada
-app.get('/notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
-  try {
-    if (!podeGerenciarFinanceiro(req)) return res.json({ sucesso: true, notificacoes: [] });
-    const empresaResolvida = await validarAcessoEmpresa(req, null, req.empresa_id);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    const dataHoje = hoje();
-    const amanha   = addDias(dataHoje, 1);
-    const em7dias  = addDias(dataHoje, 7);
-
-    const [estoqueResult, crResult, cpResult, trialResult] = await Promise.all([
-      // Produtos abaixo do estoque mínimo
-      pool.query(
-        `SELECT id, nome, estoque, estoque_minimo FROM produtos
-         WHERE empresa_id = $1 AND deletado_em IS NULL
-           AND estoque_minimo > 0 AND estoque < estoque_minimo
-         ORDER BY (estoque_minimo - estoque) DESC LIMIT 10`,
-        [empresaResolvida.id]
-      ),
-      // Contas a receber vencendo hoje ou já atrasadas
-      pool.query(
-        `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
-         FROM contas_receber
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
-           AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
-           AND data_vencimento <= $2`,
-        [empresaResolvida.id, dataHoje, empresaResolvida.nome]
-      ),
-      // Contas a pagar vencendo hoje ou amanhã
-      pool.query(
-        `SELECT COUNT(*) AS total, COALESCE(SUM(valor), 0) AS valor_total
-         FROM contas_pagar
-         WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $3))
-           AND LOWER(COALESCE(status,'pendente')) = 'pendente'
-           AND data_vencimento <= $2`,
-        [empresaResolvida.id, amanha, empresaResolvida.nome]
-      ),
-      // Trial expirando em até 7 dias
-      pool.query(
-        `SELECT trial_fim FROM empresas
-         WHERE id = $1 AND assinatura_status = 'trial'
-           AND trial_fim IS NOT NULL AND trial_fim <= $2`,
-        [empresaResolvida.id, em7dias]
-      )
-    ]);
-
-    const notifs = [];
-
-    // Estoque baixo
-    const prodAbaixo = estoqueResult.rows;
-    if (prodAbaixo.length > 0) {
-      notifs.push({
-        tipo:   'estoque',
-        icone:  'fa-boxes-stacked',
-        cor:    '#d69e2e',
-        titulo: `${prodAbaixo.length} produto(s) abaixo do estoque mínimo`,
-        texto:  prodAbaixo.slice(0, 3).map((p) => `${p.nome} (${p.estoque}/${p.estoque_minimo})`).join(', ') + (prodAbaixo.length > 3 ? ` e mais ${prodAbaixo.length - 3}` : ''),
-        link:   'estoque'
-      });
-    }
-
-    // CR vencidas/vencendo
-    const cr = crResult.rows[0];
-    if (Number(cr.total) > 0) {
-      notifs.push({
-        tipo:   'contas_receber',
-        icone:  'fa-money-bill-wave',
-        cor:    '#e53e3e',
-        titulo: `${cr.total} conta(s) a receber em atraso`,
-        texto:  `Total: R$ ${Number(cr.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-        link:   'contas-receber'
-      });
-    }
-
-    // CP vencendo
-    const cp = cpResult.rows[0];
-    if (Number(cp.total) > 0) {
-      notifs.push({
-        tipo:   'contas_pagar',
-        icone:  'fa-calendar-xmark',
-        cor:    '#e53e3e',
-        titulo: `${cp.total} conta(s) a pagar vencendo hoje/amanhã`,
-        texto:  `Total: R$ ${Number(cp.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-        link:   'contas-pagar'
-      });
-    }
-
-    // Trial expirando
-    if (trialResult.rowCount > 0) {
-      const tf = trialResult.rows[0].trial_fim;
-      const diasRestantes = Math.ceil((new Date(tf) - new Date(dataHoje)) / 86400000);
-      notifs.push({
-        tipo:   'trial',
-        icone:  'fa-clock',
-        cor:    '#d69e2e',
-        titulo: diasRestantes <= 0 ? 'Seu trial expirou' : `Trial expira em ${diasRestantes} dia(s)`,
-        texto:  'Escolha um plano para continuar usando o sistema.',
-        link:   'configuracoes'
-      });
-    }
-
-    res.json({ sucesso: true, notificacoes: notifs, total: notifs.length });
-  } catch (err) {
-    console.error('[notificacoes]', err.message);
-    jsonErro(res, 500, 'Erro ao carregar notificações');
-  }
-});
-
-// ── SSE (Server-Sent Events) — notificações em tempo real ────────────────────
-
-const _sseClients = new Map(); // empresaId → Set<Response>
-
-async function _sseQueryNotificacoes(empresaId) {
-  const dataHoje = hoje();
-  const amanha   = addDias(dataHoje, 1);
-  const em7dias  = addDias(dataHoje, 7);
-
-  const [estoqueResult, crResult, cpResult, trialResult] = await Promise.all([
-    pool.query(
-      `SELECT id, nome, estoque, estoque_minimo FROM produtos
-       WHERE empresa_id = $1 AND deletado_em IS NULL
-         AND estoque_minimo > 0 AND estoque < estoque_minimo
-       ORDER BY (estoque_minimo - estoque) DESC LIMIT 10`,
-      [empresaId]
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(COALESCE(valor_atualizado, valor)), 0) AS valor_total
-       FROM contas_receber
-       WHERE empresa_id = $1
-         AND LOWER(COALESCE(status,'pendente')) NOT IN ('pago')
-         AND data_vencimento <= $2`,
-      [empresaId, dataHoje]
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(valor), 0) AS valor_total
-       FROM contas_pagar
-       WHERE empresa_id = $1
-         AND LOWER(COALESCE(status,'pendente')) = 'pendente'
-         AND data_vencimento <= $2`,
-      [empresaId, amanha]
-    ),
-    pool.query(
-      `SELECT trial_fim FROM empresas
-       WHERE id = $1 AND assinatura_status = 'trial'
-         AND trial_fim IS NOT NULL AND trial_fim <= $2`,
-      [empresaId, em7dias]
-    )
-  ]);
-
-  const notifs = [];
-
-  const prodAbaixo = estoqueResult.rows;
-  if (prodAbaixo.length > 0) {
-    notifs.push({
-      tipo:   'estoque',
-      icone:  'fa-boxes-stacked',
-      cor:    '#d69e2e',
-      titulo: `${prodAbaixo.length} produto(s) abaixo do estoque mínimo`,
-      texto:  prodAbaixo.slice(0, 3).map(p => `${p.nome} (${p.estoque}/${p.estoque_minimo})`).join(', ') +
-              (prodAbaixo.length > 3 ? ` e mais ${prodAbaixo.length - 3}` : ''),
-      link:   'estoque'
-    });
-  }
-
-  const cr = crResult.rows[0];
-  if (Number(cr.total) > 0) {
-    notifs.push({
-      tipo:   'contas_receber',
-      icone:  'fa-money-bill-wave',
-      cor:    '#e53e3e',
-      titulo: `${cr.total} conta(s) a receber em atraso`,
-      texto:  `Total: R$ ${Number(cr.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-      link:   'contas-receber'
-    });
-  }
-
-  const cp = cpResult.rows[0];
-  if (Number(cp.total) > 0) {
-    notifs.push({
-      tipo:   'contas_pagar',
-      icone:  'fa-calendar-xmark',
-      cor:    '#e53e3e',
-      titulo: `${cp.total} conta(s) a pagar vencendo hoje/amanhã`,
-      texto:  `Total: R$ ${Number(cp.valor_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-      link:   'contas-pagar'
-    });
-  }
-
-  if (trialResult.rowCount > 0) {
-    const tf = trialResult.rows[0].trial_fim;
-    const diasRestantes = Math.ceil((new Date(tf) - new Date(dataHoje)) / 86400000);
-    notifs.push({
-      tipo:   'trial',
-      icone:  'fa-clock',
-      cor:    '#d69e2e',
-      titulo: diasRestantes <= 0 ? 'Seu trial expirou' : `Trial expira em ${diasRestantes} dia(s)`,
-      texto:  'Escolha um plano para continuar usando o sistema.',
-      link:   'configuracoes'
-    });
-  }
-
-  return { notificacoes: notifs, total: notifs.length };
-}
-
-async function ssePush(res, empresaId) {
-  try {
-    const dados = await _sseQueryNotificacoes(empresaId);
-    res.write(`event: notificacoes\ndata: ${JSON.stringify(dados)}\n\n`);
-  } catch (err) {
-    console.error('[SSE] ssePush:', err.message);
-  }
-}
-
-function sseNotificarEmpresa(empresaId) {
-  const clientes = _sseClients.get(empresaId);
-  if (!clientes || clientes.size === 0) return;
-  for (const res of [...clientes]) {
-    ssePush(res, empresaId).catch(() => clientes.delete(res));
-  }
-}
-
-// GET /sse-notificacoes — stream de eventos para o frontend
-app.get('/sse-notificacoes', auth, requirePermissao(pool, 'configuracoes', 'ver'), async (req, res) => {
-  try {
-    const empresaResolvida = await validarAcessoEmpresa(req, null, null);
-    if (!empresaResolvida) return jsonErro(res, 403, 'Sem acesso');
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    const SSE_MAX_EMPRESAS = 1000;
-    const empresaId = empresaResolvida.id;
-    if (!_sseClients.has(empresaId)) {
-      if (_sseClients.size >= SSE_MAX_EMPRESAS) {
-        const [primeiraKey] = _sseClients.keys();
-        const primeiroSet = _sseClients.get(primeiraKey);
-        for (const r of primeiroSet) { try { r.end(); } catch {} }
-        _sseClients.delete(primeiraKey);
-      }
-      _sseClients.set(empresaId, new Set());
-    }
-    const clientes = _sseClients.get(empresaId);
-    if (clientes.size >= 30) {
-      return jsonErro(res, 429, 'Limite de conexões SSE atingido para esta empresa');
-    }
-    clientes.add(res);
-
-    // Envio imediato
-    await ssePush(res, empresaId);
-
-    // Heartbeat a cada 25s (menor que timeout de proxy)
-    const heartbeat = setInterval(() => {
-      try { res.write(': ping\n\n'); } catch { clearInterval(heartbeat); }
-    }, 25000);
-    heartbeat.unref();
-
-    // Refresh a cada 60s
-    const refresh = setInterval(async () => {
-      await ssePush(res, empresaId).catch(() => {});
-    }, 60000);
-    refresh.unref();
-
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      clearInterval(refresh);
-      clientes.delete(res);
-    });
-  } catch (err) {
-    console.error('[SSE] Conexão:', err.message);
-    if (!res.headersSent) jsonErro(res, 500, 'Erro no SSE');
-  }
-});
-
-// ── Config SMTP SaaS Owner ────────────────────────────────────────────────────
-
-app.get('/admin/smtp/config', auth, apenasAdmin, async (req, res) => {
-  try {
-    const cfg = await getSaasSmtp(pool);
-    res.json({
-      sucesso: true,
-      smtp_host:  cfg.smtp_host  || '',
-      smtp_port:  cfg.smtp_port  || 587,
-      smtp_user:  cfg.smtp_user  || '',
-      smtp_pass:  cfg.smtp_pass  ? '***' : '',
-      smtp_from:  cfg.smtp_from  || '',
-      app_url:    cfg.app_url    || ''
-    });
-  } catch (err) {
-    jsonErro(res, 500, 'Erro ao buscar config SMTP');
-  }
-});
-
-app.put('/admin/smtp/config', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
-  try {
-    const { smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, app_url } = req.body;
-    await pool.query(
-      `UPDATE saas_config SET
-         smtp_host = $1, smtp_port = $2, smtp_user = $3,
-         smtp_pass = COALESCE(NULLIF($4,'***'), smtp_pass),
-         smtp_from = $5, app_url = $6, atualizado_em = NOW()`,
-      [smtp_host || null, Number(smtp_port || 587), smtp_user || null,
-       smtp_pass || null, smtp_from || null, app_url || null]
-    );
-    res.json({ sucesso: true });
-  } catch (err) {
-    jsonErro(res, 500, 'Erro ao salvar config SMTP');
-  }
-});
-
-app.post('/admin/smtp/testar', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
-  try {
-    const cfg = await getSaasSmtp(pool);
-    const transporter = criarTransporter(cfg);
-    if (!transporter) return jsonErro(res, 400, 'SMTP não configurado');
-
-    const toEmail = req.body.email || req.user.email;
-    if (!toEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(toEmail))) {
-      return jsonErro(res, 400, 'Email de destino inválido');
-    }
-    await transporter.sendMail({
-      from:    cfg.smtp_from || cfg.smtp_user,
-      to:      toEmail,
-      subject: 'Teste de SMTP — LF ERP',
-      text:    'Este é um email de teste do sistema LF ERP. Configuração funcionando!'
-    });
-    res.json({ sucesso: true, mensagem: 'Email de teste enviado com sucesso' });
-  } catch (err) {
-    jsonErro(res, 500, 'Erro ao enviar teste de e-mail');
-  }
-});
-
-// ── GET /admin/dashboard — métricas SaaS Owner ───────────────────────────────
-app.get('/admin/dashboard', auth, apenasAdmin, async (req, res) => {
-  try {
-    const [empresasResult, receitaResult, ativosResult] = await Promise.all([
-      pool.query(`
-        SELECT
-          COUNT(*) AS total,
-          COUNT(*) FILTER (WHERE assinatura_status = 'ativo')   AS ativos,
-          COUNT(*) FILTER (WHERE assinatura_status = 'trial')   AS em_trial,
-          COUNT(*) FILTER (WHERE bloqueada = true)              AS bloqueados,
-          COUNT(*) FILTER (WHERE assinatura_status IN ('inativo','cancelado')) AS inativos,
-          COUNT(*) FILTER (WHERE criado_em >= (NOW() AT TIME ZONE 'America/Fortaleza') - INTERVAL '30 days') AS novos_30d,
-          COUNT(*) FILTER (WHERE assinatura_status = 'trial' AND trial_fim < CURRENT_DATE) AS trial_expirado
-        FROM empresas`),
-      pool.query(`
-        SELECT COALESCE(SUM(p.preco_mensal), 0) AS mrr
-        FROM empresas e
-        JOIN planos p ON p.id = e.plano_id
-        WHERE e.assinatura_status = 'ativo' AND NOT e.bloqueada`),
-      pool.query(`
-        SELECT
-          COUNT(*) AS total_vendas_30d,
-          COALESCE(SUM(total), 0) AS volume_vendas_30d
-        FROM vendas
-        WHERE criado_em >= (NOW() AT TIME ZONE 'America/Fortaleza') - INTERVAL '30 days'`),
-    ]);
-
-    const e = empresasResult.rows[0];
-    const mrr = Number(receitaResult.rows[0]?.mrr || 0);
-    const v = ativosResult.rows[0];
-
-    // Últimas 6 empresas criadas
-    const ultimasResult = await pool.query(
-      `SELECT e.nome, e.assinatura_status, e.criado_em, p.nome AS plano_nome
-       FROM empresas e
-       LEFT JOIN planos p ON p.id = e.plano_id
-       ORDER BY e.criado_em DESC LIMIT 6`
-    );
-
-    res.json({
-      sucesso: true,
-      metricas: {
-        total_empresas:    Number(e.total),
-        ativas:            Number(e.ativos),
-        em_trial:          Number(e.em_trial),
-        bloqueadas:        Number(e.bloqueados),
-        inativos:          Number(e.inativos),
-        novos_30d:         Number(e.novos_30d),
-        trial_expirado:    Number(e.trial_expirado),
-        mrr:               Number(mrr.toFixed(2)),
-        total_vendas_30d:  Number(v.total_vendas_30d),
-        volume_vendas_30d: Number(v.volume_vendas_30d || 0)
-      },
-      ultimas_empresas: ultimasResult.rows
-    });
-  } catch (err) {
-    console.error('[admin] dashboard:', err.message);
-    jsonErro(res, 500, 'Erro ao carregar dashboard admin');
-  }
-});
-
-// ================= ADMIN: GESTÃO DE EMPRESAS =================
-
-app.get('/admin/empresas', auth, apenasAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        e.id, e.nome, e.email, e.telefone, e.cnpj,
-        e.assinatura_status, e.bloqueada, e.motivo_bloqueio,
-        e.trial_inicio, e.trial_fim, e.criado_em, e.atualizado_em,
-        p.nome AS plano_nome, p.codigo AS plano_codigo,
-        (SELECT COUNT(*) FROM usuarios u WHERE u.empresa_id = e.id) AS total_usuarios,
-        (SELECT COUNT(*) FROM vendas v WHERE v.empresa_id = e.id) AS total_vendas
-      FROM empresas e
-      LEFT JOIN planos p ON p.id = e.plano_id
-      ORDER BY e.criado_em DESC
-    `);
-
-    res.json(result.rows.map((r) => ({
-      ...r,
-      bloqueada: Boolean(r.bloqueada),
-      total_usuarios: Number(r.total_usuarios || 0),
-      total_vendas: Number(r.total_vendas || 0)
-    })));
-  } catch (error) {
-    console.error('Erro ao listar empresas:', error);
-    jsonErro(res, 500, 'Erro ao listar empresas');
-  }
-});
-
-app.get('/admin/empresas/:id/exportar', auth, apenasAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!id) return jsonErro(res, 400, 'ID inválido');
-
-    const empresaResult = await pool.query(`SELECT * FROM empresas WHERE id = $1`, [id]);
-    if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
-    const empresa = empresaResult.rows[0];
-    const empresaNome = empresa.nome;
-
-    const [
-      clientesR, produtosR, fornecedoresR, vendasR, vendaItensR,
-      comprasR, compraItensR, crR, cpR, movimR, lancamentosR
-    ] = await Promise.all([
-      pool.query(`SELECT * FROM clientes WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM produtos WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM fornecedores WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) AND deletado_em IS NULL ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM vendas WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT vi.* FROM venda_itens vi JOIN vendas v ON v.id=vi.venda_id WHERE (v.empresa_id=$1 OR (v.empresa_id IS NULL AND v.empresa=$2)) ORDER BY vi.venda_id,vi.id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM compras WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT ci.* FROM compra_itens ci JOIN compras c ON c.id=ci.compra_id WHERE (c.empresa_id=$1 OR (c.empresa_id IS NULL AND c.empresa=$2)) ORDER BY ci.compra_id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM contas_receber WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM contas_pagar WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY id`, [id, empresaNome]),
-      pool.query(`SELECT * FROM movimentacoes_estoque WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY data_movimentacao`, [id, empresaNome]),
-      pool.query(`SELECT * FROM lancamentos_financeiros WHERE (empresa_id=$1 OR (empresa_id IS NULL AND empresa=$2)) ORDER BY vencimento`, [id, empresaNome])
-    ]);
-
-    const payload = {
-      exportacao: {
-        empresa:    { id: empresa.id, nome: empresa.nome },
-        gerado_em:  new Date().toISOString(),
-        gerado_por: 'admin'
-      },
-      clientes:               clientesR.rows,
-      produtos:               produtosR.rows,
-      fornecedores:           fornecedoresR.rows,
-      vendas:                 vendasR.rows,
-      venda_itens:            vendaItensR.rows,
-      compras:                comprasR.rows,
-      compra_itens:           compraItensR.rows,
-      contas_receber:         crR.rows,
-      contas_pagar:           cpR.rows,
-      movimentacoes_estoque:  movimR.rows,
-      lancamentos_financeiros: lancamentosR.rows
-    };
-
-    const nomeArquivo = `lferp-backup-${empresa.nome.replace(/\s+/g,'_').replace(/[;"\\]/g,'').replace(/[\r\n]/g,'')}-${hoje()}.json`;
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
-    res.send(JSON.stringify(payload, null, 2));
-  } catch (error) {
-    console.error('Erro ao exportar empresa:', error);
-    jsonErro(res, 500, 'Erro ao exportar dados da empresa');
-  }
-});
-
-app.get('/admin/empresas/:id', auth, apenasAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!id) return jsonErro(res, 400, 'ID inválido');
-
-    const [empresaResult, usuariosResult, vendasResult, logsResult] = await Promise.all([
-      pool.query(
-        `SELECT e.*, p.nome AS plano_nome, p.codigo AS plano_codigo
-         FROM empresas e LEFT JOIN planos p ON p.id = e.plano_id
-         WHERE e.id = $1`, [id]
-      ),
-      pool.query(`SELECT id, usuario, tipo, nome_completo, criado_em FROM usuarios WHERE empresa_id = $1 ORDER BY criado_em DESC`, [id]),
-      pool.query(
-        `SELECT COUNT(*) AS total, COALESCE(SUM(total), 0) AS valor_total
-         FROM vendas WHERE empresa_id = $1`, [id]
-      ),
-      pool.query(
-        `SELECT acao, usuario_nome, ip, criado_em FROM logs_auditoria
-         WHERE empresa_id = $1 ORDER BY criado_em DESC LIMIT 10`, [id]
-      )
-    ]);
-
-    if (empresaResult.rowCount === 0) return jsonErro(res, 404, 'Empresa não encontrada');
-
-    res.json({
-      empresa: { ...empresaResult.rows[0], bloqueada: Boolean(empresaResult.rows[0].bloqueada) },
-      usuarios: usuariosResult.rows,
-      resumo_vendas: {
-        total: Number(vendasResult.rows[0].total || 0),
-        valor_total: Number(vendasResult.rows[0].valor_total || 0)
-      },
-      ultimos_acessos: logsResult.rows
-    });
-  } catch (error) {
-    console.error('Erro ao buscar detalhe da empresa:', error);
-    jsonErro(res, 500, 'Erro ao buscar empresa');
-  }
-});
-
-
-app.post('/admin/empresas', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
-  let adminClient;
-  try {
-    const { nome, plano_id, trial_dias = 30, email, telefone, cnpj } = req.body;
-
-    if (!nome) {
-      return jsonErro(res, 400, 'Nome da empresa é obrigatório');
-    }
-
-    adminClient = await pool.connect();
-    await adminClient.query('BEGIN');
-
-    const existe = await adminClient.query(
-      `SELECT id FROM empresas WHERE LOWER(nome) = LOWER($1) LIMIT 1 FOR UPDATE`,
-      [nome]
-    );
-    if (existe.rowCount > 0) {
-      await adminClient.query('ROLLBACK');
-      return jsonErro(res, 400, 'Já existe uma empresa com esse nome');
-    }
-
-    const trialFim = addDias(hoje(), trial_dias);
-
-    const empresaResult = await adminClient.query(
-      `INSERT INTO empresas
-        (nome, cnpj, telefone, email, plano_id, assinatura_status, trial_inicio, trial_fim, bloqueada, criado_em, atualizado_em)
-       VALUES ($1, $2, $3, $4, $5, 'trial', $6, $7, false, NOW(), NOW())
-       RETURNING *`,
-      [nome, cnpj || null, telefone || null, email || null, plano_id || null, hoje(), trialFim]
-    );
-
-    const empresa = empresaResult.rows[0];
-
-    await adminClient.query(
-      `INSERT INTO configuracoes (empresa, empresa_id, nome_empresa, criado_em, atualizado_em)
-       VALUES ($1, $2, $3, NOW(), NOW())
-       ON CONFLICT DO NOTHING`,
-      [empresa.nome, empresa.id, empresa.nome]
-    );
-
-    await adminClient.query('COMMIT');
-
-    return res.status(201).json({ sucesso: true, empresa });
-  } catch (error) {
-    if (adminClient) await adminClient.query('ROLLBACK').catch(() => {});
-    console.error('Erro ao criar empresa:', error);
-    jsonErro(res, 500, 'Erro ao criar empresa');
-  } finally {
-    if (adminClient) adminClient.release();
-  }
-});
-
-app.put('/admin/empresas/:id/status', auth, apenasAdmin, writeRateLimiter, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const { assinatura_status, bloqueada, plano_id, trial_fim, motivo_bloqueio } = req.body;
-
-    if (!id) {
-      return jsonErro(res, 400, 'ID de empresa inválido');
-    }
-
-    const empresaExiste = await pool.query(`SELECT id, nome FROM empresas WHERE id = $1`, [id]);
-    if (empresaExiste.rowCount === 0) {
-      return jsonErro(res, 404, 'Empresa não encontrada');
-    }
-
-    const nomeEmpresa = empresaExiste.rows[0].nome;
-
-    await pool.query(
-      `UPDATE empresas SET
-        assinatura_status = COALESCE($1, assinatura_status),
-        bloqueada = COALESCE($2, bloqueada),
-        plano_id = COALESCE($3, plano_id),
-        trial_fim = COALESCE($4, trial_fim),
-        motivo_bloqueio = COALESCE($5, motivo_bloqueio),
-        atualizado_em = NOW()
-       WHERE id = $6`,
-      [
-        assinatura_status || null,
-        bloqueada !== undefined ? Boolean(bloqueada) : null,
-        plano_id || null,
-        trial_fim || null,
-        motivo_bloqueio || null,
-        id
-      ]
-    );
-
-    _planoCache.delete(`id:${id}`);
-    _planoCache.delete(`nome:${nomeEmpresa}`);
-    _configCache.delete(nomeEmpresa);
-
-    return res.json({ sucesso: true });
-  } catch (error) {
-    console.error('Erro ao atualizar status da empresa:', error);
-    jsonErro(res, 500, 'Erro ao atualizar empresa');
-  }
-});
