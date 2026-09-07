@@ -137,7 +137,7 @@ router.get('/alertas/:empresa', auth, requirePermissao(pool, 'configuracoes', 'v
          FROM contas_receber
          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
            AND LOWER(COALESCE(status, 'pendente')) IN ('pendente', 'atrasado')
-           AND data_vencimento IS NOT NULL AND data_vencimento < $3`,
+           AND data_vencimento IS NOT NULL AND data_vencimento < $3::text`,
         [empresaResolvida.id, empresaResolvida.nome, dataHoje]
       ),
       pool.query(
@@ -145,7 +145,7 @@ router.get('/alertas/:empresa', auth, requirePermissao(pool, 'configuracoes', 'v
          FROM contas_pagar
          WHERE (empresa_id = $1 OR (empresa_id IS NULL AND empresa = $2))
            AND LOWER(COALESCE(status, 'pendente')) = 'pendente'
-           AND data_vencimento IS NOT NULL AND data_vencimento < $3`,
+           AND data_vencimento IS NOT NULL AND data_vencimento < $3::text`,
         [empresaResolvida.id, empresaResolvida.nome, dataHoje]
       ),
       obterPlanoEmpresa(empresaResolvida.id, empresaResolvida.nome)
