@@ -2,11 +2,16 @@ const { normalizarDataISO } = require('./normalizadores');
 
 // Whitelist de campos permitidos para interpolação segura em SQL
 const CAMPOS_PERIODO_PERMITIDOS = new Set([
-  'criado_em', 'fl.criado_em', 'm.data_movimentacao',
-  'data', 'v.data', 'c.data',
-  'data_vencimento', 'cr.data_vencimento', 'cp.data_vencimento',
-  'data_pagamento', 'pagamento_data',
-  'data_emissao', 'vencimento',
+  // simples
+  'data', 'data_pagamento', 'data_vencimento', 'data_emissao',
+  'data_entrada', 'data_saida', 'criado_em', 'atualizado_em',
+  'pagamento_data', 'vencimento', 'competencia',
+  'data_movimento', 'lancamento_data',
+  // aliases de tabela
+  'c.data', 'v.data', 'p.data', 'e.data', 'f.data', 'lf.data',
+  'cr.data_vencimento', 'cp.data_vencimento', 'fl.criado_em',
+  'm.data_movimentacao',
+  // expressões compostas
   'COALESCE(pagamento_data, vencimento)',
   'COALESCE(pagamento_data,vencimento)'
 ]);
