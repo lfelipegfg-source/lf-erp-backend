@@ -3,6 +3,7 @@ const express = require('express');
 const { normalizarDecimal, normalizarDataISO, hoje } = require('../utils/normalizadores');
 const { obterPeriodo, adicionarFiltroPeriodo, adicionarFiltroPeriodoRange } = require('../utils/periodoUtils');
 const { requirePermissao } = require('../utils/permissoes');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function lancamentosRoutes({
   auth, writeRateLimiter, pool,

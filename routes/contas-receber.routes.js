@@ -4,6 +4,7 @@ const { normalizarInt, normalizarDecimal, normalizarDataISO, hoje } = require('.
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 const { requirePermissao } = require('../utils/permissoes');
 const { dispararWebhookComRetry } = require('../utils/webhookContabil');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function contasReceberRoutes({
   auth, writeRateLimiter, pool,

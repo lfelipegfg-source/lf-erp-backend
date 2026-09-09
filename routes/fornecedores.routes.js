@@ -1,6 +1,7 @@
 const { requirePermissao } = require('../utils/permissoes');
 const { erro, ok } = require('../utils/routeHelpers');
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
+const { validarCNPJ } = require('../utils/documentos');
 
 module.exports = function ({
   auth,
@@ -15,20 +16,6 @@ module.exports = function ({
   const router = require('express').Router();
 
 
-
-  function validarCNPJ(cnpj) {
-    const s = cnpj.replace(/\D/g, '');
-    if (s.length !== 14) return false;
-    if (/^(\d)\1+$/.test(s)) return false; // sequências de um só dígito (ex: 00000000000000)
-    let soma = 0, pos = 5;
-    for (let i = 0; i < 12; i++) { soma += Number(s[i]) * pos--; if (pos < 2) pos = 9; }
-    let r = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    if (r !== Number(s[12])) return false;
-    soma = 0; pos = 6;
-    for (let i = 0; i < 13; i++) { soma += Number(s[i]) * pos--; if (pos < 2) pos = 9; }
-    r = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    return r === Number(s[13]);
-  }
 
   function normalizarFornecedor(row) {
     return {

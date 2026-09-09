@@ -1,7 +1,8 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const bcrypt  = require('bcrypt');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function usuariosRoutes({
   auth,
@@ -12,7 +13,6 @@ module.exports = function usuariosRoutes({
   validarForcaSenha,
   requirePermissao,
   registrarAuditoria,
-  jsonErro
 }) {
   const router = express.Router();
 

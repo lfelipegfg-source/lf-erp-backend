@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const express    = require('express');
 const https      = require('https');
 const { requirePermissao }        = require('../utils/permissoes');
@@ -6,11 +6,11 @@ const { encryptField, decryptField } = require('../utils/pixCrypto');
 const { resolverClienteAsaas, criarBoleto: criarBoletoAsaas, consultarBoleto: consultarBoletoAsaas } = require('../utils/asaas');
 const { enviarEmailBoasVindas, getSaasSmtp, criarTransporter } = require('../utils/email');
 const { dispararWebhookComRetry } = require('../utils/webhookContabil');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function pagamentosRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
-  jsonErro
 }) {
   const router = express.Router();
 // ================= PIX (EFÍ / Gerencianet) =================

@@ -3,6 +3,7 @@ const express = require('express');
 const { normalizarDecimal, normalizarDataISO, hoje } = require('../utils/normalizadores');
 const { obterPeriodo, adicionarFiltroPeriodo, adicionarFiltroPeriodoRange } = require('../utils/periodoUtils');
 const { requirePermissao } = require('../utils/permissoes');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function fluxoCaixaRoutes({
   auth, writeRateLimiter, pool,
@@ -10,7 +11,6 @@ module.exports = function fluxoCaixaRoutes({
   podeGerenciarFinanceiro,
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa,
-  jsonErro
 }) {
   const router = express.Router();
 router.post('/investimentos', auth, writeRateLimiter, requirePermissao(pool, 'financeiro', 'criar'), async (req, res) => {

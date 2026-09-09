@@ -1,4 +1,4 @@
-const { requirePermissao } = require('../utils/permissoes');
+﻿const { requirePermissao } = require('../utils/permissoes');
 const { resolverPreco } = require('../utils/resolverPreco');
 const { obterPeriodo, adicionarFiltroPeriodo } = require('../utils/periodoUtils');
 const { validarEstoqueKit, baixarComponentesKit, estornarComponentesKit, sincronizarEstoqueKit } = require('../utils/kits');
@@ -6,6 +6,10 @@ const { calcularComissaoVenda } = require('../utils/comissoes');
 const { acumularPontosFidelidade } = require('../utils/fidelidade');
 const { dispararWebhookComRetry } = require('../utils/webhookContabil');
 const { erro } = require('../utils/routeHelpers');
+const {
+  normalizarTexto, deveGerarFinanceiroVenda,
+  FORMAS_PAGAMENTO_VALIDAS, sanitizarFormaPagamento, normalizarPagamentosSplit
+} = require('../utils/vendasOps');
 
 module.exports = ({
   auth,
@@ -28,64 +32,6 @@ module.exports = ({
   const router = require('express').Router();
 
 
-
-  function normalizarTexto(valor) {
-    return String(valor || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-  }
-
-  function deveGerarFinanceiroVenda({ conta_receber, pagamento, status_pagamento, parcelas }) {
-    const pagamentoNormalizado = normalizarTexto(pagamento);
-    const statusPagamentoNormalizado = normalizarTexto(status_pagamento);
-
-    return (
-      Boolean(conta_receber) ||
-      pagamentoNormalizado === 'promissoria' ||
-      pagamentoNormalizado === 'boleto' ||
-      statusPagamentoNormalizado === 'pendente' ||
-      normalizarInt(parcelas || 1) > 1
-    );
-  }
-
-  // Normaliza array de pagamentos do split.
-  // Retorna { pagamentosArray, pagamentoPrincipal, totalPromissoria, statusPagamento }
-  const FORMAS_PAGAMENTO_VALIDAS = new Set(['dinheiro','pix','cartao','cartao_credito','cartao_debito','boleto','promissoria','transferencia','cheque','crediario','outros','dinheiro_troco']);
-  function sanitizarFormaPagamento(f) {
-    const s = String(f || '').trim().toLowerCase();
-    return FORMAS_PAGAMENTO_VALIDAS.has(s) ? String(f).trim() : 'Dinheiro';
-  }
-
-  function normalizarPagamentosSplit({ pagamentos, pagamento, total, status_pagamento, parcelas }) {
-    const FORMAS_PENDENTES = ['promissoria', 'boleto'];
-
-    let pagamentosArray;
-
-    if (Array.isArray(pagamentos) && pagamentos.length > 0) {
-      pagamentosArray = pagamentos.map((p) => ({
-        forma: sanitizarFormaPagamento(p.forma),
-        valor: normalizarDecimal(p.valor),
-        parcelas: normalizarInt(p.parcelas) || 1,
-        vencimento: p.vencimento || null
-      }));
-    } else {
-      // Retrocompatibilidade: pagamento único
-      pagamentosArray = [{ forma: sanitizarFormaPagamento(pagamento), valor: normalizarDecimal(total), parcelas: normalizarInt(parcelas) || 1, vencimento: null }];
-    }
-
-    const pagamentoPrincipal = pagamentosArray[0]?.forma || 'Dinheiro';
-
-    const totalPromissoria = pagamentosArray
-      .filter((p) => FORMAS_PENDENTES.includes(normalizarTexto(p.forma)))
-      .reduce((acc, p) => acc + p.valor, 0);
-
-    const STATUS_PAGAMENTO_VALIDOS = ['pendente', 'atrasado', 'pago', 'parcial', 'parcial_atrasado'];
-    const statusInformado = STATUS_PAGAMENTO_VALIDOS.includes(status_pagamento) ? status_pagamento : 'pago';
-    const statusFinal = totalPromissoria > 0 ? 'pendente' : statusInformado;
-
-    return { pagamentosArray, pagamentoPrincipal, totalPromissoria: Number(totalPromissoria.toFixed(2)), statusPagamento: statusFinal };
-  }
 
   async function validarVendaPertenceEmpresa({ client, venda, empresaResolvida }) {
     const vendaEmpresaId = venda.empresa_id ? Number(venda.empresa_id) : null;

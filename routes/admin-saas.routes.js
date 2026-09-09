@@ -1,13 +1,13 @@
-'use strict';
+﻿'use strict';
 const express = require('express');
 const { requirePermissao }           = require('../utils/permissoes');
 const { encryptField, decryptField } = require('../utils/pixCrypto');
 const { getSaasSmtp, criarTransporter, enviarEmailBoasVindas } = require('../utils/email');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function adminSaasRoutes({
   auth, writeRateLimiter, pool,
   apenasAdmin, _planoCache, _configCache,
-  jsonErro
 }) {
   const router = express.Router();
 // â”€â”€ Config SMTP SaaS Owner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

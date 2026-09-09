@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const express  = require('express');
 const bcrypt   = require('bcrypt');
@@ -6,6 +6,7 @@ const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const { hoje, addDias } = require('../utils/normalizadores');
 const { enviarEmailBoasVindas } = require('../utils/email');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function authRoutes({
   auth,
@@ -21,7 +22,6 @@ module.exports = function authRoutes({
   validarForcaSenha,
   registrarAuditoria,
   SECRET,
-  jsonErro
 }) {
   const router = express.Router();
 

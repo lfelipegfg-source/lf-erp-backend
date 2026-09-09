@@ -46,6 +46,7 @@ const { createInitDb }                = require('./db/initDb');
 
 const financeiroRoutes = require('./routes/financeiro.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
+const relatoriosAnaliseRoutes = require('./routes/relatorios-analise.routes');
 const comprasRoutes = require('./routes/compras.routes');
 const vendasRoutes = require('./routes/vendas.routes');
 const produtosRoutes = require('./routes/produtos.routes');
@@ -88,6 +89,9 @@ const pagamentosRoutes        = require('./routes/pagamentos.routes');
 const conciliacaoRoutes        = require('./routes/conciliacao.routes');
 const adminRoutes              = require('./routes/admin.routes');
 const miscRoutes               = require('./routes/misc.routes');
+const metasRoutes              = require('./routes/metas.routes');
+const depositosRoutes          = require('./routes/depositos.routes');
+const notificacoesRoutes       = require('./routes/notificacoes.routes');
 const adminSaasRoutes          = require('./routes/admin-saas.routes');
 
 const app = express();
@@ -132,12 +136,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Helper global de resposta de erro JSON â€” substitui res.status(x).send('texto')
-function jsonErro(res, status, mensagem, codigo = null) {
-  const body = { sucesso: false, erro: mensagem };
-  if (codigo) body.codigo = codigo;
-  return res.status(status).json(body);
-}
 const PORT = process.env.PORT || 3001;
 
 if (!SECRET) {
@@ -168,6 +166,15 @@ const pool = new Pool({
 // Neon derruba conexÃµes idle â€” sem este handler o processo encerra com uncaughtException
 pool.on('error', (err) => {
   console.error('[pool] erro em conexÃ£o idle (Neon dropped connection):', err.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason, promise);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  process.exit(1);
 });
 
 const { validarSenhaUsuario } = createAuthHelpers(pool);
@@ -230,6 +237,19 @@ app.use(
 app.use(
   '/relatorios',
   relatoriosRoutes({
+    auth,
+    pool,
+    validarAcessoEmpresa,
+    adicionarFiltroEmpresaSaaS,
+    atualizarStatusContasReceberPorEmpresa,
+    atualizarStatusContasPagarPorEmpresa,
+    podeGerenciarFinanceiro
+  })
+);
+
+app.use(
+  '/relatorios',
+  relatoriosAnaliseRoutes({
     auth,
     pool,
     validarAcessoEmpresa,
@@ -483,7 +503,6 @@ app.use('/', authRoutes({
   validarForcaSenha,
   registrarAuditoria,
   SECRET,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ UsuÃƒÂ¡rios, permissÃƒÂµes e lixeira Ã¢â€ â€™ routes/usuarios.routes.js
@@ -496,7 +515,6 @@ app.use('/', usuariosRoutes({
   validarForcaSenha,
   requirePermissao,
   registrarAuditoria,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Contas a Receber Ã¢â€ â€™ routes/contas-receber.routes.js
@@ -508,7 +526,6 @@ app.use('/', contasReceberRoutes({
   atualizarStatusContasReceberPorEmpresa,
   podeGerenciarFinanceiro,
   registrarLogFinanceiro,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Contas a Pagar Ã¢â€ â€™ routes/contas-pagar.routes.js
@@ -519,7 +536,6 @@ app.use('/', contasPagarRoutes({
   validarAcessoEmpresa,
   atualizarStatusContasPagarPorEmpresa,
   registrarLogFinanceiro,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ LanÃƒÂ§amentos Financeiros Ã¢â€ â€™ routes/lancamentos.routes.js
@@ -531,7 +547,6 @@ app.use('/', lancamentosRoutes({
   podeGerenciarFinanceiro,
   atualizarStatusContasReceberPorEmpresa,
   registrarLogFinanceiro,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Fluxo de Caixa + Investimentos Ã¢â€ â€™ routes/fluxo-caixa.routes.js
@@ -544,7 +559,6 @@ app.use('/', fluxoCaixaRoutes({
   podeGerenciarFinanceiro,
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa,
-  jsonErro
 }));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Dashboard Ã¢â€ â€™ routes/dashboard.routes.js
@@ -555,21 +569,19 @@ app.use('/', dashboardRoutes({
   adicionarFiltroEmpresaSaaS,
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa,
-  jsonErro
 }));
 
 // -- Pagamentos (PIX + Boleto) -> routes/pagamentos.routes.js
 app.use('/', pagamentosRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
-  jsonErro
 }));
 
 // -- ConciliaÃƒÂ§ÃƒÂ£o BancÃƒÂ¡ria -> routes/conciliacao.routes.js
 app.use('/', conciliacaoRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
-  jsonUpload, jsonErro
+  jsonUpload
 }));
 
 // -- Admin (ConfiguraÃƒÂ§ÃƒÂµes + Alertas + Billing + Admin) -> routes/admin.routes.js
@@ -577,23 +589,38 @@ app.use('/', adminRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
   apenasAdmin, _configCache, _planoCache,
-  jsonErro
 }));
 
-// -- Misc (Compras inline + Listagens + Metas + DepÃƒÂ³sitos + LGPD + Notif + SSE) -> routes/misc.routes.js
+// -- Misc (Compras inline) -> routes/misc.routes.js
 app.use('/', miscRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, adicionarFiltroEmpresaSaaS,
   podeGerenciarFinanceiro, podeGerenciarCompras,
   atualizarStatusContasPagarPorEmpresa,
-  jsonErro
+}));
+
+// -- Metas de Vendas -> routes/metas.routes.js
+app.use('/', metasRoutes({
+  auth, writeRateLimiter, pool,
+  validarAcessoEmpresa, podeGerenciarFinanceiro,
+}));
+
+// -- Depositos + LGPD -> routes/depositos.routes.js
+app.use('/', depositosRoutes({
+  auth, writeRateLimiter, pool,
+  validarAcessoEmpresa, podeGerenciarFinanceiro,
+}));
+
+// -- Notificações + SSE -> routes/notificacoes.routes.js
+app.use('/', notificacoesRoutes({
+  auth, pool,
+  validarAcessoEmpresa, podeGerenciarFinanceiro,
 }));
 
 // -- Admin SaaS Owner (SMTP + Dashboard + Empresas) -> routes/admin-saas.routes.js
 app.use('/', adminSaasRoutes({
   auth, writeRateLimiter, pool,
   apenasAdmin, _planoCache, _configCache,
-  jsonErro
 }));
 
 

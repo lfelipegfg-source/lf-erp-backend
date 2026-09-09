@@ -1,16 +1,16 @@
-'use strict';
+﻿'use strict';
 const express = require('express');
 const { requirePermissao }           = require('../utils/permissoes');
 const { hoje }                       = require('../utils/normalizadores');
 const { encryptField, decryptField } = require('../utils/pixCrypto');
 const { resolverClienteAsaas, criarBoleto: criarBoletoAsaas } = require('../utils/asaas');
 const { enviarEmailBoasVindas, getSaasSmtp, criarTransporter } = require('../utils/email');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function adminRoutes({
   auth, writeRateLimiter, pool,
   validarAcessoEmpresa, podeGerenciarFinanceiro,
   apenasAdmin, _configCache, _planoCache,
-  jsonErro
 }) {
   const router = express.Router();
 // ================= CONFIGURAÇÕES =================

@@ -1,6 +1,7 @@
-'use strict';
+﻿'use strict';
 const express = require('express');
 const { requirePermissao } = require('../utils/permissoes');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function conciliacaoRoutes({
   auth, writeRateLimiter, pool,

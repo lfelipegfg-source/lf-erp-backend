@@ -2,13 +2,13 @@
 const express = require('express');
 const { obterPeriodo, adicionarFiltroPeriodo, adicionarFiltroPeriodoRange } = require('../utils/periodoUtils');
 const { requirePermissao } = require('../utils/permissoes');
+const { jsonErro } = require('../utils/routeHelpers');
 
 module.exports = function dashboardRoutes({
   auth, pool,
   validarAcessoEmpresa, adicionarFiltroEmpresaSaaS,
   atualizarStatusContasReceberPorEmpresa,
   atualizarStatusContasPagarPorEmpresa,
-  jsonErro
 }) {
   const router = express.Router();
 router.get('/dashboard', auth, requirePermissao(pool, 'dashboard', 'ver'), async (req, res) => {
